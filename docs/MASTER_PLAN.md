@@ -334,7 +334,14 @@ data-flow,security,risk}.md`.
   slippage, failed cycles; rule-based recommended actions)
 
 ### T-043 Triangle quality score
-- status: TODO (SKILL.md §81) · dependencies: T-019 history
+- status: DONE (internal/quality: deterministic /100 composite —
+  profitability 25, sample 10, success 15 with thin-sample cap,
+  slippage stability 15, edge persistence 15, failure severity 10,
+  drawdown 10; hand-computed vector test; explicit never-pure-win-rate
+  test; storage per-triangle aggregation; API
+  GET /api/v1/triangles/quality with the config's MinExpectedProfit as
+  the profitability reference. Per-triangle drawdown input remains
+  portfolio-level — stated in the response, not invented)
 
 ### T-044 Performance benchmark suite + budgets
 - status: DONE — §73 set complete (book apply/view, WS decode,
