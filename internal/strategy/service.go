@@ -64,6 +64,25 @@ var ErrForbidden = errors.New("strategy: change not permitted for this actor")
 // ErrNotFound reports an unknown version (Get/Rollback).
 var ErrNotFound = errors.New("strategy: version not found")
 
+// ErrStaleVersion rejects an Apply/Rollback whose caller-supplied
+// parent_version no longer matches the active version — someone else
+// changed the config since the caller loaded it (optimistic
+// concurrency). Callers map it to 409; StaleVersionError.Current carries
+// the version the caller should reload against.
+var ErrStaleVersion = errors.New("strategy: stale parent_version")
+
+// StaleVersionError is the concrete error ErrStaleVersion wraps; use
+// errors.As to recover Current for the response body.
+type StaleVersionError struct {
+	Current int64
+}
+
+func (e *StaleVersionError) Error() string {
+	return fmt.Sprintf("%s: current version is %d", ErrStaleVersion, e.Current)
+}
+
+func (e *StaleVersionError) Is(target error) bool { return target == ErrStaleVersion }
+
 // Service owns the current snapshot: hot swap on Apply, consistent reads
 // via Current, subscriber fan-out for components that cache derived
 // forms (scanner config, risk resolver).
@@ -161,7 +180,16 @@ func (s *Service) Apply(ctx context.Context, actor, source string, p Params) (Sn
 
 // ApplyAuthorized is Apply with an in-lock authorization gate.
 func (s *Service) ApplyAuthorized(ctx context.Context, actor, source string, p Params, authorize Authorize) (Snapshot, error) {
-	return s.applyLocked(ctx, actor, source, "config.apply", p, authorize)
+	return s.applyLocked(ctx, actor, source, "config.apply", p, authorize, 0)
+}
+
+// ApplyAuthorizedExpect is ApplyAuthorized with an optimistic-concurrency
+// check: when expectedParent is non-zero, the write is refused with
+// ErrStaleVersion unless the active version still equals expectedParent
+// (checked INSIDE the writer lock, same TOCTOU-safe placement as
+// authorize).
+func (s *Service) ApplyAuthorizedExpect(ctx context.Context, actor, source string, p Params, authorize Authorize, expectedParent int64) (Snapshot, error) {
+	return s.applyLocked(ctx, actor, source, "config.apply", p, authorize, expectedParent)
 }
 
 // Rollback re-activates version's payload as a NEW version (parent set
@@ -172,11 +200,17 @@ func (s *Service) Rollback(ctx context.Context, actor, source string, version in
 
 // RollbackAuthorized is Rollback with an in-lock authorization gate.
 func (s *Service) RollbackAuthorized(ctx context.Context, actor, source string, version int64, authorize Authorize) (Snapshot, error) {
+	return s.RollbackAuthorizedExpect(ctx, actor, source, version, authorize, 0)
+}
+
+// RollbackAuthorizedExpect is RollbackAuthorized with the same optimistic-
+// concurrency check as ApplyAuthorizedExpect.
+func (s *Service) RollbackAuthorizedExpect(ctx context.Context, actor, source string, version int64, authorize Authorize, expectedParent int64) (Snapshot, error) {
 	old, err := s.store.Get(ctx, version)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	snap, err := s.applyLocked(ctx, actor, source, "config.rollback", old.Params, authorize)
+	snap, err := s.applyLocked(ctx, actor, source, "config.rollback", old.Params, authorize, expectedParent)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -208,13 +242,20 @@ func (s *Service) PlanDiff(p Params) (map[string]Change, error) {
 	return Diff(s.Current().Params, p)
 }
 
-func (s *Service) applyLocked(ctx context.Context, actor, source, action string, p Params, authorize Authorize) (Snapshot, error) {
+func (s *Service) applyLocked(ctx context.Context, actor, source, action string, p Params, authorize Authorize, expectedParent int64) (Snapshot, error) {
 	if err := p.Validate(); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %s", ErrInvalid, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur := s.Current()
+	// Optimistic concurrency (checked inside the writer lock, same as
+	// authorize, so a racing writer cannot slip in between the check and
+	// the write): a non-zero expectedParent that no longer matches the
+	// active version means someone else changed the config first.
+	if expectedParent != 0 && cur.Version != expectedParent {
+		return Snapshot{}, &StaleVersionError{Current: cur.Version}
+	}
 	diff, err := Diff(cur.Params, p)
 	if err != nil {
 		return Snapshot{}, err
