@@ -113,7 +113,7 @@ data-flow,security,risk}.md`.
 - tests: table-driven.
 
 ### T-015 Opportunity engine (lifecycle, TTL)
-- priority: P0 · component: opportunity · status: TODO
+- priority: P0 · component: opportunity · status: DONE (transition table, buffered economics, revalidation contract)
 - description: opportunity model per SKILL.md §19 with statuses, reason
   codes, TTL, book-version citations, revalidation contract.
 - dependencies: T-013
@@ -121,7 +121,7 @@ data-flow,security,risk}.md`.
   suppression.
 
 ### T-016 Risk engine + circuit breakers
-- priority: P0 · component: risk · status: TODO
+- priority: P0 · component: risk · status: DONE (boundary table per limit, monotonicity, breaker lifecycle)
 - description: deterministic limit evaluation per docs/risk.md §2 with
   scoped overrides + reason codes; breaker framework per §3 (safe
   default OPEN); risk events.
@@ -130,7 +130,7 @@ data-flow,security,risk}.md`.
   transition tests; decisions cite config version + effective limits.
 
 ### T-017 Capital reservation manager
-- priority: P0 · component: reservation · status: TODO
+- priority: P0 · component: reservation · status: DONE (-race storms, conservation invariants, idempotency)
 - description: atomic reserve/settle/release with idempotency keys,
   conflict policy, conservation invariants per docs/risk.md §4.
 - dependencies: T-010
@@ -138,7 +138,7 @@ data-flow,security,risk}.md`.
   keys return original reservation.
 
 ### T-018 Paper execution simulator
-- priority: P0 · component: simulation · status: TODO
+- priority: P0 · component: simulation · status: DONE (outcome-per-test incl. exposure marks, seed determinism, disabled LiveExecutor proven)
 - description: three-leg sequential simulation per
   resources/execution-simulation.md: seeded latency draws, fill-time book
   reads, partial fills, all outcomomes, intermediate exposure +
