@@ -65,9 +65,9 @@ func (a Action) String() string {
 
 // Meta is the validator-visible book state.
 type Meta struct {
-	State         State
-	LastUpdateID  int64
-	Initialized   bool // a snapshot has been applied since the last reset
+	State        State
+	LastUpdateID int64
+	Initialized  bool // a snapshot has been applied since the last reset
 }
 
 // SequenceValidator encodes one venue's continuity rule

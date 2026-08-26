@@ -14,9 +14,9 @@ import (
 type PrecisionMode uint8
 
 const (
-	PrecisionUnset PrecisionMode = iota
-	PrecisionStep                // quantize to multiples of Step
-	PrecisionDecimals            // truncate to N decimal places
+	PrecisionUnset    PrecisionMode = iota
+	PrecisionStep                   // quantize to multiples of Step
+	PrecisionDecimals               // truncate to N decimal places
 )
 
 // InstrumentRules are the normalized trading constraints of one market.

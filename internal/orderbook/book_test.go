@@ -73,8 +73,8 @@ func TestDeltaMergeReplaceInsertDelete(t *testing.T) {
 
 	action := b.Apply(DepthEvent{
 		Market: testMkt, FirstUpdateID: 101, FinalUpdateID: 101,
-		Bids: []Level{lv("100", "5"), lv("99.5", "2"), lv("99", "0")},
-		Asks: []Level{lv("101", "0"), lv("103", "4")},
+		Bids:        []Level{lv("100", "5"), lv("99.5", "2"), lv("99", "0")},
+		Asks:        []Level{lv("101", "0"), lv("103", "4")},
 		ReceiveTime: time.Unix(1001, 0),
 	}, chainValidator{})
 	if action != ActionApply {

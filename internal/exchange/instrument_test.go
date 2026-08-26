@@ -18,11 +18,11 @@ func stepRules(qtyStep, tick string) InstrumentRules {
 
 func TestQuantizeQtyStep(t *testing.T) {
 	cases := []struct{ step, in, want string }{
-		{"0.001", "1.23456", "1.234"},   // plain truncation to step
-		{"0.001", "1.234", "1.234"},     // already on grid
-		{"0.05", "1.234", "1.20"},       // non-power-of-ten step
-		{"0.05", "0.04999", "0"},        // below one step
-		{"1", "9.999", "9"},             // integer step
+		{"0.001", "1.23456", "1.234"},               // plain truncation to step
+		{"0.001", "1.234", "1.234"},                 // already on grid
+		{"0.05", "1.234", "1.20"},                   // non-power-of-ten step
+		{"0.05", "0.04999", "0"},                    // below one step
+		{"1", "9.999", "9"},                         // integer step
 		{"0.00000001", "0.123456789", "0.12345678"}, // satoshi step
 	}
 	for _, c := range cases {
