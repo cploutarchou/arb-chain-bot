@@ -69,6 +69,10 @@ type Server struct {
 	Store *storage.Store
 	// Reports, when set, backs on-demand report generation.
 	Reports *reporting.Generator
+	// Recorder, when set, backs the in-process recording controls.
+	Recorder RecorderController
+	// Campaigns, when set, backs the §80 campaign routes.
+	Campaigns CampaignService
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -180,6 +184,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.aiRoutes(mux)
 	s.readRoutes(mux)
 	s.reportRoutes(mux)
+	s.opsRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):
 		// metric names and label values map the platform's internals.

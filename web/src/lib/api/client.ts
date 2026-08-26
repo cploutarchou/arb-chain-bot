@@ -307,6 +307,58 @@ export interface HealthView {
   paper?: PaperStatus;
 }
 
+export interface RecordingRow {
+  id: string;
+  exchange_id: string;
+  started_at: string;
+  ended_at?: string;
+  streams: Record<string, string>;
+  // Segment metadata varies by recorder version; only the count is
+  // displayed, so the shape is kept opaque here.
+  segment_files: unknown[];
+}
+
+export interface RecorderStatus {
+  running: boolean;
+  session_id?: string;
+  started_at?: string;
+  frames_written: number;
+  frames_dropped: number;
+  segments_closed: number;
+  bytes_closed: number;
+  symbols?: string[];
+  dir?: string;
+}
+
+export interface CampaignRequest {
+  recording: string;
+  assets?: string[];
+  balances?: Record<string, string>;
+  seeds?: number[];
+  fee_maker_bps?: number;
+  fee_taker_bps?: number;
+  grid?: "full" | "baseline";
+}
+
+export interface CampaignRun {
+  id: string;
+  recording: string;
+  request: CampaignRequest;
+  status: "queued" | "running" | "done" | "failed";
+  done: number;
+  total: number;
+  step?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  error?: string;
+  flags?: Record<string, string[]>;
+  report_md?: string;
+  report_path?: string;
+  json_path?: string;
+  actor?: string;
+}
+
 // ---- endpoint groups -----------------------------------------------------
 
 export const api = {
@@ -377,4 +429,17 @@ export const api = {
   },
   audit: (entity = "", limit = 100) =>
     get<{ events: AuditEvent[] | null }>(`/api/v1/audit?entity=${entity}&limit=${limit}`),
+  recordings: {
+    list: () =>
+      get<{ recordings: RecordingRow[] | null; persistence: boolean; recorder?: RecorderStatus }>(
+        "/api/v1/recordings",
+      ),
+    start: () => post<{ session_id: string; recorder: RecorderStatus }>("/api/v1/recordings/start"),
+    stop: () => post<{ session_id: string; recorder: RecorderStatus }>("/api/v1/recordings/stop"),
+  },
+  campaigns: {
+    list: (limit = 25) => get<{ runs: CampaignRun[] | null }>(`/api/v1/campaigns?limit=${limit}`),
+    get: (id: string) => get<{ run: CampaignRun }>(`/api/v1/campaigns/${encodeURIComponent(id)}`),
+    run: (req: CampaignRequest) => post<{ run: CampaignRun }>("/api/v1/campaigns", req),
+  },
 };
