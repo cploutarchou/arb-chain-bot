@@ -157,7 +157,7 @@ data-flow,security,risk}.md`.
   exposure from failed legs visible.
 
 ### T-020 Binance market-data connector
-- priority: P0 · component: exchange/binance · status: TODO
+- priority: P0 · component: exchange/binance · status: DONE (decoder/validator/syncer fixture-tested per official docs; live transport validates in network-enabled env - sandbox egress blocks Binance)
 - description: transport (reconnect/backoff/keepalive/24h pre-empt),
   decimal-preserving decoder for depth diffs + REST snapshot, official
   U/u splice + continuity validator, instrument metadata provider
@@ -170,7 +170,7 @@ data-flow,security,risk}.md`.
 - tests: unit + fixture replay + chaos (T-031 subset).
 
 ### T-021 Scanner assembly (hot path)
-- priority: P0 · component: app · status: TODO
+- priority: P0 · component: app · status: DONE (end-to-end fixture: qualify+reject both directions, breaker gating, -race)
 - description: wire feeds → books → dirty queue → evaluator pool →
   risk → opportunity stream per docs/architecture.md §5–§6; bounded
   queues, metrics, graceful shutdown; modes.
