@@ -19,6 +19,11 @@ type Replayer struct {
 	// OnApply, when set, observes every applied change (decision logging,
 	// scanner driving in BACKTEST wiring).
 	OnApply func(id exchange.MarketID, action orderbook.Action)
+	// Transform, when set, mutates each decoded event before it reaches
+	// the syncer — the §80 "lower liquidity" stress scales quantities
+	// here so detection AND fills see the same thinner world. It must
+	// not touch sequence fields.
+	Transform func(*orderbook.DepthEvent)
 
 	syncers map[exchange.MarketID]*binance.Syncer
 }
@@ -54,6 +59,9 @@ func (r *Replayer) Apply(fr Frame) error {
 		if !ok {
 			return nil // unsubscribed market in a shared recording
 		}
+		if r.Transform != nil {
+			r.Transform(&ev)
+		}
 		action, err := syncer.OnDelta(ev)
 		if err != nil {
 			return fmt.Errorf("replay: %s: %w", ev.Market, err)
@@ -77,6 +85,9 @@ func (r *Replayer) Apply(fr Frame) error {
 		syncer, ok := r.syncers[id]
 		if !ok {
 			return nil
+		}
+		if r.Transform != nil {
+			r.Transform(&ev)
 		}
 		if err := syncer.OnSnapshot(ev); err != nil {
 			// A behind-buffer snapshot in a recording reflects what live saw;
