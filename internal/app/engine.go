@@ -19,6 +19,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/fees"
 	"github.com/cploutarchou/arb-chain-bot/internal/graph"
 	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
+	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/paper"
@@ -53,6 +54,9 @@ type Engine struct {
 	// Strategy, when set, supplies the versioned dynamic config and
 	// hot-swaps the scanner on every applied version (T-034).
 	Strategy *strategy.Service
+	// Metrics, when set, receives the engine's instrument sources; hot
+	// paths pay only atomic adds (T-035).
+	Metrics *metrics.Metrics
 
 	mu    sync.RWMutex
 	scn   *scanner.Scanner
@@ -323,6 +327,9 @@ func (e *Engine) Run(ctx context.Context) error {
 				e.log.Info("paper cycle settled",
 					"cycle_id", res.CycleID, "outcome", string(res.Outcome),
 					"pnl", res.TotalPnL.String(), "consumed", res.InputConsumed.String())
+				if e.Metrics != nil && res.Outcome == execution.OutcomeAllFilled {
+					e.Metrics.ObserveSlippage(string(binance.ID), res.SlippageBps.InexactFloat64())
+				}
 				if outbox != nil {
 					r := res
 					outbox.Enqueue(storage.Record{Kind: "cycle", Cycle: &r, SessionID: sessionID})
@@ -344,6 +351,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.mu.Lock()
 	e.scn, e.topo, e.pap, e.port, e.ready = scn, topo, paperEng, port, true
 	e.mu.Unlock()
+
+	if e.Metrics != nil {
+		e.wireMetrics(scn, topo, feed, books, resv, breakers, paperEng, port, recorder, starts)
+	}
 
 	if e.Hub != nil {
 		e.Hub.RegisterTopic("scanner", func() (json.RawMessage, error) {
@@ -403,6 +414,10 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 				outbox.Enqueue(storage.Record{Kind: "opportunity", Opportunity: &op, Decision: &dec})
 			}
 			if ev.Opportunity.Status == opportunity.StatusQualified {
+				if e.Metrics != nil {
+					e.Metrics.ObserveQualifiedEdge(string(ev.Opportunity.Exchange),
+						ev.Opportunity.NetReturnBps.InexactFloat64())
+				}
 				if paperIn != nil {
 					select {
 					case paperIn <- ev:
@@ -457,6 +472,116 @@ func (e *Engine) bootstrapMetadata(ctx context.Context, rest *binance.RESTClient
 		if backoff < time.Minute {
 			backoff *= 2
 		}
+	}
+}
+
+// wireMetrics attaches the engine's instrument sources: sync observers
+// on the scanner/feed and pull callbacks over the existing atomics.
+func (e *Engine) wireMetrics(
+	scn *scanner.Scanner, topo *graph.Topology, feed *binance.Feed,
+	books *orderbook.Set, resv *reservation.Manager, breakers *risk.Registry,
+	paperEng *paper.Engine, port *portfolio.Portfolio,
+	recorder *marketdata.Recorder, starts []exchange.Asset,
+) {
+	m := e.Metrics
+	scn.EvalObserver = func(d time.Duration) {
+		m.ObserveEval(float64(d.Nanoseconds()) / 1e6)
+	}
+	recordLatency := m.MessageLatencyRecorder(string(binance.ID))
+	feed.LatencyObserver = func(d time.Duration) {
+		recordLatency(float64(d.Nanoseconds()) / 1e6)
+	}
+	src := metrics.EngineSources{
+		Scanner: func() metrics.ScannerStats {
+			return metrics.ScannerStats{
+				Evaluations:   scn.Stats.Evaluations.Load(),
+				Qualified:     scn.Stats.Qualified.Load(),
+				Rejected:      scn.Stats.Rejected.Load(),
+				SkippedBooks:  scn.Stats.SkippedBooks.Load(),
+				DroppedEvents: scn.Stats.DroppedEvts.Load(),
+			}
+		},
+		Triangles: func() int64 { return int64(len(topo.Triangles)) },
+		Feed: func() metrics.FeedStats {
+			return metrics.FeedStats{
+				Exchange:   string(binance.ID),
+				Frames:     feed.Stats.Frames.Load(),
+				Reconnects: feed.Stats.Reconnects.Load(),
+				APIErrors:  feed.Stats.APIErrors.Load(),
+				Resyncs:    feed.Stats.Resyncs.Load(),
+				SeqErrors:  feed.Stats.SeqGaps.Load(),
+			}
+		},
+		Books: func() []metrics.BookStat {
+			now := time.Now()
+			ids := books.All()
+			out := make([]metrics.BookStat, 0, len(ids))
+			for _, id := range ids {
+				view, ok := books.View(id, 1)
+				if !ok {
+					continue
+				}
+				out = append(out, metrics.BookStat{
+					Exchange: string(id.Exchange), Market: string(id.Symbol),
+					AgeMS: float64(view.Age(now).Nanoseconds()) / 1e6,
+					State: view.State.String(),
+				})
+			}
+			return out
+		},
+		Capital: func() []metrics.CapitalStat {
+			out := make([]metrics.CapitalStat, 0, len(starts))
+			for _, a := range starts {
+				avail, reserved := resv.Balance(a)
+				out = append(out, metrics.CapitalStat{
+					Asset:     string(a),
+					Available: avail.InexactFloat64(), Reserved: reserved.InexactFloat64(),
+				})
+			}
+			return out
+		},
+		Breakers: func() []metrics.BreakerStat {
+			states := breakers.States()
+			out := make([]metrics.BreakerStat, 0, len(states))
+			for _, tr := range states {
+				var v int64
+				switch tr.To.String() {
+				case "HALF_OPEN":
+					v = 1
+				case "OPEN":
+					v = 2
+				}
+				out = append(out, metrics.BreakerStat{Name: tr.Name, Scope: tr.Scope, State: v})
+			}
+			return out
+		},
+	}
+	if paperEng != nil {
+		src.Paper = func() *metrics.PaperStats {
+			st := paperEng.Snapshot()
+			return &metrics.PaperStats{
+				Received: st.Received, Started: st.Started,
+				Completed: st.Completed, Failed: st.Failed, Skipped: st.Skipped,
+				Active: int64(paperEng.Active()),
+			}
+		}
+		src.PnL = func() []metrics.AssetPnL {
+			out := make([]metrics.AssetPnL, 0, len(starts))
+			for _, a := range starts {
+				out = append(out, metrics.AssetPnL{
+					Asset:    string(a),
+					Realized: port.Realized(a).InexactFloat64(),
+					Fees:     port.FeesPaid(a).InexactFloat64(),
+				})
+			}
+			return out
+		}
+	}
+	if recorder != nil {
+		src.Recorder = func() (int64, int64) { return recorder.Written(), recorder.Dropped() }
+	}
+	if err := m.RegisterEngine(src); err != nil {
+		e.log.Error("metrics registration failed", "error", err)
 	}
 }
 

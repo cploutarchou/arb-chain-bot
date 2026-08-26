@@ -259,7 +259,12 @@ data-flow,security,risk}.md`.
   version; components read consistent snapshots.
 
 ### T-035 Observability build-out
-- priority: P1 · component: metrics · status: TODO
+- priority: P1 · component: metrics · status: DONE (OTel SDK +
+  Prometheus exporter; SKILL §65 set for implemented subsystems — AI/
+  Telegram series land with T-036/T-033; /metrics on the API mux or a
+  private ARB_METRICS_ADDR listener; rules + dashboard in
+  deploy/observability/; hot path = atomic adds, benched: add 7.5ns,
+  histogram record 135–280ns)
 - description: OTel+Prometheus wiring, SKILL.md §65 metric set, health
   endpoints, System Health API payloads; dashboards + alert rules in
   deploy/observability/.

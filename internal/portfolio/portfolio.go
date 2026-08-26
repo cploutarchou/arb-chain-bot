@@ -183,6 +183,20 @@ func (p *Portfolio) TakeSnapshot(now time.Time, marker Marker) Snapshot {
 	return snap
 }
 
+// Realized returns the realized session PnL for one start asset.
+func (p *Portfolio) Realized(start exchange.Asset) decimal.Decimal {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.realized[start]
+}
+
+// FeesPaid returns the cumulative simulated fees charged in one asset.
+func (p *Portfolio) FeesPaid(asset exchange.Asset) decimal.Decimal {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.fees[asset]
+}
+
 // DailyLoss reports the current loss magnitude vs initial for the risk
 // engine (0 when flat/profitable). Computed on realized only — marked
 // exposure swings are drawdown's business.

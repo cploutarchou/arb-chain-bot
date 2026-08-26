@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -39,7 +40,24 @@ type Feed struct {
 	RawTap  func(frame []byte, recv time.Time)
 	SnapTap func(symbol exchange.Symbol, body []byte, recv time.Time)
 
+	// LatencyObserver, when set, receives event-time→receive latency per
+	// decoded depth event (metrics; must be cheap and non-blocking).
+	LatencyObserver func(d time.Duration)
+
+	// Stats are cumulative transport counters, read by the metrics
+	// scraper; the hot path only pays single atomic adds.
+	Stats FeedStats
+
 	syncers map[exchange.MarketID]*Syncer
+}
+
+// FeedStats are the feed's atomic counters.
+type FeedStats struct {
+	Frames     atomic.Int64 // WS frames received
+	Reconnects atomic.Int64 // session restarts after the first connect
+	APIErrors  atomic.Int64 // REST snapshot failures
+	Resyncs    atomic.Int64 // snapshot splices started
+	SeqGaps    atomic.Int64 // sequence gaps detected
 }
 
 func (f *Feed) defaults() {
@@ -67,6 +85,7 @@ func (f *Feed) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		f.Stats.Reconnects.Add(1)
 		f.Log.Warn("binance feed session ended; reconnecting", "error", err, "backoff", backoff.String())
 		f.markAll(func(b *orderbook.Book) { b.MarkDisconnected() })
 		select {
@@ -153,6 +172,7 @@ func (f *Feed) session(ctx context.Context) error {
 
 func (f *Feed) handleFrame(ctx context.Context, frame []byte) {
 	recv := time.Now()
+	f.Stats.Frames.Add(1)
 	if f.RawTap != nil {
 		f.RawTap(frame, recv)
 	}
@@ -162,6 +182,9 @@ func (f *Feed) handleFrame(ctx context.Context, frame []byte) {
 			f.Log.Warn("binance frame decode failed", "error", err)
 		}
 		return
+	}
+	if f.LatencyObserver != nil && !ev.EventTime.IsZero() {
+		f.LatencyObserver(recv.Sub(ev.EventTime))
 	}
 	syncer, ok := f.syncers[ev.Market]
 	if !ok {
@@ -178,6 +201,7 @@ func (f *Feed) handleFrame(ctx context.Context, frame []byte) {
 	case action == orderbook.ActionApply:
 		f.Books.MarkDirty(ev.Market)
 	case action == orderbook.ActionGap, wasSynced && !syncer.Synced():
+		f.Stats.SeqGaps.Add(1)
 		f.Log.Warn("binance sequence gap; resyncing", "market", ev.Market.String())
 		go f.resyncMarket(ctx, ev.Market)
 	}
@@ -210,12 +234,14 @@ func (f *Feed) resyncMarket(ctx context.Context, id exchange.MarketID) {
 	if !ok {
 		return
 	}
+	f.Stats.Resyncs.Add(1)
 	for attempt := 0; attempt < 5; attempt++ {
 		body, snap, err := f.REST.DepthRaw(ctx, id.Symbol, SnapshotDepthLimit)
 		if err == nil && f.SnapTap != nil {
 			f.SnapTap(id.Symbol, body, snap.ReceiveTime)
 		}
 		if err != nil {
+			f.Stats.APIErrors.Add(1)
 			f.Log.Warn("binance snapshot fetch failed", "market", id.String(), "attempt", attempt, "error", err)
 			select {
 			case <-ctx.Done():

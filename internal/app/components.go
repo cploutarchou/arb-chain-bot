@@ -8,6 +8,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/api"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -59,11 +60,23 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 
 	stratSvc := buildStrategy(log, store)
 
+	// Metrics are always built (near-zero idle cost); a registration
+	// failure logs and the platform runs unobserved rather than not at all.
+	mtr, err := metrics.New()
+	if err != nil {
+		log.Error("metrics init failed; continuing without metrics", "error", err)
+		mtr = nil
+	}
+	if mtr != nil && cfg.MetricsAddr != "" {
+		others = append(others, &metrics.Server{Addr: cfg.MetricsAddr, Handler: mtr.Handler, Log: log})
+	}
+
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
 		engine = NewEngine(cfg, log)
 		engine.Store = store
 		engine.Strategy = stratSvc
+		engine.Metrics = mtr
 		others = append(others, engine)
 	}
 
@@ -78,6 +91,15 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		apiServer.Strategy = stratSvc
 		hub := realtime.NewHub(256)
 		apiServer.Hub = hub
+		if mtr != nil {
+			if cfg.MetricsAddr == "" {
+				apiServer.MetricsHandler = mtr.Handler
+			}
+			apiServer.ObserveRequest = mtr.ObserveAPIRequest
+			if err := mtr.RegisterHub(func() int64 { return int64(hub.Clients()) }); err != nil {
+				log.Error("hub metrics registration failed", "error", err)
+			}
+		}
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
 			engine.Hub = hub

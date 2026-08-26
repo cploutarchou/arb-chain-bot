@@ -4,10 +4,13 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -44,6 +47,11 @@ type Server struct {
 	Paper PaperController
 	// Strategy, when set, backs the versioned config routes.
 	Strategy *strategy.Service
+	// MetricsHandler, when set, serves GET /metrics on this mux (dev
+	// convenience; production sets ARB_METRICS_ADDR for a private port).
+	MetricsHandler http.Handler
+	// ObserveRequest, when set, records api_request_duration per request.
+	ObserveRequest func(method, route string, status int, seconds float64)
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -142,22 +150,61 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Resume() }))))
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 	s.configRoutes(mux)
+	if s.MetricsHandler != nil {
+		mux.Handle("GET /metrics", s.MetricsHandler)
+	}
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		// Health probes are noise at info level.
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		// Health probes and scrapes are noise in both logs and metrics.
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
 			return
 		}
+		if s.ObserveRequest != nil {
+			// The mux stamps the matched pattern on the request; bounded
+			// route label, never the raw path.
+			route := r.Pattern
+			if route == "" {
+				route = "unmatched"
+			}
+			s.ObserveRequest(r.Method, route, rec.status, time.Since(start).Seconds())
+		}
 		s.log.Debug("http request",
-			"method", r.Method, "path", r.URL.Path,
+			"method", r.Method, "path", r.URL.Path, "status", rec.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"correlation_id", r.Header.Get("X-Correlation-ID"),
 		)
 	})
+}
+
+// statusRecorder captures the response code; Hijack passes through so
+// the websocket upgrade keeps working behind the wrapper.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("api: underlying writer does not support hijacking")
+	}
+	return h.Hijack()
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // Envelope is the uniform API response shape (docs/architecture.md §7).

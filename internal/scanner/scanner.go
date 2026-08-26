@@ -91,6 +91,10 @@ type Scanner struct {
 
 	// Sims reports concurrent simulations (paper engine); nil = zero.
 	Sims func() int
+
+	// EvalObserver, when set, receives each evaluation's wall duration
+	// (metrics). Must be cheap; nil disables with zero hot-path cost.
+	EvalObserver func(d time.Duration)
 }
 
 func (s *Scanner) Name() string { return "scanner" }
@@ -161,6 +165,10 @@ func (s *Scanner) EvaluateMarket(id exchange.MarketID) {
 // EvaluateTriangle runs the full pipeline for one triangle and emits an
 // event when an opportunity was actually evaluated (books present).
 func (s *Scanner) EvaluateTriangle(tri graph.Triangle) {
+	if s.EvalObserver != nil {
+		start := time.Now() // real clock: durations stay wall-time in replay
+		defer func() { s.EvalObserver(time.Since(start)) }()
+	}
 	now := s.Clock()
 	st := s.currentStrategy()
 	cfg := st.Cfg
