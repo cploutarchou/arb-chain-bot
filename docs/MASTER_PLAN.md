@@ -14,7 +14,7 @@ data-flow,security,risk}.md`.
 ## P0 — CRITICAL (foundation & financial correctness)
 
 ### T-001 Repository bootstrap — Go module & package skeleton
-- priority: P0 · component: build · status: TODO
+- priority: P0 · component: build · status: DONE (build/vet/race-test/gofmt/golangci clean)
 - description: go.mod (`github.com/cploutarchou/arb-chain-bot`), cmd/
   entries, internal package skeletons compiling, slog logging setup,
   Makefile, .gitignore, .env.example.
@@ -26,7 +26,7 @@ data-flow,security,risk}.md`.
 - tests: CI compile gate.
 
 ### T-002 Docker development environment
-- priority: P0 · component: deploy · status: TODO
+- priority: P0 · component: deploy · status: DONE (compose authored; daemon unavailable in dev sandbox, so compose run is verified in CI/user env; migrations validated against local PostgreSQL 16.13 instead)
 - description: docker-compose with PostgreSQL 16 (+healthcheck), app env
   wiring, migration runner target.
 - dependencies: T-001 · risks: none
@@ -35,7 +35,7 @@ data-flow,security,risk}.md`.
 - tests: CI can start service container.
 
 ### T-003 Database migrations framework + initial schema
-- priority: P0 · component: storage · status: TODO
+- priority: P0 · component: storage · status: DONE (up→down→up validated on PostgreSQL 16.13; 23 tables)
 - description: migrations/ (golang-migrate naming), 0001 initial schema
   per docs/data-flow.md §4 (NUMERIC money, timestamptz, insert-only audit
   grants documented).
@@ -46,7 +46,7 @@ data-flow,security,risk}.md`.
 - tests: integration test applies migrations against dockerized PG.
 
 ### T-004 CI pipeline
-- priority: P0 · component: build · status: TODO
+- priority: P0 · component: build · status: IN_PROGRESS (workflow authored + all checks pass locally; flips to DONE when the PR run is green)
 - description: GitHub Actions: gofmt check, go vet, golangci-lint, go
   test (-race), gosec, govulncheck, gitleaks, frontend lint/typecheck/
   test/build, E2E critical path (later stage).
