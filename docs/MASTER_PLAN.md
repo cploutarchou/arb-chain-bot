@@ -450,39 +450,18 @@ data-flow,security,risk}.md`.
   wanted).
 
 ### T-056 MEXC research round
-- status: TODO. MEXC is a candidate venue that has never been researched
-  (not in the seven-exchange comparison). Before it can be ranked: spot
-  fee schedule and API-usable discounts, order-book channel protocol
-  and integrity mechanism, WS/REST limits, instrument rules, spot
-  test/demo environment, key permission model — same template as
-  docs/research/exchanges.md, primary sources only.
-
-### T-052 MFA (TOTP) enrollment
-- status: TODO · architecture reserved in auth flow.
-
-### T-053 Parquet analytical derivatives of recordings
-- status: TODO (only with measured analytical need)
-
-### T-054 Email notification channel
-- status: TODO (NotificationService adapter)
-
-### T-055 Console-driven recording and §80 campaigns
-- status: DONE (2026-08-26). Recording and the campaign no longer need
-  a terminal: `marketdata.RecorderControl` owns the live recorder
-  in-process (fresh session id per start; stop drains and registers the
-  last segment; RECORD mode still auto-starts), `internal/campaign`
-  holds the grid×seeds orchestration shared by `cmd/campaign` and a
-  background `Runner` (one run at a time, progress + verdict persisted
-  in `campaign_runs`, reports written next to the recording), the API
-  gained `POST /api/v1/recordings/{start,stop}` and
-  `GET|POST /api/v1/campaigns[/{id}]` behind two new OPERATOR
-  permissions (`recordings:control`, `campaigns:run`) with CSRF and
-  audit, realtime topics `recordings`/`campaigns`, and the console has a
-  Campaigns page (recorder card, sessions, run form, runs with verbatim
-  Verdict). Tests: recorder-control lifecycle, runner state machine,
-  API RBAC/CSRF/conflict paths. Live trading and the risk engine are
-  untouched; recording remains keyless.
-- dependencies: T-046 tooling
+- status: DONE (2026-08-26) — docs/research/mexc.md. Score 65/100
+  (between Gate 63 and Bitget 73): cheapest venue on paper (0/5 bps base;
+  `exchangeInfo` publishes 0/0 on 245 USDC-quoted pairs incl. BTCUSDC,
+  ETHUSDC, USDCUSDT → a 5 bps cycle *if* it applies to API flow —
+  unverified, every platform promo excludes API users), protobuf-only
+  order-book stream with a Binance-class version chain and a documented
+  off-snapshot blind spot, 30 subscriptions/connection, no spot
+  test/demo environment, IOC/FOK effectively absent (GTC-only in
+  practice), conflicting official rate-limit numbers. Enters the Phase 21
+  scoring round (T-051) as a fee-driven challenger with five named
+  burn-ins (API fee via `tradeFee`, IOC behaviour, real IP/UID budget,
+  WS ping/connection caps, fee asset convention).
 
 ---
 
@@ -751,3 +730,8 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   front-end — in-process recorder control, background campaign runner
   with persisted runs, ops API + permissions, Campaigns page
   (docs/deployment.md §3b).
+- 2026-08-26 (T-056): MEXC researched from primary sources + live
+  keyless API pulls (docs/research/mexc.md): 2,115 spot pairs, six core
+  legs live, 0/5 bps base with a zero-fee USDC zone whose API
+  eligibility is unverified; scored 65/100; queued for the T-051 scoring
+  round with named burn-ins.
