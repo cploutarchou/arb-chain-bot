@@ -117,6 +117,36 @@ trusting any positive result.
   contains no reaction to orders that were never sent. Treat results as
   an upper bound and lean on the stressed scenarios, not the baseline.
 
+## 3b. Console-driven recording and campaigns
+
+Everything in §2–§3 can also be driven from the operations console —
+no terminal needed once the stack is up:
+
+```sh
+docker compose --profile paper up -d --build   # engine + API on :8080
+cd web && npm run build && npm start           # console
+```
+
+Sign in and open **Campaigns**:
+
+- **Recorder** card — start/stop an in-process recording session
+  (permission `recordings:control`, OPERATOR and ADMIN). The session id,
+  uptime, frames written/dropped and closed segments update live; stop
+  waits for the last segment to close and register, so the session is
+  immediately usable. `ARB_MODE=RECORD` still auto-starts a session at
+  boot for headless deployments.
+- **Recorded sessions** — the `market_recording_metadata` catalog with
+  a *Run campaign* button per closed session.
+- **Run §80 campaign** — the same grid × seeds the CLI runs
+  (`internal/campaign` is shared by both), executed in the background
+  inside `arbd` (permission `campaigns:run`); progress streams over the
+  console WebSocket. Reports are written next to the recording
+  (`/recordings/<SESSION-ID>/campaign-<RUN-ID>.md|.json`) and kept in
+  `campaign_runs`, and the **Verdict** flags are shown verbatim.
+
+Every start/stop/run is audited (`audit_events`, source=web). Recording
+still needs no API keys and the engine still cannot place orders.
+
 ## 4. Optional: full paper deployment
 
 ```sh

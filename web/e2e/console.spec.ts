@@ -38,7 +38,7 @@ test("login reaches overview with live system status", async ({ page }) => {
 });
 
 test("every nav page renders content or an honest state", async ({ page }) => {
-  // Fifteen page visits; dev-server first compiles push past the
+  // Sixteen page visits; dev-server first compiles push past the
   // default budget.
   test.setTimeout(120_000);
   await login(page);
@@ -54,6 +54,7 @@ test("every nav page renders content or an honest state", async ({ page }) => {
     ["/risk", /Risk Center/],
     ["/reports", /Reports/],
     ["/replay", /Replay/],
+    ["/campaigns", /Campaigns/],
     ["/alerts", /Alert Center/],
     ["/system", /System/],
     ["/audit", /Audit Log/],

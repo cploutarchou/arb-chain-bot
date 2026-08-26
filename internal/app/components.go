@@ -2,15 +2,17 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
-
-	"encoding/json"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/api"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/campaign"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
@@ -120,6 +122,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	}
 
 	var reportGen *reporting.Generator
+	var campaigns *campaign.Runner
 
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
@@ -151,6 +154,16 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			Log:     log, IDGen: newULID, Now: time.Now,
 		}
 		others = append(others, &reporting.Scheduler{Generator: reportGen, Log: log})
+
+		// §80 campaign runner: in-process replacement for `make campaign`;
+		// needs persisted market metadata and the stream table.
+		if store != nil {
+			campaigns = &campaign.Runner{
+				Sources: store, Store: store,
+				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
+			}
+			others = append(others, campaigns)
+		}
 
 		// Telegram control surface: only with a token, a non-empty
 		// allow-list, and an engine to control.
@@ -228,10 +241,50 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			if cfg.Mode == config.ModePaper {
 				apiServer.Paper = paperProxy{engine}
 			}
+			apiServer.Recorder = recorderProxy{engine}
+		}
+		if campaigns != nil {
+			hub.RegisterTopic("campaigns", func() (json.RawMessage, error) {
+				runs, err := campaigns.List(context.Background(), 50)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]any{"runs": runs})
+			})
+			campaigns.Publish = func(data any) { _ = hub.Publish("campaigns", data) }
+			apiServer.Campaigns = campaigns
 		}
 		return append([]Component{apiServer}, others...)
 	}
 	return others
+}
+
+// recorderProxy defers to the engine's recording control, which exists
+// only after metadata bootstrap; calls before readiness fail loudly
+// rather than start a session nobody tracks.
+type recorderProxy struct{ e *Engine }
+
+var errRecorderNotReady = errors.New("recorder: engine not bootstrapped yet")
+
+func (p recorderProxy) StartSession() (string, error) {
+	if c := p.e.Recorder(); c != nil {
+		return c.StartSession()
+	}
+	return "", errRecorderNotReady
+}
+
+func (p recorderProxy) Stop() (string, error) {
+	if c := p.e.Recorder(); c != nil {
+		return c.Stop()
+	}
+	return "", marketdata.ErrRecorderIdle
+}
+
+func (p recorderProxy) Status() marketdata.RecorderStatus {
+	if c := p.e.Recorder(); c != nil {
+		return c.Status()
+	}
+	return marketdata.RecorderStatus{}
 }
 
 // paperProxy defers to the engine's paper controller, which exists only

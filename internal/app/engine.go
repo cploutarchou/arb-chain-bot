@@ -68,6 +68,7 @@ type Engine struct {
 	scn    *scanner.Scanner
 	topo   *graph.Topology
 	pap    *paper.Engine
+	rctl   *marketdata.RecorderControl
 	port   *portfolio.Portfolio
 	feed   *binance.Feed
 	resv   *reservation.Manager
@@ -207,6 +208,14 @@ func (e *Engine) Status() EngineStatus {
 	return st
 }
 
+// Recorder exposes the in-process recording control (nil before the
+// engine has bootstrapped).
+func (e *Engine) Recorder() *marketdata.RecorderControl {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.rctl
+}
+
 // Paper exposes the paper engine control surface (nil outside PAPER mode).
 func (e *Engine) Paper() *paper.Engine {
 	e.mu.RLock()
@@ -259,32 +268,38 @@ func (e *Engine) Run(ctx context.Context) error {
 		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID}
 	}
 
-	// RECORD mode: capture raw frames + splice snapshots for replay.
-	var recorder *marketdata.Recorder
-	if e.cfg.Mode == config.ModeRecord {
-		streamTable := make(map[exchange.Symbol]uint16, len(feedSymbols))
-		for i, sym := range feedSymbols {
-			streamTable[sym] = uint16(i + 1) //nolint:gosec // bounded by symbol count
-		}
-		recorder = &marketdata.Recorder{
-			Dir:            e.cfg.RecordingDir,
-			SessionID:      sessionID,
-			Log:            e.log,
-			StreamOfSymbol: streamTable,
-		}
-		startedAt := time.Now()
-		if e.Store != nil {
-			streams := recorder.Streams()
-			recorder.OnSegment = func(meta marketdata.SegmentMeta) {
-				regCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := e.Store.UpsertRecordingSegment(regCtx, sessionID, binance.ID, streams, startedAt, meta); err != nil {
-					e.log.Warn("recording metadata registration failed", "error", err)
-				}
+	// Recording control: raw frames + splice snapshots for replay. The
+	// control is always wired so the console can start/stop sessions
+	// in-process; RECORD mode auto-starts one at boot.
+	streamTable := make(map[exchange.Symbol]uint16, len(feedSymbols))
+	for i, sym := range feedSymbols {
+		streamTable[sym] = uint16(i + 1) //nolint:gosec // bounded by symbol count
+	}
+	rctl := &marketdata.RecorderControl{
+		Dir:            e.cfg.RecordingDir,
+		Log:            e.log,
+		StreamOfSymbol: streamTable,
+		NewSessionID:   newULID,
+	}
+	rctl.Bind(ctx)
+	if e.Store != nil {
+		streams := (&marketdata.Recorder{StreamOfSymbol: streamTable}).Streams()
+		rctl.OnSegment = func(recID string, startedAt time.Time, meta marketdata.SegmentMeta) {
+			regCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := e.Store.UpsertRecordingSegment(regCtx, recID, binance.ID, streams, startedAt, meta); err != nil {
+				e.log.Warn("recording metadata registration failed", "error", err)
 			}
 		}
-		e.log.Info("recording enabled", "dir", e.cfg.RecordingDir, "session", sessionID)
 	}
+	if e.Hub != nil {
+		rctl.OnChange = func(st marketdata.RecorderStatus) {
+			_ = e.Hub.Publish("recordings", map[string]any{"kind": "recorder", "recorder": st})
+		}
+	}
+	e.mu.Lock()
+	e.rctl = rctl
+	e.mu.Unlock()
 
 	// Base-tier taker fees; per-account refresh is a follow-up task
 	// (fees are re-pulled at runtime, never hardcoded for real accounts —
@@ -313,10 +328,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		Symbols: feedSymbols,
 		Log:     e.log,
 	}
-	if recorder != nil {
-		feed.RawTap = recorder.TapWS
-		feed.SnapTap = recorder.TapSnapshot
-	}
+	feed.RawTap = rctl.TapWS
+	feed.SnapTap = rctl.TapSnapshot
 
 	breakers := risk.NewRegistry(func(tr risk.Transition) {
 		e.log.Warn("circuit breaker transition",
@@ -461,7 +474,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	defer e.notify(notification.SeverityInfo, "engine:stopped", "Engine stopped", "shutdown or fatal component exit")
 
 	if e.Metrics != nil {
-		e.wireMetrics(scn, topo, feed, books, resv, breakers, paperEng, port, recorder, starts)
+		e.wireMetrics(scn, topo, feed, books, resv, breakers, paperEng, port, rctl, starts)
 	}
 
 	if e.Hub != nil {
@@ -471,6 +484,14 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.Hub.RegisterTopic("health", func() (json.RawMessage, error) {
 			return json.Marshal(map[string]any{"engine": e.Status(), "mode": string(e.cfg.Mode)})
 		})
+		e.Hub.RegisterTopic("recordings", func() (json.RawMessage, error) {
+			return json.Marshal(map[string]any{"recorder": rctl.Status()})
+		})
+	}
+	if e.cfg.Mode == config.ModeRecord {
+		if _, err := rctl.Start(ctx); err != nil {
+			return fmt.Errorf("engine: start recording: %w", err)
+		}
 	}
 
 	errCh := make(chan error, 6)
@@ -482,9 +503,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	if outbox != nil {
 		go func() { errCh <- outbox.Run(ctx) }()
-	}
-	if recorder != nil {
-		go func() { errCh <- recorder.Run(ctx) }()
 	}
 
 	// Staleness sweep: books that stop ticking degrade to STALE.
@@ -608,7 +626,7 @@ func (e *Engine) wireMetrics(
 	scn *scanner.Scanner, topo *graph.Topology, feed *binance.Feed,
 	books *orderbook.Set, resv *reservation.Manager, breakers *risk.Registry,
 	paperEng *paper.Engine, port *portfolio.Portfolio,
-	recorder *marketdata.Recorder, starts []exchange.Asset,
+	rctl *marketdata.RecorderControl, starts []exchange.Asset,
 ) {
 	m := e.Metrics
 	scn.EvalObserver = func(d time.Duration) {
@@ -704,8 +722,11 @@ func (e *Engine) wireMetrics(
 			return out
 		}
 	}
-	if recorder != nil {
-		src.Recorder = func() (int64, int64) { return recorder.Written(), recorder.Dropped() }
+	if rctl != nil {
+		src.Recorder = func() (int64, int64) {
+			st := rctl.Status()
+			return st.Written, st.Dropped
+		}
 	}
 	if err := m.RegisterEngine(src); err != nil {
 		e.log.Error("metrics registration failed", "error", err)
