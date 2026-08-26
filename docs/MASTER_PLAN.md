@@ -238,7 +238,14 @@ data-flow,security,risk}.md`.
   (golden test).
 
 ### T-033 Telegram control surface
-- priority: P1 · component: telegram · status: TODO
+- priority: P1 · component: telegram · status: DONE (long-poll bot with
+  allow-list auth + generic denial, SKILL §56 command set over the same
+  services as the web console, signed single-use inline callbacks,
+  audited controls, NotificationService with severity routing/cooldown/
+  dedup/aggregation + web/telegram sinks; fake-API tests. Engine emits:
+  ready/stopped, breaker transitions, cycle failures, drawdown
+  approach, large opportunities — remaining §58 hooks land with their
+  subsystems: AI (T-036), reports (T-042), alert lifecycle (T-037))
 - description: bot per resources/telegram.md — allow-list auth, core
   commands, inline approve/ack buttons, NotificationService routing with
   cooldowns/dedup.

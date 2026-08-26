@@ -5,13 +5,17 @@ import (
 	"log/slog"
 	"time"
 
+	"encoding/json"
+
 	"github.com/cploutarchou/arb-chain-bot/internal/api"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
+	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
+	"github.com/cploutarchou/arb-chain-bot/internal/telegram"
 )
 
 // Profile selects which component set a cmd/ entry point runs. All
@@ -34,8 +38,6 @@ const (
 // server's status payload reports which components this build includes so
 // the process never pretends to run subsystems that do not exist yet.
 func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Component {
-	// Recorder, replay, worker, and Telegram components join this list as
-	// their MASTER_PLAN tasks complete (T-032, T-033).
 	var others []Component
 	var engine *Engine
 
@@ -71,13 +73,52 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		others = append(others, &metrics.Server{Addr: cfg.MetricsAddr, Handler: mtr.Handler, Log: log})
 	}
 
+	// One notification router for every channel; routing config follows
+	// the versioned strategy config (hot swap included).
+	notify := notification.NewService(log, notificationConfig(stratSvc.Current()), time.Now)
+	stratSvc.Subscribe(func(snap strategy.Snapshot) {
+		notify.Reconfigure(notificationConfig(snap))
+	})
+
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
 		engine = NewEngine(cfg, log)
 		engine.Store = store
 		engine.Strategy = stratSvc
 		engine.Metrics = mtr
+		engine.Notifier = notify
 		others = append(others, engine)
+
+		// Telegram control surface: only with a token, a non-empty
+		// allow-list, and an engine to control.
+		if cfg.TelegramToken != "" && len(cfg.TelegramAllowlist) > 0 {
+			allow := make(map[int64]bool, len(cfg.TelegramAllowlist))
+			for _, id := range cfg.TelegramAllowlist {
+				allow[id] = true
+			}
+			client := telegram.NewClient("https://api.telegram.org/bot" + cfg.TelegramToken)
+			bot := &telegram.Bot{
+				Client:    client,
+				Allowlist: allow,
+				Services:  telegramServices{e: engine, n: notify, s: stratSvc},
+				Log:       log,
+				Audit:     telegramAudit(log, store),
+			}
+			push := &telegram.PushSink{
+				Client: client, ChatIDs: cfg.TelegramAllowlist,
+				Log: log, OnDrop: notify.CountDrop,
+			}
+			notify.Register(push)
+			others = append(others, bot, push)
+			if mtr != nil {
+				if err := mtr.RegisterTelegram(bot.Messages, bot.Errors); err != nil {
+					log.Error("telegram metrics registration failed", "error", err)
+				}
+			}
+			log.Info("telegram bot enabled", "allowlisted_users", len(cfg.TelegramAllowlist))
+		} else if cfg.TelegramToken != "" {
+			log.Warn("ARB_TELEGRAM_TOKEN set but ARB_TELEGRAM_ALLOWLIST empty; bot disabled (allow-list is mandatory)")
+		}
 	}
 
 	if p == ProfileFull || p == ProfileAPI {
@@ -100,6 +141,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 				log.Error("hub metrics registration failed", "error", err)
 			}
 		}
+		// Web alert channel: hub topic with the recent ring as snapshot.
+		hub.RegisterTopic("alerts", func() (json.RawMessage, error) {
+			return json.Marshal(notify.Recent(20))
+		})
+		notify.Register(webSink{hub: hub})
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
 			engine.Hub = hub
@@ -134,6 +180,49 @@ func (p paperProxy) Running() bool {
 		return pe.Running()
 	}
 	return false
+}
+
+// notificationConfig converts the strategy payload's notification slice.
+func notificationConfig(snap strategy.Snapshot) notification.Config {
+	return notification.Config{
+		Cooldown: time.Duration(snap.Params.Notifications.CooldownSeconds) * time.Second,
+		Routes:   snap.Params.Notifications.Routes,
+	}
+}
+
+// webSink publishes deliveries onto the realtime hub's alerts topic.
+type webSink struct{ hub *realtime.Hub }
+
+func (w webSink) Name() string { return "web" }
+
+func (w webSink) Deliver(d notification.Delivery) {
+	_ = w.hub.Publish("alerts", map[string]any{
+		"severity":   d.Severity.String(),
+		"key":        d.Key,
+		"title":      d.Title,
+		"body":       d.Body,
+		"at":         d.At,
+		"suppressed": d.Suppressed,
+	})
+}
+
+// telegramAudit records bot control actions (source=telegram) into
+// audit_events when persistence is on; log-only otherwise.
+func telegramAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity string) {
+	return func(actor, action, entity string) {
+		if store == nil {
+			log.Info("audit event (memory-only)", "actor", actor, "action", action, "entity", entity, "source", "telegram")
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.InsertAuditEvent(ctx, storage.AuditRow{
+			ID: newULID(), Actor: actor, Source: "telegram",
+			Action: action, Entity: entity,
+		}); err != nil {
+			log.Error("telegram audit insert failed", "error", err)
+		}
+	}
 }
 
 // buildStrategy wires the versioned config service: DB-backed rows when

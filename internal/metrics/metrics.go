@@ -306,6 +306,27 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 	return err
 }
 
+// RegisterTelegram exposes the bot's message/error counters
+// (telegram_messages_total, telegram_errors_total).
+func (m *Metrics) RegisterTelegram(msgs, errs func() int64) error {
+	sent, err := m.meter.Int64ObservableCounter("telegram_messages",
+		api.WithDescription("telegram updates handled"))
+	if err != nil {
+		return err
+	}
+	failed, err := m.meter.Int64ObservableCounter("telegram_errors",
+		api.WithDescription("telegram API errors"))
+	if err != nil {
+		return err
+	}
+	_, err = m.meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		o.ObserveInt64(sent, msgs())
+		o.ObserveInt64(failed, errs())
+		return nil
+	}, sent, failed)
+	return err
+}
+
 // RegisterHub exposes websocket_clients from the realtime hub.
 func (m *Metrics) RegisterHub(clients func() int64) error {
 	g, err := m.meter.Int64ObservableGauge("websocket_clients",

@@ -20,6 +20,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/graph"
 	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
+	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/paper"
@@ -57,13 +58,66 @@ type Engine struct {
 	// Metrics, when set, receives the engine's instrument sources; hot
 	// paths pay only atomic adds (T-035).
 	Metrics *metrics.Metrics
+	// Notifier, when set, receives platform alerts (never called on the
+	// hot path; keys per SKILL §58 with cooldown/dedup in the service).
+	Notifier *notification.Service
 
 	mu    sync.RWMutex
 	scn   *scanner.Scanner
 	topo  *graph.Topology
 	pap   *paper.Engine
 	port  *portfolio.Portfolio
+	feed  *binance.Feed
+	resv  *reservation.Manager
+	brk   *risk.Registry
 	ready bool
+
+	oppMu      sync.Mutex
+	recentOpps []RecentOpportunity
+}
+
+// RecentOpportunity is a compact ring entry for /opportunities and the
+// console's recent list.
+type RecentOpportunity struct {
+	ID         string    `json:"id"`
+	TriangleID string    `json:"triangle_id"`
+	NetBps     string    `json:"net_bps"`
+	Profit     string    `json:"profit"`
+	Input      string    `json:"input"`
+	At         time.Time `json:"at"`
+}
+
+const recentOppCap = 32
+
+// RecentOpportunities returns the latest qualified opportunities,
+// newest first.
+func (e *Engine) RecentOpportunities(limit int) []RecentOpportunity {
+	e.oppMu.Lock()
+	defer e.oppMu.Unlock()
+	if limit <= 0 || limit > len(e.recentOpps) {
+		limit = len(e.recentOpps)
+	}
+	out := make([]RecentOpportunity, 0, limit)
+	for i := len(e.recentOpps) - 1; i >= 0 && len(out) < limit; i-- {
+		out = append(out, e.recentOpps[i])
+	}
+	return out
+}
+
+func (e *Engine) rememberOpportunity(op RecentOpportunity) {
+	e.oppMu.Lock()
+	defer e.oppMu.Unlock()
+	e.recentOpps = append(e.recentOpps, op)
+	if len(e.recentOpps) > recentOppCap {
+		e.recentOpps = e.recentOpps[len(e.recentOpps)-recentOppCap:]
+	}
+}
+
+// notify is a nil-safe alert emit.
+func (e *Engine) notify(sev notification.Severity, key, title, body string) {
+	if e.Notifier != nil {
+		e.Notifier.Notify(notification.Event{Severity: sev, Key: key, Title: title, Body: body})
+	}
 }
 
 func NewEngine(cfg config.Bootstrap, log *slog.Logger) *Engine {
@@ -239,6 +293,12 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.log.Warn("circuit breaker transition",
 			"breaker", tr.Name, "scope", tr.Scope,
 			"from", tr.From.String(), "to", tr.To.String(), "reason", tr.Reason)
+		sev := notification.SeverityInfo
+		if tr.To.String() == "OPEN" {
+			sev = notification.SeverityCritical
+		}
+		e.notify(sev, "breaker:"+tr.Scope, "Circuit breaker "+tr.To.String(),
+			fmt.Sprintf("%s (%s): %s → %s (%s)", tr.Name, tr.Scope, tr.From.String(), tr.To.String(), tr.Reason))
 	})
 
 	scn := &scanner.Scanner{
@@ -330,6 +390,20 @@ func (e *Engine) Run(ctx context.Context) error {
 				if e.Metrics != nil && res.Outcome == execution.OutcomeAllFilled {
 					e.Metrics.ObserveSlippage(string(binance.ID), res.SlippageBps.InexactFloat64())
 				}
+				if res.Outcome != execution.OutcomeAllFilled {
+					e.notify(notification.SeverityWarning, "paper:cycle_failed",
+						"Paper cycle "+string(res.Outcome),
+						fmt.Sprintf("cycle %s: %s (pnl %s)", res.CycleID, res.Reason, res.TotalPnL.String()))
+				}
+				if e.Strategy != nil {
+					limit := e.Strategy.Current().Params.Risk.MaxDrawdown
+					dd := port.CurrentDrawdown(res.StartAsset)
+					if limit.IsPositive() && dd.GreaterThan(limit.Mul(decimal.RequireFromString("0.8"))) {
+						e.notify(notification.SeverityWarning, "portfolio:drawdown",
+							"Drawdown threshold approached",
+							fmt.Sprintf("%s drawdown %s (limit %s)", res.StartAsset, dd.StringFixed(4), limit.String()))
+					}
+				}
 				if outbox != nil {
 					r := res
 					outbox.Enqueue(storage.Record{Kind: "cycle", Cycle: &r, SessionID: sessionID})
@@ -350,7 +424,11 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.mu.Lock()
 	e.scn, e.topo, e.pap, e.port, e.ready = scn, topo, paperEng, port, true
+	e.feed, e.resv, e.brk = feed, resv, breakers
 	e.mu.Unlock()
+	e.notify(notification.SeverityInfo, "engine:ready", "Engine ready",
+		fmt.Sprintf("%d triangles over %d markets in %s mode", len(topo.Triangles), len(scoped), e.cfg.Mode))
+	defer e.notify(notification.SeverityInfo, "engine:stopped", "Engine stopped", "shutdown or fatal component exit")
 
 	if e.Metrics != nil {
 		e.wireMetrics(scn, topo, feed, books, resv, breakers, paperEng, port, recorder, starts)
@@ -417,6 +495,19 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 				if e.Metrics != nil {
 					e.Metrics.ObserveQualifiedEdge(string(ev.Opportunity.Exchange),
 						ev.Opportunity.NetReturnBps.InexactFloat64())
+				}
+				e.rememberOpportunity(RecentOpportunity{
+					ID: ev.Opportunity.ID, TriangleID: ev.Opportunity.TriangleID,
+					NetBps: ev.Opportunity.NetReturnBps.StringFixed(2),
+					Profit: ev.Opportunity.NetProfit.String(),
+					Input:  ev.Opportunity.Quote.InputConsumed.String(),
+					At:     ev.Opportunity.DetectedAt,
+				})
+				if ev.Opportunity.NetReturnBps.GreaterThanOrEqual(decimal.NewFromInt(50)) {
+					e.notify(notification.SeverityInfo, "opportunity:large",
+						"Large qualified opportunity",
+						fmt.Sprintf("%s: %s bps, profit %s", ev.Opportunity.TriangleID,
+							ev.Opportunity.NetReturnBps.StringFixed(2), ev.Opportunity.NetProfit.String()))
 				}
 				if paperIn != nil {
 					select {
