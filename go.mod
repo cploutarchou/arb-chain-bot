@@ -2,6 +2,8 @@ module github.com/cploutarchou/arb-chain-bot
 
 go 1.25.0
 
+toolchain go1.25.14
+
 require (
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/shopspring/decimal v1.4.0
