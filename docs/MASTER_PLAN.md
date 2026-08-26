@@ -138,7 +138,7 @@ data-flow,security,risk}.md`.
   keys return original reservation.
 
 ### T-018 Paper execution simulator
-- priority: P0 · component: simulation · status: DONE (outcome-per-test incl. exposure marks, seed determinism, disabled LiveExecutor proven)
+- priority: P0 · component: simulation · status: DONE (engine + app loop wired: reserve->execute->settle->portfolio; pause/resume via API)
 - description: three-leg sequential simulation per
   resources/execution-simulation.md: seeded latency draws, fill-time book
   reads, partial fills, all outcomomes, intermediate exposure +
@@ -149,7 +149,7 @@ data-flow,security,risk}.md`.
   ErrLiveTradingDisabled proven by test; -race clean.
 
 ### T-019 Portfolio & P&L
-- priority: P0 · component: portfolio · status: TODO
+- priority: P0 · component: portfolio · status: DONE (reconciliation property, equity/drawdown with marks, unmarkable exposure listed)
 - description: virtual balances per session, exposure positions, realized
   /unrealized P&L, fees/slippage attribution, drawdown, snapshots.
 - dependencies: T-018
