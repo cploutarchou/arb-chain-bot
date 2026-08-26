@@ -192,8 +192,10 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		apiServer.Alerts = center
 		apiServer.AI = aiSvc
 		apiServer.AuditAction = webAudit(log, store)
+		apiServer.Store = store
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
+			apiServer.Reads = NewReadModel(engine, stratSvc)
 			engine.Hub = hub
 			if cfg.Mode == config.ModePaper {
 				apiServer.Paper = paperProxy{engine}

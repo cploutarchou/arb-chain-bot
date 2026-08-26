@@ -62,15 +62,16 @@ type Engine struct {
 	// hot path; keys per SKILL §58 with cooldown/dedup in the service).
 	Notifier *notification.Service
 
-	mu    sync.RWMutex
-	scn   *scanner.Scanner
-	topo  *graph.Topology
-	pap   *paper.Engine
-	port  *portfolio.Portfolio
-	feed  *binance.Feed
-	resv  *reservation.Manager
-	brk   *risk.Registry
-	ready bool
+	mu     sync.RWMutex
+	scn    *scanner.Scanner
+	topo   *graph.Topology
+	pap    *paper.Engine
+	port   *portfolio.Portfolio
+	feed   *binance.Feed
+	resv   *reservation.Manager
+	brk    *risk.Registry
+	marker portfolio.BookMarker
+	ready  bool
 
 	oppMu        sync.Mutex
 	recentOpps   []RecentOpportunity
@@ -451,6 +452,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.mu.Lock()
 	e.scn, e.topo, e.pap, e.port, e.ready = scn, topo, paperEng, port, true
 	e.feed, e.resv, e.brk = feed, resv, breakers
+	e.marker = portfolio.BookMarker{Books: books, Markets: scoped}
 	e.mu.Unlock()
 	e.notify(notification.SeverityInfo, "engine:ready", "Engine ready",
 		fmt.Sprintf("%d triangles over %d markets in %s mode", len(topo.Triangles), len(scoped), e.cfg.Mode))
