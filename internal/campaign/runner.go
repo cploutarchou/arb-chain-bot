@@ -109,15 +109,57 @@ func (r *Runner) init() {
 	})
 }
 
-// Run pins the lifetime context and blocks until it ends.
+// Run pins the lifetime context, reconciles runs orphaned by a previous
+// process, and blocks until the context ends.
 func (r *Runner) Run(ctx context.Context) error {
 	r.init()
 	r.mu.Lock()
 	r.ctx = ctx
 	r.mu.Unlock()
 	close(r.ready)
+	r.reconcileOrphans(ctx)
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// ErrInterrupted is recorded on runs that were in flight when the
+// process stopped: a campaign is in-memory work, so a restart can only
+// lose it, and an honest "failed" beats a row that says "running" forever.
+const errInterrupted = "interrupted: the process restarted before the run finished"
+
+func (r *Runner) reconcileOrphans(ctx context.Context) {
+	if r.Store == nil {
+		return
+	}
+	lctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	rows, err := r.Store.ListCampaignRuns(lctx, 200)
+	if err != nil {
+		r.Log.Warn("campaign orphan reconciliation failed", "error", err)
+		return
+	}
+	r.mu.Lock()
+	mine := make(map[string]bool, len(r.runs))
+	for id := range r.runs {
+		mine[id] = true
+	}
+	r.mu.Unlock()
+	now := time.Now().UTC()
+	for _, run := range rows {
+		if mine[run.ID] || (run.Status != StatusQueued && run.Status != StatusRunning) {
+			continue
+		}
+		full, err := r.Store.GetCampaignRun(lctx, run.ID)
+		if err != nil {
+			full = run
+		}
+		full.Status = StatusFailed
+		full.Error = errInterrupted
+		full.FinishedAt = &now
+		full.Step = ""
+		r.Log.Warn("campaign run orphaned by restart; marked failed", "run", full.ID, "recording", full.Recording, "done", full.Done, "total", full.Total)
+		r.persist(full)
+	}
 }
 
 func (r *Runner) lifetime() context.Context {
