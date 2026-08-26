@@ -1,7 +1,7 @@
 GO ?= go
 MIGRATE_DSN ?= postgres://arb:arb-dev-password@localhost:5432/arb?sslmode=disable
 
-.PHONY: all build test race lint fmt vet tidy up down migrate web-install web-dev web-build web-lint clean
+.PHONY: all build test race lint fmt vet tidy up down migrate web-install web-dev web-build web-lint clean docker-build record record-stop campaign
 
 all: fmt vet test build
 
@@ -57,3 +57,23 @@ web-lint:
 
 clean:
 	rm -rf bin dist coverage.out
+
+# --- deployment (docs/deployment.md) ---------------------------------------
+
+docker-build:
+	docker compose build
+
+# Start recording real Binance depth feeds (db + migrations + recorder).
+record:
+	docker compose --profile record up -d --build
+
+record-stop:
+	docker compose --profile record stop arbd-record
+
+# Run the §80 campaign over a finished recording:
+#   make campaign RECORDING=<session-id>
+campaign:
+	docker compose --profile campaign run --rm campaign \
+		-recording $(RECORDING) -dir /recordings/$(RECORDING) \
+		-assets USDT -balance USDT=10000 -seeds 1,2,3 \
+		-out /recordings/campaign-$(RECORDING)
