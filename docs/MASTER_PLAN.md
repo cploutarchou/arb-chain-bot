@@ -452,6 +452,24 @@ data-flow,security,risk}.md`.
 ### T-054 Email notification channel
 - status: TODO (NotificationService adapter)
 
+### T-055 Console-driven recording and §80 campaigns
+- status: DONE (2026-08-26). Recording and the campaign no longer need
+  a terminal: `marketdata.RecorderControl` owns the live recorder
+  in-process (fresh session id per start; stop drains and registers the
+  last segment; RECORD mode still auto-starts), `internal/campaign`
+  holds the grid×seeds orchestration shared by `cmd/campaign` and a
+  background `Runner` (one run at a time, progress + verdict persisted
+  in `campaign_runs`, reports written next to the recording), the API
+  gained `POST /api/v1/recordings/{start,stop}` and
+  `GET|POST /api/v1/campaigns[/{id}]` behind two new OPERATOR
+  permissions (`recordings:control`, `campaigns:run`) with CSRF and
+  audit, realtime topics `recordings`/`campaigns`, and the console has a
+  Campaigns page (recorder card, sessions, run form, runs with verbatim
+  Verdict). Tests: recorder-control lifecycle, runner state machine,
+  API RBAC/CSRF/conflict paths. Live trading and the risk engine are
+  untouched; recording remains keyless.
+- dependencies: T-046 tooling
+
 ---
 
 ## Status log
@@ -715,3 +733,7 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   fee table, Kraken public rate) are demoted to named runtime-verified
   assumptions in final-platform-selection.md §7.2. T-047 DONE; T-050
   acceptance restated; T-050 still BLOCKED on the T-046 verdict.
+- 2026-08-26 (T-055): the recording/campaign runbook got a console
+  front-end — in-process recorder control, background campaign runner
+  with persisted runs, ops API + permissions, Campaigns page
+  (docs/deployment.md §3b).

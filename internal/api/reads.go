@@ -8,6 +8,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/quality"
+	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 )
 
 // ReadModel supplies the live read-side groups (engine-backed). Absent
@@ -23,11 +24,13 @@ type ReadModel interface {
 // readRoutes finish the T-024 route groups: opportunities, paper
 // history, portfolio, pnl, risk, audit. Live views come from the
 // engine; history comes from PostgreSQL when persistence is enabled.
+func limitParam(r *http.Request) int {
+	n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	return n
+}
+
 func (s *Server) readRoutes(mux *http.ServeMux) {
-	limitOf := func(r *http.Request) int {
-		n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		return n
-	}
+	limitOf := limitParam
 	needEngine := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if s.Reads == nil {
@@ -91,10 +94,26 @@ func (s *Server) readRoutes(mux *http.ServeMux) {
 		rows, err := s.Store.ListAuditEvents(r.Context(), r.URL.Query().Get("entity"), limitOf(r))
 		s.writeListResult(w, r, "events", rows, err)
 	})))
-	mux.HandleFunc("GET /api/v1/recordings", s.requirePerm(auth.PermViewSystem, needStore(func(w http.ResponseWriter, r *http.Request) {
-		rows, err := s.Store.ListRecordings(r.Context(), limitOf(r))
-		s.writeListResult(w, r, "recordings", rows, err)
-	})))
+	// Recordings: persisted sessions plus the live recorder state. Without
+	// persistence the list is empty but the recorder is still reported,
+	// so the console can show what is (not) being captured.
+	mux.HandleFunc("GET /api/v1/recordings", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
+		out := map[string]any{"recordings": []storage.RecordingRow{}, "persistence": s.Store != nil}
+		if s.Store != nil {
+			rows, err := s.Store.ListRecordings(r.Context(), limitOf(r))
+			if err != nil {
+				s.writeListResult(w, r, "recordings", nil, err)
+				return
+			}
+			if rows != nil {
+				out["recordings"] = rows
+			}
+		}
+		if s.Recorder != nil {
+			out["recorder"] = s.Recorder.Status()
+		}
+		WriteData(w, http.StatusOK, out)
+	}))
 	mux.HandleFunc("GET /api/v1/triangles/quality", s.requirePerm(auth.PermViewDashboard, needStore(func(w http.ResponseWriter, r *http.Request) {
 		hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
 		if hours < 1 || hours > 24*30 {
