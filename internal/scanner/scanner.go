@@ -58,6 +58,14 @@ type CapitalView interface {
 	TriangleReserved(triangleID string) decimal.Decimal
 }
 
+// Strategy is the hot-swappable slice: evaluation config + risk limits.
+// The config service publishes a new Strategy per version; every
+// evaluation reads one consistent value.
+type Strategy struct {
+	Cfg      Config
+	Resolver risk.Resolver
+}
+
 // Scanner evaluates triangles against live books.
 type Scanner struct {
 	Topo     *graph.Topology
@@ -71,6 +79,9 @@ type Scanner struct {
 	IDGen    func() string
 	Cfg      Config
 
+	// strategy, when set, overrides Cfg/Resolver atomically (hot swap).
+	strategy atomic.Pointer[Strategy]
+
 	Out   chan Event // bounded; non-blocking sends with drop accounting
 	Stats Stats
 
@@ -83,6 +94,19 @@ type Scanner struct {
 }
 
 func (s *Scanner) Name() string { return "scanner" }
+
+// SetStrategy swaps the evaluation config and risk limits atomically.
+// Workers is start-time only; a changed value applies on restart.
+func (s *Scanner) SetStrategy(st Strategy) { s.strategy.Store(&st) }
+
+// currentStrategy returns the swapped-in strategy, falling back to the
+// construction-time fields before the first SetStrategy.
+func (s *Scanner) currentStrategy() Strategy {
+	if p := s.strategy.Load(); p != nil {
+		return *p
+	}
+	return Strategy{Cfg: s.Cfg, Resolver: s.Resolver}
+}
 
 // Run drains dirty markets with a worker pool until ctx cancels.
 func (s *Scanner) Run(ctx context.Context) error {
@@ -138,13 +162,15 @@ func (s *Scanner) EvaluateMarket(id exchange.MarketID) {
 // event when an opportunity was actually evaluated (books present).
 func (s *Scanner) EvaluateTriangle(tri graph.Triangle) {
 	now := s.Clock()
+	st := s.currentStrategy()
+	cfg := st.Cfg
 	s.Stats.Evaluations.Add(1)
 
 	var data [3]pricing.MarketData
 	var states [3]orderbook.State
 	var ages [3]time.Duration
 	for i, leg := range tri.Legs {
-		view, ok := s.Books.View(leg.Market, s.Cfg.Depth)
+		view, ok := s.Books.View(leg.Market, cfg.Depth)
 		if !ok {
 			s.Stats.SkippedBooks.Add(1)
 			return
@@ -168,30 +194,30 @@ func (s *Scanner) EvaluateTriangle(tri graph.Triangle) {
 	}
 
 	maxIn := pricing.CapacityHint(tri.Legs[0], data[0], s.Fees)
-	eff, disabled := s.Resolver.Effective(tri.Exchange, tri.Start, tri.ID)
+	eff, disabled := st.Resolver.Effective(tri.Exchange, tri.Start, tri.ID)
 	if eff.MaxTradeSize.IsPositive() && maxIn.GreaterThan(eff.MaxTradeSize) {
 		maxIn = eff.MaxTradeSize
 	}
-	minIn := s.Cfg.MinInput
+	minIn := cfg.MinInput
 	if !minIn.IsPositive() {
 		minIn = decimal.NewFromInt(1)
 	}
 	quote := func(in decimal.Decimal) (pricing.CycleQuote, error) {
 		return pricing.QuoteCycle(tri, data, s.Fees, in)
 	}
-	res, ok := s.Cfg.Search.Find(quote, minIn, maxIn)
+	res, ok := cfg.Search.Find(quote, minIn, maxIn)
 	if !ok {
 		return // no viable size at all (dust/min-notional floor above depth ceiling)
 	}
 
-	op := opportunity.Build(s.IDGen(), tri.Exchange, res.Best, s.Cfg.Buffers, s.Cfg.TTL, now, s.Cfg.ConfigVersion)
-	op.DataQuality = dataQuality(ages, s.Cfg.MaxBookAge)
+	op := opportunity.Build(s.IDGen(), tri.Exchange, res.Best, cfg.Buffers, cfg.TTL, now, cfg.ConfigVersion)
+	op.DataQuality = dataQuality(ages, cfg.MaxBookAge)
 	_ = op.Transition(opportunity.StatusCalculating, "")
 
 	avail, reserved := s.Capital.Balance(tri.Start)
 	rctx := risk.Context{
 		Now:                   now,
-		ConfigVersion:         s.Cfg.ConfigVersion,
+		ConfigVersion:         cfg.ConfigVersion,
 		BookStates:            states,
 		BookAges:              ages,
 		DataQuality:           op.DataQuality,

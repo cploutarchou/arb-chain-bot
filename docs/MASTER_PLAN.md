@@ -247,7 +247,10 @@ data-flow,security,risk}.md`.
   shared-state sync with web.
 
 ### T-034 Strategy configuration service
-- priority: P1 · component: config · status: TODO
+- priority: P1 · component: config · status: DONE (internal/strategy:
+  validated typed params, immutable versions with diff+actor+audit, hot
+  swap into the running scanner, rollback-as-new-version; API routes
+  with per-section RBAC; pgx + memory stores. Console page is T-040)
 - description: versioned dynamic config (immutable rows, diffs, actor,
   audit, hot swap, rollback) per docs/architecture.md §13; console +
   API surface.

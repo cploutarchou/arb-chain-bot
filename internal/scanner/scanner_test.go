@@ -246,3 +246,42 @@ func keys(m map[string]Event) []string {
 	}
 	return out
 }
+
+// Hot swap: SetStrategy changes the effective limits mid-run without
+// touching the construction-time fields; making the edge requirement
+// unattainable flips qualification to rejection on the next evaluation.
+func TestSetStrategyHotSwap(t *testing.T) {
+	s, _ := harness(t)
+	id := exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"}
+
+	s.EvaluateMarket(id)
+	before := drain(s)
+	var qualifiedBefore int
+	for _, ev := range before {
+		if ev.Decision.Allowed {
+			qualifiedBefore++
+		}
+	}
+	if qualifiedBefore == 0 {
+		t.Fatal("fixture must qualify before the swap")
+	}
+
+	swapped := Strategy{Cfg: s.Cfg, Resolver: s.Resolver}
+	swapped.Cfg.ConfigVersion = 2
+	swapped.Resolver.Global.MinNetEdgeBps = d("100000")
+	s.SetStrategy(swapped)
+
+	s.EvaluateMarket(id)
+	after := drain(s)
+	if len(after) == 0 {
+		t.Fatal("no events after swap")
+	}
+	for _, ev := range after {
+		if ev.Decision.Allowed {
+			t.Fatalf("qualified despite 10000bps edge floor: %+v", ev.Decision)
+		}
+		if ev.Opportunity.ConfigVersion != 2 {
+			t.Fatalf("opportunity cites config version %d, want 2", ev.Opportunity.ConfigVersion)
+		}
+	}
+}

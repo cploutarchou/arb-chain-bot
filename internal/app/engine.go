@@ -30,6 +30,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/scanner"
 	"github.com/cploutarchou/arb-chain-bot/internal/simulation"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
+	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
 // Engine assembles the trading core for the first exchange: metadata →
@@ -49,6 +50,9 @@ type Engine struct {
 	Hub *realtime.Hub
 	// Store, when set, enables persistence through the outbox.
 	Store *storage.Store
+	// Strategy, when set, supplies the versioned dynamic config and
+	// hot-swaps the scanner on every applied version (T-034).
+	Strategy *strategy.Service
 
 	mu    sync.RWMutex
 	scn   *scanner.Scanner
@@ -256,6 +260,22 @@ func (e *Engine) Run(ctx context.Context) error {
 		Out: make(chan scanner.Event, 256),
 	}
 	scn.ClockHealthy.Store(true)
+	if e.Strategy != nil {
+		// Versioned config replaces the fallback literals above: the
+		// subscription delivers the active snapshot immediately and every
+		// later Apply/Rollback hot-swaps the running scanner.
+		e.Strategy.Subscribe(func(snap strategy.Snapshot) {
+			scn.SetStrategy(scanner.Strategy{
+				Cfg:      snap.Params.ScannerConfig(snap.Version),
+				Resolver: snap.Params.RiskResolver(),
+			})
+		})
+		if snap := e.Strategy.Current(); snap.Version != 0 {
+			// Workers is start-time-only, so copy it into the base config
+			// the Run loop reads.
+			scn.Cfg.Workers = snap.Params.Scanner.Workers
+		}
+	}
 
 	// PAPER mode: assemble the full simulation loop behind the scanner.
 	var paperEng *paper.Engine
@@ -440,8 +460,9 @@ func (e *Engine) bootstrapMetadata(ctx context.Context, rest *binance.RESTClient
 	}
 }
 
-// defaultRiskLimits are the conservative bootstrap limits; the versioned
-// config service (T-034) replaces them with DB-backed values.
+// defaultRiskLimits are the conservative fallback limits used only when
+// no strategy service is attached (direct-constructed engines in tests);
+// normal wiring hot-swaps versioned values over these at startup.
 func defaultRiskLimits() risk.Resolver {
 	return risk.Resolver{Global: risk.Limits{
 		MinNetEdgeBps:            decimal.NewFromInt(5),

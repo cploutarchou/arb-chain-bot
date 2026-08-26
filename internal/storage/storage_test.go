@@ -34,7 +34,8 @@ func testStore(t *testing.T) *Store {
 	}
 	t.Cleanup(s.Close)
 	for _, table := range []string{"fills", "orders", "paper_cycles", "paper_sessions",
-		"opportunities", "triangles", "markets", "sessions", "users", "exchanges"} {
+		"opportunities", "triangles", "markets", "sessions",
+		"strategy_configs", "audit_events", "users", "exchanges"} {
 		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("clean %s: %v", table, err)
 		}

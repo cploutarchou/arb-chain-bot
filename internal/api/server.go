@@ -14,6 +14,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
+	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
 // BuildInfo describes what this process build actually contains; the
@@ -41,6 +42,8 @@ type Server struct {
 	ScannerStatus func() any
 	// Paper, when set, backs the paper control routes (PAPER mode only).
 	Paper PaperController
+	// Strategy, when set, backs the versioned config routes.
+	Strategy *strategy.Service
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -138,6 +141,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Pause() }))))
 	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Resume() }))))
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
+	s.configRoutes(mux)
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {

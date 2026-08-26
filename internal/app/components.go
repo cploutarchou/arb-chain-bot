@@ -10,6 +10,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
+	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
 // Profile selects which component set a cmd/ entry point runs. All
@@ -56,10 +57,13 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		log.Warn("ARB_DATABASE_URL unset; running without persistence (sessions and history are memory-only)")
 	}
 
+	stratSvc := buildStrategy(log, store)
+
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
 		engine = NewEngine(cfg, log)
 		engine.Store = store
+		engine.Strategy = stratSvc
 		others = append(others, engine)
 	}
 
@@ -71,6 +75,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		info := api.BuildInfo{Components: names}
 		apiServer := api.NewServer(cfg, log, info)
 		apiServer.Auth = buildAuth(cfg, log, store)
+		apiServer.Strategy = stratSvc
 		hub := realtime.NewHub(256)
 		apiServer.Hub = hub
 		if engine != nil {
@@ -107,6 +112,45 @@ func (p paperProxy) Running() bool {
 		return pe.Running()
 	}
 	return false
+}
+
+// buildStrategy wires the versioned config service: DB-backed rows when
+// persistence is enabled (versions survive restarts), in-memory
+// otherwise. A failed load is a hard failure surfaced by a service that
+// starts empty — but since Load also seeds defaults, failure here means
+// the database rejected the seed, which the log records; the process
+// still runs on validated in-memory defaults rather than nothing.
+func buildStrategy(log *slog.Logger, store *storage.Store) *strategy.Service {
+	var st strategy.Store
+	var audit func(context.Context, strategy.AuditEvent)
+	if store != nil {
+		st = store.StrategyConfigs()
+		audit = func(ctx context.Context, ev strategy.AuditEvent) {
+			row := storage.AuditRow{
+				ID: newULID(), Actor: ev.Actor, Source: ev.Source,
+				Action: ev.Action, Entity: ev.Entity, EntityID: ev.EntityID,
+				Before: ev.Before, After: ev.After,
+			}
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := store.InsertAuditEvent(ctx, row); err != nil {
+				log.Error("audit event insert failed", "action", ev.Action, "error", err)
+			}
+		}
+	} else {
+		st = strategy.NewMemoryStore()
+	}
+	svc := strategy.NewService(st, log, audit)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := svc.Load(ctx); err != nil {
+		log.Error("strategy config load failed; falling back to in-memory defaults", "error", err)
+		svc = strategy.NewService(strategy.NewMemoryStore(), log, audit)
+		if _, err := svc.Load(context.Background()); err != nil {
+			log.Error("in-memory strategy seed failed", "error", err)
+		}
+	}
+	return svc
 }
 
 // buildAuth wires auth stores: pgx-backed when persistence is enabled
