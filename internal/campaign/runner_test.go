@@ -214,3 +214,34 @@ func TestRunnerFailureIsRecorded(t *testing.T) {
 		t.Fatalf("get unknown: %v", err)
 	}
 }
+
+func TestRunnerMarksOrphanedRunsFailedOnStart(t *testing.T) {
+	store := &memStore{}
+	orphan := Run{ID: "OLD", Recording: "REC", Status: StatusRunning, Done: 5, Total: 24, CreatedAt: time.Now().Add(-time.Hour)}
+	done := Run{ID: "DONE", Recording: "REC", Status: StatusDone, CreatedAt: time.Now().Add(-2 * time.Hour)}
+	_ = store.UpsertCampaignRun(context.Background(), orphan)
+	_ = store.UpsertCampaignRun(context.Background(), done)
+	var published []Run
+	r := &Runner{Store: store, Dir: t.TempDir(), NewID: func() string { return "X" },
+		Publish: func(data any) { published = append(published, data.(map[string]any)["run"].(Run)) }}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = r.Run(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, _ := store.GetCampaignRun(ctx, "OLD"); got.Status == StatusFailed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	got, _ := store.GetCampaignRun(context.Background(), "OLD")
+	if got.Status != StatusFailed || got.Error != errInterrupted || got.FinishedAt == nil || got.Done != 5 {
+		t.Fatalf("orphan = %+v", got)
+	}
+	if d, _ := store.GetCampaignRun(context.Background(), "DONE"); d.Status != StatusDone {
+		t.Fatalf("finished run touched: %+v", d)
+	}
+	if len(published) != 1 || published[0].ID != "OLD" {
+		t.Fatalf("published = %+v", published)
+	}
+}
