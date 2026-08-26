@@ -90,6 +90,7 @@ export function can(role: string | undefined, perm: string): boolean {
     "view:audit",
     "recordings:control",
     "campaigns:run",
+    "reports:generate",
   ]);
   if (role === "ADMIN") return true;
   if (role === "OPERATOR") return operator.has(perm) || perm.startsWith("view:") || perm === "reports:view";

@@ -10,10 +10,9 @@ import { api, ApiError, type CampaignRun, type RecorderStatus } from "@/lib/api/
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { connectHub, type HubMessage } from "@/lib/ws";
+import { flagsTone, worstVerdict, BAD_PHRASES } from "@/lib/campaignVerdict";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Await, Badge, Button, ErrorBox, Loading, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
-
-const BAD_PHRASES = ["PROFITABLE ONLY UNDER PERFECT CONDITIONS", "UNPROFITABLE", "NO CYCLES"];
 
 interface RecordingsTopicMsg {
   kind?: "recorder";
@@ -52,12 +51,6 @@ function statusTone(status: CampaignRun["status"]): "ok" | "warn" | "bad" | "dim
   if (status === "running") return "warn";
   if (status === "failed") return "bad";
   return "dim"; // queued
-}
-
-function flagsTone(flags: Record<string, string[]> | undefined): "ok" | "bad" {
-  if (!flags) return "ok";
-  const all = Object.values(flags).flat();
-  return all.some((f) => BAD_PHRASES.some((p) => f.includes(p))) ? "bad" : "ok";
 }
 
 // Overlay live WS runs onto the polled list: polled rows take the live
@@ -307,7 +300,7 @@ export default function CampaignsPage() {
                     onClick={() => prefillRun(rec.id)}
                     disabled={!mayRunCampaign || runInProgress}
                   >
-                    Run campaign
+                    Configure campaign…
                   </Button>
                 ) : (
                   ""
@@ -424,24 +417,41 @@ export default function CampaignsPage() {
         )}
         {runsState.kind !== "loading" && runsState.kind !== "error" && (
           <Table
-            head={["ID", "Recording", "Status", "Progress", "Started", "Finished", "Actor", ""]}
+            head={["ID", "Recording", "Status", "Progress", "Verdict", "Started", "Finished", "Actor", ""]}
             empty="campaign runs (launch one above)"
-            rows={mergedRuns.map((run) => [
-              <span key="id" className="text-[var(--text-dim)]">
-                {run.id}
-              </span>,
-              run.recording,
-              <Badge key="s" tone={statusTone(run.status)}>
-                {run.status}
-              </Badge>,
-              `${run.done}/${run.total}${run.step ? ` — ${run.step}` : ""}`,
-              run.started_at ? fmtTime(run.started_at) : "—",
-              run.finished_at ? fmtTime(run.finished_at) : "—",
-              run.actor ?? "—",
-              <Button key="v" onClick={() => viewRun(run.id)}>
-                View
-              </Button>,
-            ])}
+            rows={mergedRuns.map((run) => {
+              const v = worstVerdict(run);
+              return [
+                <span key="id" className="text-[var(--text-dim)]">
+                  {run.id}
+                </span>,
+                run.recording,
+                <Badge key="s" tone={statusTone(run.status)}>
+                  {run.status}
+                </Badge>,
+                `${run.done}/${run.total}${run.step ? ` — ${run.step}` : ""}`,
+                // Verdict cell wraps within its column; never truncated,
+                // never behind a title= tooltip (§3.2/§4.5 — a hidden
+                // verdict is functionally a hidden verdict).
+                v ? (
+                  <div key="v" className="max-w-xs whitespace-normal break-words">
+                    <span className={v.tone === "bad" ? "text-[var(--critical)]" : v.tone === "high" ? "text-[var(--high)]" : v.tone === "warn" ? "text-[var(--warn)]" : v.tone === "ok" ? "text-[var(--ok)]" : "text-[var(--text-dim)]"}>
+                      {v.text}
+                    </span>
+                  </div>
+                ) : (
+                  <span key="v" className="text-[var(--text-dim)]">
+                    — pending —
+                  </span>
+                ),
+                run.started_at ? fmtTime(run.started_at) : "—",
+                run.finished_at ? fmtTime(run.finished_at) : "—",
+                run.actor ?? "—",
+                <Button key="v-btn" onClick={() => viewRun(run.id)}>
+                  View
+                </Button>,
+              ];
+            })}
           />
         )}
       </Section>
@@ -457,7 +467,9 @@ export default function CampaignsPage() {
                   className={`mb-3 rounded border p-3 text-[13px] ${
                     flagsTone(detail.run.flags) === "bad"
                       ? "border-[var(--critical)]"
-                      : "border-[var(--ok)]"
+                      : flagsTone(detail.run.flags) === "ok"
+                        ? "border-[var(--ok)]"
+                        : "border-[var(--border)]"
                   }`}
                 >
                   <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">

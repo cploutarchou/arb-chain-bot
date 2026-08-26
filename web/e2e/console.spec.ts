@@ -83,6 +83,9 @@ test("config edit applies as a new version end to end", async ({ page }) => {
   draft.scanner.depth = draft.scanner.depth === 50 ? 60 : 50;
   await editor.fill(JSON.stringify(draft, null, 2));
   await page.getByRole("button", { name: "Apply as new version" }).click();
+  // Confirmation dialog (before/after diff) — BL-02.
+  await page.getByRole("dialog", { name: "Apply new strategy configuration?" }).waitFor();
+  await page.getByRole("button", { name: "Apply new version" }).click();
   await expect(page.getByText(/Version \d+ active\./)).toBeVisible({ timeout: 10_000 });
 });
 
