@@ -440,8 +440,22 @@ data-flow,security,risk}.md`.
   protocol (A–I, §12, §13) and, since the 2026-08-26 re-verification,
   the executed record (§14).
 
-### T-051 Additional exchange (Bybit vs Bitget decision)
-- status: BLOCKED (Phase 21; fresh research required)
+### T-051 Additional exchanges: Bybit, Bitget, Gate (order by fresh research)
+- status: BLOCKED (Phase 21; fresh research required). Venue roster set
+  2026-08-26: Binance (live), OKX (T-050), then Bybit, Bitget and Gate —
+  all wanted, sequencing decided by a re-run of the exchanges.md /
+  fees.md scoring at that time (Bybit's classic-channel gap blind spot,
+  Bitget's v3 numeric-JSON prices, Gate's 403-only docs are the known
+  connector risks). Kraken and Coinbase are out (fee-eliminated and not
+  wanted).
+
+### T-056 MEXC research round
+- status: TODO. MEXC is a candidate venue that has never been researched
+  (not in the seven-exchange comparison). Before it can be ranked: spot
+  fee schedule and API-usable discounts, order-book channel protocol
+  and integrity mechanism, WS/REST limits, instrument rules, spot
+  test/demo environment, key permission model — same template as
+  docs/research/exchanges.md, primary sources only.
 
 ### T-052 MFA (TOTP) enrollment
 - status: TODO · architecture reserved in auth flow.
