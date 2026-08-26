@@ -14,6 +14,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
+	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 	"github.com/cploutarchou/arb-chain-bot/internal/telegram"
@@ -108,6 +109,8 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		log.Info("ai advisor enabled", "provider", adv.Name(), "model", adv.Model())
 	}
 
+	var reportGen *reporting.Generator
+
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
 		engine = NewEngine(cfg, log)
@@ -125,6 +128,19 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			})
 		}
 
+		// Daily/weekly reports: detailed version persisted (when the DB
+		// is on), concise digest through the notification router.
+		var history reporting.HistorySource
+		if store != nil {
+			history = store.Reports()
+		}
+		reportGen = &reporting.Generator{
+			Sources: reportSources(engine, stratSvc, center, aiSvc, history),
+			Notify:  notify.Notify,
+			Log:     log, IDGen: newULID, Now: time.Now,
+		}
+		others = append(others, &reporting.Scheduler{Generator: reportGen, Log: log})
+
 		// Telegram control surface: only with a token, a non-empty
 		// allow-list, and an engine to control.
 		if cfg.TelegramToken != "" && len(cfg.TelegramAllowlist) > 0 {
@@ -136,7 +152,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			bot := &telegram.Bot{
 				Client:    client,
 				Allowlist: allow,
-				Services:  telegramServices{e: engine, n: notify, c: center, s: stratSvc, ai: aiSvc},
+				Services:  telegramServices{e: engine, n: notify, c: center, s: stratSvc, ai: aiSvc, rep: reportGen},
 				Log:       log,
 				Audit:     telegramAudit(log, store),
 			}
@@ -193,6 +209,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		apiServer.AI = aiSvc
 		apiServer.AuditAction = webAudit(log, store)
 		apiServer.Store = store
+		apiServer.Reports = reportGen
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
 			apiServer.Reads = NewReadModel(engine, stratSvc)

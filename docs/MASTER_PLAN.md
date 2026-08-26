@@ -326,7 +326,12 @@ data-flow,security,risk}.md`.
 - status: TODO · dependencies: T-032, T-040
 
 ### T-042 Reports (daily/weekly) + Telegram digests
-- status: TODO · dependencies: T-036, T-037 (SKILL.md §82 layout)
+- status: DONE (full §82 section layout with honest data-source notes;
+  detailed version persisted to the reports table, concise digest
+  routed web+Telegram via the notification service; scheduler +
+  on-demand via API POST /reports/generate and Telegram /report
+  (weekly) & /daily; DB period aggregates incl. top/worst triangles,
+  slippage, failed cycles; rule-based recommended actions)
 
 ### T-043 Triangle quality score
 - status: TODO (SKILL.md §81) · dependencies: T-019 history

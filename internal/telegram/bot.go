@@ -85,6 +85,10 @@ type Services interface {
 	AIRecommendations(status string) []ai.Recommendation
 	AIApprove(id, actor string) (configVersion int64, err error)
 	AIReject(id, actor string) error
+
+	// GenerateReport builds an on-demand report and returns its concise
+	// digest ("" second value = reporting unavailable in this profile).
+	GenerateReport(kind string) (digest string, ok bool)
 }
 
 // Bot long-polls and dispatches. Allowlisted Telegram IDs act with the

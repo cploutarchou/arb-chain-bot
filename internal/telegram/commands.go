@@ -48,8 +48,10 @@ func (b *Bot) dispatch(cmd, actor string) (string, *InlineKeyboard, string) {
 	case "/ai_recommendations":
 		text, kb := b.aiRecommendationsText(actor)
 		return text, kb, string(auth.PermViewDashboard)
-	case "/report", "/daily":
-		return "Reports are not built yet (MASTER_PLAN T-042); nothing to show.", nil, string(auth.PermReportView)
+	case "/report":
+		return b.reportText("weekly"), nil, string(auth.PermReportView)
+	case "/daily":
+		return b.reportText("daily"), nil, string(auth.PermReportView)
 	case "/config":
 		return b.configText(), nil, string(auth.PermViewSystem)
 	}
@@ -235,6 +237,14 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+func (b *Bot) reportText(kind string) string {
+	digest, ok := b.Services.GenerateReport(kind)
+	if !ok {
+		return "Reporting is unavailable in this profile."
+	}
+	return digest
 }
 
 func (b *Bot) aiText() string {

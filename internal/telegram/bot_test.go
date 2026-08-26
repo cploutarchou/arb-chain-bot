@@ -147,6 +147,10 @@ func (s *fakeServices) running() bool {
 	return s.paperRunning
 }
 
+func (s *fakeServices) GenerateReport(kind string) (string, bool) {
+	return "digest for " + kind + " report: 2 cycles, 1 qualified", true
+}
+
 func (s *fakeServices) AIPresent() bool { return s.aiRecs != nil }
 
 func (s *fakeServices) AIAnalyses(int) []ai.AnalysisResult {

@@ -19,6 +19,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
+	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
@@ -65,6 +66,8 @@ type Server struct {
 	Reads ReadModel
 	// Store, when set, backs the history read groups.
 	Store *storage.Store
+	// Reports, when set, backs on-demand report generation.
+	Reports *reporting.Generator
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -172,6 +175,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.alertRoutes(mux)
 	s.aiRoutes(mux)
 	s.readRoutes(mux)
+	s.reportRoutes(mux)
 	if s.MetricsHandler != nil {
 		mux.Handle("GET /metrics", s.MetricsHandler)
 	}
