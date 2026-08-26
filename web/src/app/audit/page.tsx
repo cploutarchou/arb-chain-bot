@@ -26,7 +26,7 @@ export default function AuditPage() {
           {(a) => (
             <Table
               head={["Time", "Source", "Actor", "Action", "Entity", "Entity ID"]}
-              empty="audit events (requires ARB_DATABASE_URL)"
+              empty="audit events recorded yet for this filter"
               rows={(a.events ?? []).map((e) => [
                 fmtTime(e.ts),
                 <Badge key="src" tone="dim">{e.source}</Badge>,

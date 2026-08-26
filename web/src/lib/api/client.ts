@@ -353,6 +353,10 @@ export interface CampaignRun {
   finished_at?: string;
   error?: string;
   flags?: Record<string, string[]>;
+  // verdicts is the future per-flag-severity companion to `flags`
+  // (backend addition tracked as BL-05b); read it when present, else the
+  // UI falls back to phrase-matching `flags`.
+  verdicts?: Record<string, { text: string; severity: string }[]>;
   report_md?: string;
   report_path?: string;
   json_path?: string;
@@ -397,6 +401,7 @@ export const api = {
   risk: () => get<RiskView>("/api/v1/risk"),
   config: {
     current: () => get<ConfigSnapshot>("/api/v1/config"),
+    version: (version: number) => get<ConfigSnapshot>(`/api/v1/config/version/${version}`),
     versions: (limit = 25) => get<ConfigVersion[]>(`/api/v1/config/versions?limit=${limit}`),
     apply: (params: StrategyParams) => post<ConfigSnapshot>("/api/v1/config", params),
     rollback: (version: number) => post<ConfigSnapshot>("/api/v1/config/rollback", { version }),

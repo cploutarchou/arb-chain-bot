@@ -11,6 +11,7 @@ export default function PaperPage() {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const status = usePoll(() => api.scanner.status(), 3000);
+  const systemStatus = usePoll(() => api.system.status(), 10000);
   const cycles = usePoll(() => api.paper.cycles(50), 8000);
   const [orders, setOrders] = useState<{ cycle: string; rows: OrderRow[] } | null>(null);
   const [controlErr, setControlErr] = useState("");
@@ -67,7 +68,19 @@ export default function PaperPage() {
                 {controlErr && <p className="mt-2 text-[12px] text-[var(--critical)]">{controlErr}</p>}
               </div>
             ) : (
-              <p className="text-sm text-[var(--text-dim)]">Paper engine not running (mode is not PAPER).</p>
+              <p className="text-sm text-[var(--text-dim)]">
+                {systemStatus.kind === "ready" && systemStatus.data.mode === "PAPER"
+                  ? "Paper engine is not wired into this deployment profile."
+                  : systemStatus.kind === "ready" ? (
+                      <>
+                        Paper engine is not running — current mode is <strong>{systemStatus.data.mode}</strong>.
+                        Paper trading requires PAPER mode; this deployment is running{" "}
+                        <strong>{systemStatus.data.mode}</strong> instead.
+                      </>
+                    ) : (
+                      "Paper engine is not running — mode unknown (backend unreachable)."
+                    )}
+              </p>
             )
           }
         </Await>
@@ -77,7 +90,7 @@ export default function PaperPage() {
           {(c) => (
             <Table
               head={["Started", "Outcome", "PnL", "Slippage bps", "Cycle", ""]}
-              empty="persisted cycles (requires ARB_DATABASE_URL)"
+              empty="persisted cycles yet. Persistence needs a database connection — see docs/deployment.md if this deployment doesn't have one configured"
               rows={(c.cycles ?? []).map((row) => [
                 fmtTime(row.started_at),
                 <Badge key="o" tone={row.outcome === "ALL_FILLED" ? "ok" : "warn"}>{row.outcome}</Badge>,

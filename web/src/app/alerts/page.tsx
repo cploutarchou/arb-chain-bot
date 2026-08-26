@@ -52,9 +52,16 @@ export default function AlertsPage() {
                 rows={(a.alerts ?? []).map((al) => [
                   fmtTime(al.last_at),
                   <Badge key="sev" tone={severityTone(al.severity)}>{al.severity}</Badge>,
-                  <Badge key="st" tone={al.state === "active" ? "warn" : al.state === "acked" ? "dim" : "ok"}>
-                    {al.state}
-                  </Badge>,
+                  <span key="st" className="flex flex-col gap-0.5">
+                    <Badge tone={al.state === "active" ? "warn" : al.state === "acked" ? "dim" : "ok"}>
+                      {al.state}
+                    </Badge>
+                    {al.state === "resolved" && (
+                      <span className="text-[10px] text-[var(--text-dim)]">
+                        {al.resolved_by ? `by ${al.resolved_by}` : "auto-resolved"}
+                      </span>
+                    )}
+                  </span>,
                   al.title,
                   <span key="b" className="max-w-md truncate text-[var(--text-dim)]" title={al.body}>
                     {al.body}
