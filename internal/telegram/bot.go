@@ -73,7 +73,8 @@ type Services interface {
 	Opportunities(limit int) []OppView
 	Config() (strategy.Snapshot, bool)
 	Breakers() []BreakerView
-	Alerts(limit int) []notification.Delivery
+	Alerts(limit int) []notification.Alert
+	AckAlert(id, actor string) (notification.Alert, error)
 	PaperPause(actor string) bool  // false = paper engine absent
 	PaperResume(actor string) bool // false = paper engine absent
 }
@@ -276,13 +277,29 @@ func (b *Bot) handleCallback(ctx context.Context, cb *CallbackQuery) {
 	}
 	actor := fmt.Sprintf("telegram:%d", cb.From.ID)
 	var reply string
-	switch action {
-	case "paper_pause", "paper_resume":
+	switch {
+	case action == "paper_pause" || action == "paper_resume":
 		if !auth.Can(role, auth.PermPaperControl) {
 			reply = "Forbidden."
 			break
 		}
 		reply = b.runPaperControl(action, actor)
+	case strings.HasPrefix(action, "ack_alert:"):
+		if !auth.Can(role, auth.PermAlertAck) {
+			reply = "Forbidden."
+			break
+		}
+		id := strings.TrimPrefix(action, "ack_alert:")
+		// Telegram actors have no users row: the center stores no
+		// acked_by; the audit event carries the concrete actor.
+		if _, err := b.Services.AckAlert(id, ""); err != nil {
+			reply = "Alert cannot be acknowledged (unknown or already handled)."
+			break
+		}
+		if b.Audit != nil {
+			b.Audit(actor, "alert.ack", "alert:"+id)
+		}
+		reply = "Alert acknowledged."
 	default:
 		reply = "Unknown action."
 	}

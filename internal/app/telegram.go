@@ -17,6 +17,7 @@ import (
 type telegramServices struct {
 	e *Engine
 	n *notification.Service
+	c *notification.Center
 	s *strategy.Service
 }
 
@@ -142,11 +143,18 @@ func (t telegramServices) Breakers() []telegram.BreakerView {
 	return out
 }
 
-func (t telegramServices) Alerts(limit int) []notification.Delivery {
-	if t.n == nil {
+func (t telegramServices) Alerts(limit int) []notification.Alert {
+	if t.c == nil {
 		return nil
 	}
-	return t.n.Recent(limit)
+	return t.c.List("", limit)
+}
+
+func (t telegramServices) AckAlert(id, actor string) (notification.Alert, error) {
+	if t.c == nil {
+		return notification.Alert{}, notification.ErrAlertNotFound
+	}
+	return t.c.Ack(id, actor)
 }
 
 func (t telegramServices) PaperPause(string) bool {

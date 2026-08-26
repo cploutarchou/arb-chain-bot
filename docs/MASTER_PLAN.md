@@ -289,7 +289,12 @@ data-flow,security,risk}.md`.
   outage does not affect scanner (fault test).
 
 ### T-037 Alert center & notification service
-- priority: P1 · component: notification · status: TODO
+- priority: P1 · component: notification · status: DONE (Center records
+  every delivery regardless of routing; lifecycle active→acked→resolved
+  with key-folding, severity escalation, eviction that never drops
+  active CRITICAL; alerts table persistence; API list/ack/resolve with
+  RBAC+CSRF+audit; Telegram /alerts with Ack buttons on the same
+  center; hub topic + change events. Console page is T-040)
 - description: severity routing, cooldown/dedup/aggregation, alert
   lifecycle (active/acked/resolved), web center + Telegram pushes.
 - dependencies: T-024, T-033

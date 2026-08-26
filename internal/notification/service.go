@@ -73,6 +73,7 @@ type Service struct {
 	mu       sync.Mutex
 	cfg      Config
 	sinks    map[string]Sink
+	always   []Sink               // receive every delivery regardless of routing
 	lastSent map[string]time.Time // key → last delivery
 	pending  map[string]int       // key → suppressed count since last delivery
 	recent   []Delivery           // ring of recent deliveries (console/telegram /alerts)
@@ -102,6 +103,15 @@ func (s *Service) Register(sink Sink) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sinks[sink.Name()] = sink
+}
+
+// RegisterAlways attaches a sink that receives every delivery
+// regardless of severity routing (the alert center — routing controls
+// channels, never whether an alert is recorded).
+func (s *Service) RegisterAlways(sink Sink) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.always = append(s.always, sink)
 }
 
 // Reconfigure swaps routing config (strategy config hot swap).
@@ -139,7 +149,8 @@ func (s *Service) Notify(ev Event) {
 		s.recent = s.recent[len(s.recent)-recentCap:]
 	}
 	channels := s.routeFor(ev.Severity)
-	sinks := make([]Sink, 0, len(channels))
+	sinks := make([]Sink, 0, len(channels)+len(s.always))
+	sinks = append(sinks, s.always...)
 	for _, ch := range channels {
 		if sink, ok := s.sinks[ch]; ok {
 			sinks = append(sinks, sink)

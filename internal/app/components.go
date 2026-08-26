@@ -80,6 +80,14 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		notify.Reconfigure(notificationConfig(snap))
 	})
 
+	// The alert center records every delivery (routing controls channels,
+	// never whether an alert exists) and owns the shared lifecycle.
+	center := &notification.Center{Log: log, IDGen: newULID, Now: time.Now}
+	if store != nil {
+		center.Store = store.Alerts()
+	}
+	notify.RegisterAlways(center)
+
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
 		engine = NewEngine(cfg, log)
@@ -100,7 +108,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			bot := &telegram.Bot{
 				Client:    client,
 				Allowlist: allow,
-				Services:  telegramServices{e: engine, n: notify, s: stratSvc},
+				Services:  telegramServices{e: engine, n: notify, c: center, s: stratSvc},
 				Log:       log,
 				Audit:     telegramAudit(log, store),
 			}
@@ -141,11 +149,20 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 				log.Error("hub metrics registration failed", "error", err)
 			}
 		}
-		// Web alert channel: hub topic with the recent ring as snapshot.
+		// Web alert channel: the topic snapshot is the center's live list;
+		// deliveries and lifecycle changes stream as events.
 		hub.RegisterTopic("alerts", func() (json.RawMessage, error) {
-			return json.Marshal(notify.Recent(20))
+			return json.Marshal(map[string]any{
+				"alerts": center.List("", 50),
+				"active": center.ActiveCount(),
+			})
 		})
 		notify.Register(webSink{hub: hub})
+		center.OnChange = func(a notification.Alert) {
+			_ = hub.Publish("alerts", map[string]any{"kind": "alert_change", "alert": a})
+		}
+		apiServer.Alerts = center
+		apiServer.AuditAction = webAudit(log, store)
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
 			engine.Hub = hub
@@ -206,23 +223,31 @@ func (w webSink) Deliver(d notification.Delivery) {
 	})
 }
 
-// telegramAudit records bot control actions (source=telegram) into
-// audit_events when persistence is on; log-only otherwise.
-func telegramAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity string) {
+// sourceAudit records control actions into audit_events when
+// persistence is on; log-only otherwise.
+func sourceAudit(log *slog.Logger, store *storage.Store, source string) func(actor, action, entity string) {
 	return func(actor, action, entity string) {
 		if store == nil {
-			log.Info("audit event (memory-only)", "actor", actor, "action", action, "entity", entity, "source", "telegram")
+			log.Info("audit event (memory-only)", "actor", actor, "action", action, "entity", entity, "source", source)
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := store.InsertAuditEvent(ctx, storage.AuditRow{
-			ID: newULID(), Actor: actor, Source: "telegram",
+			ID: newULID(), Actor: actor, Source: source,
 			Action: action, Entity: entity,
 		}); err != nil {
-			log.Error("telegram audit insert failed", "error", err)
+			log.Error("audit insert failed", "source", source, "error", err)
 		}
 	}
+}
+
+func telegramAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity string) {
+	return sourceAudit(log, store, "telegram")
+}
+
+func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity string) {
+	return sourceAudit(log, store, "web")
 }
 
 // buildStrategy wires the versioned config service: DB-backed rows when

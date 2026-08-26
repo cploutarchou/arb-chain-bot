@@ -61,12 +61,13 @@ func (f *fakeAPI) answers() []string {
 	return append([]string(nil), f.answered...)
 }
 
-// fakeServices is the shared-state double: the paper flag is the single
-// backend state a web PaperController would also read.
+// fakeServices is the shared-state double: the paper flag and the alert
+// center are the single backend state the web console would also use.
 type fakeServices struct {
 	mu           sync.Mutex
 	paperRunning bool
 	paperPresent bool
+	center       *notification.Center
 }
 
 func (s *fakeServices) Status() StatusView {
@@ -104,10 +105,18 @@ func (s *fakeServices) Breakers() []BreakerView {
 	return []BreakerView{{Name: "exchange", Scope: "exchange:binance", State: "CLOSED"}}
 }
 
-func (s *fakeServices) Alerts(int) []notification.Delivery {
-	return []notification.Delivery{{Event: notification.Event{
-		Severity: notification.SeverityWarning, Key: "k", Title: "Gap storm", Body: "many gaps",
-	}, Suppressed: 3}}
+func (s *fakeServices) Alerts(limit int) []notification.Alert {
+	if s.center == nil {
+		return nil
+	}
+	return s.center.List("", limit)
+}
+
+func (s *fakeServices) AckAlert(id, actor string) (notification.Alert, error) {
+	if s.center == nil {
+		return notification.Alert{}, notification.ErrAlertNotFound
+	}
+	return s.center.Ack(id, actor)
 }
 
 func (s *fakeServices) PaperPause(string) bool {
@@ -144,7 +153,15 @@ func newTestBot(t *testing.T) (*Bot, *fakeAPI, *fakeServices, func(actor, action
 
 	var auditMu sync.Mutex
 	var audits []string
-	svcs := &fakeServices{paperRunning: true, paperPresent: true}
+	center := &notification.Center{
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		IDGen: newSeqIDGen(),
+	}
+	center.Deliver(notification.Delivery{Event: notification.Event{
+		Severity: notification.SeverityWarning, Key: "gap:BTCUSDT",
+		Title: "Gap storm", Body: "many gaps", At: time.Unix(1_700_000_000, 0),
+	}, Suppressed: 3})
+	svcs := &fakeServices{paperRunning: true, paperPresent: true, center: center}
 	bot := &Bot{
 		Client:    NewClient(srv.URL + "/botTEST"),
 		Allowlist: map[int64]bool{100: true},
@@ -206,9 +223,61 @@ func TestCommandsAnswerFromSharedServices(t *testing.T) {
 			t.Errorf("reply %d missing %q:\n%s", i, want, got[i].Text)
 		}
 	}
-	// /alerts must surface the aggregation count.
-	if !strings.Contains(got[6].Text, "+3 suppressed") {
-		t.Errorf("alerts reply lacks suppressed count: %s", got[6].Text)
+	// /alerts must surface the aggregation count (1 delivery + 3
+	// suppressed = ×4) and offer an Ack button for the active alert.
+	if !strings.Contains(got[6].Text, "(×4)") {
+		t.Errorf("alerts reply lacks aggregation count: %s", got[6].Text)
+	}
+	if got[6].Markup == "" || !strings.Contains(got[6].Markup, "Ack 1") {
+		t.Errorf("alerts reply lacks ack button: %s", got[6].Markup)
+	}
+}
+
+// newSeqIDGen returns deterministic alert IDs for tests.
+func newSeqIDGen() func() string {
+	var mu sync.Mutex
+	n := 0
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		return "alert-" + string(rune('0'+n))
+	}
+}
+
+func TestAlertAckButtonSharesLifecycleWithWeb(t *testing.T) {
+	bot, fake, svcs, audits := newTestBot(t)
+	ctx := context.Background()
+
+	bot.HandleUpdate(ctx, msgUpdate(100, 100, "/alerts"))
+	msgs := fake.messages()
+	var kb struct {
+		InlineKeyboard [][]InlineButton `json:"inline_keyboard"`
+	}
+	if err := json.Unmarshal([]byte(msgs[0].Markup), &kb); err != nil {
+		t.Fatal(err)
+	}
+	bot.HandleUpdate(ctx, Update{UpdateID: 2, Callback: &CallbackQuery{
+		ID: "cb1", From: &User{ID: 100},
+		Message: &Message{Chat: Chat{ID: 100}}, Data: kb.InlineKeyboard[0][0].Data,
+	}})
+	if ans := fake.answers(); len(ans) != 1 || !strings.Contains(ans[0], "acknowledged") {
+		t.Fatalf("answers = %v", ans)
+	}
+	// The same center the web console reads now shows acked.
+	alerts := svcs.center.List("", 0)
+	if len(alerts) != 1 || alerts[0].State != notification.AlertAcked {
+		t.Fatalf("center state = %+v", alerts)
+	}
+	if got := audits("", "", ""); len(got) != 1 || !strings.Contains(got[0], "alert.ack") {
+		t.Fatalf("audits = %v", got)
+	}
+	// Second ack of the same alert is rejected (already acked).
+	bot.HandleUpdate(ctx, msgUpdate(100, 100, "/alerts"))
+	msgs = fake.messages()
+	last := msgs[len(msgs)-1]
+	if strings.Contains(last.Markup, "Ack 1") {
+		t.Fatalf("acked alert still offers ack button: %s", last.Markup)
 	}
 }
 

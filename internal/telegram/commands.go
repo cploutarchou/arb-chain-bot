@@ -41,7 +41,8 @@ func (b *Bot) dispatch(cmd, actor string) (string, *InlineKeyboard, string) {
 	case "/risk":
 		return b.riskText(), nil, string(auth.PermViewRisk)
 	case "/alerts":
-		return b.alertsText(), nil, string(auth.PermViewDashboard)
+		text, kb := b.alertsText(actor)
+		return text, kb, string(auth.PermViewDashboard)
 	case "/ai", "/ai_recommendations":
 		return "The AI advisor is not built yet (MASTER_PLAN T-036); nothing to show.", nil, string(auth.PermViewDashboard)
 	case "/report", "/daily":
@@ -197,21 +198,40 @@ func (b *Bot) riskText() string {
 	return sb.String()
 }
 
-func (b *Bot) alertsText() string {
+func (b *Bot) alertsText(actor string) (string, *InlineKeyboard) {
 	alerts := b.Services.Alerts(5)
 	if len(alerts) == 0 {
-		return "No recent notifications."
+		return "No alerts.", nil
 	}
+	userID := actorID(actor)
 	var sb strings.Builder
-	sb.WriteString("Recent notifications:\n")
-	for _, a := range alerts {
-		line := fmt.Sprintf("• [%s] %s — %s", a.Severity.String(), a.Title, a.Body)
-		if a.Suppressed > 0 {
-			line += fmt.Sprintf(" (+%d suppressed)", a.Suppressed)
+	sb.WriteString("Alerts (shared with the web console):\n")
+	var rows [][]InlineButton
+	for i, a := range alerts {
+		line := fmt.Sprintf("%d. [%s/%s] %s — %s", i+1, a.SevName, a.State, a.Title, a.Body)
+		if a.Count > 1 {
+			line += fmt.Sprintf(" (×%d)", a.Count)
 		}
 		sb.WriteString(line + "\n")
+		if a.State == "active" {
+			rows = append(rows, []InlineButton{{
+				Text: fmt.Sprintf("Ack %d: %s", i+1, truncate(a.Title, 24)),
+				Data: b.newCallback("ack_alert:"+a.ID, userID),
+			}})
+		}
 	}
-	return sb.String()
+	var kb *InlineKeyboard
+	if len(rows) > 0 {
+		kb = &InlineKeyboard{Rows: rows}
+	}
+	return sb.String(), kb
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
 
 func (b *Bot) configText() string {

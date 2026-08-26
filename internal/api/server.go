@@ -16,6 +16,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
@@ -52,6 +53,10 @@ type Server struct {
 	MetricsHandler http.Handler
 	// ObserveRequest, when set, records api_request_duration per request.
 	ObserveRequest func(method, route string, status int, seconds float64)
+	// Alerts, when set, backs the alert-center routes.
+	Alerts *notification.Center
+	// AuditAction records control actions (source=web); nil = log only.
+	AuditAction func(actor, action, entity string)
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -150,6 +155,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Resume() }))))
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 	s.configRoutes(mux)
+	s.alertRoutes(mux)
 	if s.MetricsHandler != nil {
 		mux.Handle("GET /metrics", s.MetricsHandler)
 	}
