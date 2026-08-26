@@ -69,6 +69,24 @@ func (e *Engine) Name() string { return "paper" }
 // Active reports in-flight simulations (scanner risk context).
 func (e *Engine) Active() int { return int(e.active.Load()) }
 
+// QueueDepth and QueueCapacity expose the inbound event-queue backlog
+// (BL-18: system health's queue-depth panel). len/cap on a channel need
+// no synchronization; nil In (paper wired without a feed, e.g. some
+// tests) reports zero rather than panicking.
+func (e *Engine) QueueDepth() int {
+	if e.In == nil {
+		return 0
+	}
+	return len(e.In)
+}
+
+func (e *Engine) QueueCapacity() int {
+	if e.In == nil {
+		return 0
+	}
+	return cap(e.In)
+}
+
 // Running reports the pause state.
 func (e *Engine) Running() bool { return e.running.Load() }
 

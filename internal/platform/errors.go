@@ -1,6 +1,9 @@
 package platform
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrNoChange rejects an Apply whose payload equals the current version.
 var ErrNoChange = errors.New("platform: no changes against current version")
@@ -28,3 +31,21 @@ var ErrNotFound = errors.New("platform: version not found")
 // bootstrap yet (empty result), distinct from "this venue genuinely has
 // no markets" — the API maps it to 503, never to unknown_symbol.
 var ErrCatalogNotReady = errors.New("platform: market catalog not ready yet")
+
+// ErrStaleVersion rejects an Apply/Rollback whose caller-supplied
+// parent_version no longer matches the active version (optimistic
+// concurrency). Callers map it to 409; StaleVersionError.Current carries
+// the version the caller should reload against.
+var ErrStaleVersion = errors.New("platform: stale parent_version")
+
+// StaleVersionError is the concrete error ErrStaleVersion wraps; use
+// errors.As to recover Current for the response body.
+type StaleVersionError struct {
+	Current int64
+}
+
+func (e *StaleVersionError) Error() string {
+	return fmt.Sprintf("%s: current version is %d", ErrStaleVersion, e.Current)
+}
+
+func (e *StaleVersionError) Is(target error) bool { return target == ErrStaleVersion }

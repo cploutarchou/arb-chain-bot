@@ -139,6 +139,90 @@ func TestPlatformWritePermissionsBySection(t *testing.T) {
 	}
 }
 
+func TestPlatformApplyOptimisticConcurrency(t *testing.T) {
+	_, mux, svc := newPlatformServer(t)
+	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	next := svc.Current().Settings.Clone()
+	v := next.Venues["binance"]
+	v.Fees.TakerBps = decimal.NewFromInt(7)
+	next.Venues["binance"] = v
+
+	// Correct parent_version (matches the loaded version 1) succeeds.
+	rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings",
+		map[string]any{"settings": next, "parent_version": 1})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply with correct parent_version = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := svc.Current().Version; got != 2 {
+		t.Fatalf("version after apply = %d, want 2", got)
+	}
+
+	// Stale parent_version (still says 1) refused with 409 stale_version,
+	// current version reported in the body — even though the payload is
+	// unchanged from the just-applied version (which would otherwise be
+	// a 400 no_change): the concurrency error takes priority.
+	rec = postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings",
+		map[string]any{"settings": next, "parent_version": 1})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale apply = %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data  map[string]int64 `json:"data"`
+		Error *APIError        `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error == nil || env.Error.Code != "stale_version" {
+		t.Fatalf("error = %+v, want stale_version", env.Error)
+	}
+	if env.Data["current_version"] != 2 {
+		t.Fatalf("current_version = %d, want 2", env.Data["current_version"])
+	}
+	if got := svc.Current().Version; got != 2 {
+		t.Fatalf("version must not advance on a stale write, got %d", got)
+	}
+
+	// Omitting parent_version keeps today's unchecked behavior.
+	next2 := svc.Current().Settings.Clone()
+	v2 := next2.Venues["binance"]
+	v2.Fees.TakerBps = decimal.NewFromInt(9)
+	next2.Venues["binance"] = v2
+	rec = postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next2})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply without parent_version = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPlatformRollbackOptimisticConcurrency(t *testing.T) {
+	_, mux, svc := newPlatformServer(t)
+	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	next := svc.Current().Settings.Clone()
+	v := next.Venues["binance"]
+	v.Fees.TakerBps = decimal.NewFromInt(7)
+	next.Venues["binance"] = v
+	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next}); rec.Code != http.StatusOK {
+		t.Fatalf("seed write = %d", rec.Code)
+	}
+	if got := svc.Current().Version; got != 2 {
+		t.Fatalf("version = %d, want 2", got)
+	}
+
+	rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings/rollback",
+		map[string]any{"version": 1, "parent_version": 1})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale rollback = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings/rollback",
+		map[string]any{"version": 1, "parent_version": 2})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback with correct parent_version = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestPlatformWriteCSRFRequired(t *testing.T) {
 	_, mux, _ := newPlatformServer(t)
 	aCookie, _ := login(t, mux, "admin@example.test", "admin-pw")

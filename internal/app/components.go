@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/paper"
 	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
+	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -49,6 +51,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	var engine *Engine
 	var supervisor *Supervisor
 	var botRunning atomic.Bool
+	// bot/push/telegramAllow back GET /api/v1/telegram/status (BL-21);
+	// nil (no token or empty allowlist) reports enabled:false honestly.
+	var bot *telegram.Bot
+	var push *telegram.PushSink
+	var telegramAllow *allowSet
 
 	// Persistence is optional in dev (empty DSN = in-memory only). A
 	// configured-but-unreachable database is a hard failure at boot:
@@ -134,6 +141,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 
 	var reportGen *reporting.Generator
 	var campaigns *campaign.Runner
+	var replays *replay.Runner
 
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
@@ -180,6 +188,16 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
 			}
 			others = append(others, campaigns)
+
+			// Console-driven replays (BL-17): one baseline backtest.Run
+			// against a recording, optionally pinned to a persisted
+			// strategy version — the console's "replay this recording
+			// through the CURRENT (or a specific) strategy" button.
+			replays = &replay.Runner{
+				Sources: store, Strategy: stratSvc, Store: store,
+				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
+			}
+			others = append(others, replays)
 		}
 
 		// Telegram allowlist: one live set (T-057), fed by the platform
@@ -191,6 +209,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		allow := &allowSet{}
 		allow.Set(platformSvc.Current().Settings.Telegram.Allowlist)
 		platformSvc.Subscribe(func(snap platform.Snapshot) { allow.Set(snap.Settings.Telegram.Allowlist) })
+		telegramAllow = allow
 
 		// Telegram control surface: only with a token, a non-empty
 		// allow-list, and an engine to control. The allowlist that
@@ -200,14 +219,14 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		// honest caveat field_timing surfaces (design §1.3).
 		if cfg.TelegramToken != "" && len(allow.IDs()) > 0 {
 			client := telegram.NewClient("https://api.telegram.org/bot" + cfg.TelegramToken)
-			bot := &telegram.Bot{
+			bot = &telegram.Bot{
 				Client:   client,
 				Allowed:  allow.Allowed,
 				Services: telegramServices{e: engine, n: notify, c: center, s: stratSvc, ai: aiSvc, rep: reportGen},
 				Log:      log,
 				Audit:    telegramAudit(log, store),
 			}
-			push := &telegram.PushSink{
+			push = &telegram.PushSink{
 				Client: client, Targets: allow.IDs,
 				Log: log, OnDrop: notify.CountDrop,
 			}
@@ -248,6 +267,9 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		if campaigns != nil {
 			supervisor.Campaigns = campaigns
+		}
+		if replays != nil {
+			supervisor.Replays = replays
 		}
 		others = append(others, supervisor)
 	}
@@ -294,9 +316,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		apiServer.Platform = platformSvc
 		apiServer.PlatformCatalog = platformSvc.Catalog
 		apiServer.BotRunning = func() bool { return botRunning.Load() }
+		apiServer.Telegram = telegramStatusView(bot, push, telegramAllow, botRunning.Load)
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
 			apiServer.Reads = NewReadModel(engine, stratSvc)
+			apiServer.Triangles = NewTriangleReader(engine)
 			engine.Hub = hub
 			if cfg.Mode == config.ModePaper {
 				apiServer.Paper = paperProxy{engine}
@@ -332,6 +356,17 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			})
 			campaigns.Publish = func(data any) { _ = hub.Publish("campaigns", data) }
 			apiServer.Campaigns = campaigns
+		}
+		if replays != nil {
+			hub.RegisterTopic("replays", func() (json.RawMessage, error) {
+				runs, err := replays.List(context.Background(), 50)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]any{"runs": runs})
+			})
+			replays.Publish = func(data any) { _ = hub.Publish("replays", data) }
+			apiServer.Replays = replays
 		}
 		return append([]Component{apiServer}, others...)
 	}
@@ -469,6 +504,44 @@ func telegramAudit(log *slog.Logger, store *storage.Store) func(actor, action, e
 	return sourceAudit(log, store, "telegram")
 }
 
+// telegramStatusView builds the func api.Server.Telegram reads on every
+// GET /api/v1/telegram/status request (BL-21). bot/push/allow may each
+// be nil (no token configured, or an empty allowlist held the bot back
+// per field_timing's caveat); the view reports that honestly rather
+// than 404ing — "not configured" is itself the answer. The token is
+// never read here.
+func telegramStatusView(bot *telegram.Bot, push *telegram.PushSink, allow *allowSet, enabled func() bool) func() api.TelegramStatusView {
+	return func() api.TelegramStatusView {
+		view := api.TelegramStatusView{Enabled: enabled()}
+		if allow != nil {
+			ids := allow.IDs()
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+			view.Allowlist = ids
+		}
+		if bot != nil {
+			st := bot.Status()
+			view.BotUsername = st.BotUsername
+			view.Messages, view.Errors = st.Messages, st.Errors
+			view.LastPollOK, view.LastPollError = st.LastPollOK, st.LastPollError
+			view.LastGetMeOK, view.LastGetMeError = st.LastGetMeOK, st.LastGetMeError
+			if !st.LastPollAt.IsZero() {
+				view.LastPollAt = &st.LastPollAt
+			}
+			if !st.LastGetMeAt.IsZero() {
+				view.LastGetMeAt = &st.LastGetMeAt
+			}
+		}
+		if push != nil {
+			st := push.Status()
+			view.PushesSent, view.PushErrors = st.Pushed, st.Errors
+			if !st.LastPushAt.IsZero() {
+				view.LastPushedAt = &st.LastPushAt
+			}
+		}
+		return view
+	}
+}
+
 // allowSet is the one live Telegram allowlist both telegram.Bot.Allowed
 // and telegram.PushSink.Targets read (T-057 §1.5): updating only one of
 // the two copies the pre-T-057 wiring kept would leave a revoked user
@@ -519,6 +592,8 @@ func (p restartProxy) Request(actor, reason string, stopRecording bool) api.Rest
 	switch {
 	case errors.Is(err, ErrCampaignRunning):
 		code = "campaign_running"
+	case errors.Is(err, ErrReplayRunning):
+		code = "replay_running"
 	case errors.Is(err, ErrRecordingActive):
 		code = "recording_active"
 	case errors.Is(err, ErrRestartInProgress):

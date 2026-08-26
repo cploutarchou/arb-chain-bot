@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
@@ -27,6 +28,23 @@ type PushSink struct {
 
 	once sync.Once
 	ch   chan notification.Delivery
+
+	// Push-delivery counters (BL-21: GET /api/v1/telegram/status).
+	pushed     atomic.Int64
+	pushErrors atomic.Int64
+	lastPushAt atomic.Int64 // unix nanos; 0 = never
+}
+
+// PushStatus is the outbound-push snapshot the console reads (BL-21).
+type PushStatus struct {
+	Pushed     int64
+	Errors     int64
+	LastPushAt time.Time
+}
+
+// Status snapshots delivery counters.
+func (p *PushSink) Status() PushStatus {
+	return PushStatus{Pushed: p.pushed.Load(), Errors: p.pushErrors.Load(), LastPushAt: unixOrZero(p.lastPushAt.Load())}
 }
 
 const pushQueue = 64
@@ -76,9 +94,13 @@ func (p *PushSink) Run(ctx context.Context) error {
 				sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				err := p.Client.SendMessage(sendCtx, chat, text, nil)
 				cancel()
+				p.lastPushAt.Store(time.Now().UnixNano())
 				if err != nil {
+					p.pushErrors.Add(1)
 					p.Log.Warn("telegram push failed", "chat_id", chat, "error", err)
+					continue
 				}
+				p.pushed.Add(1)
 			}
 		}
 	}

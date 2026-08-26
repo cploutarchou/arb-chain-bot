@@ -158,7 +158,15 @@ func (s *Service) Apply(ctx context.Context, actor, source string, doc Settings)
 
 // ApplyAuthorized is Apply with an in-lock authorization gate.
 func (s *Service) ApplyAuthorized(ctx context.Context, actor, source string, doc Settings, authorize Authorize) (Snapshot, error) {
-	return s.applyLocked(ctx, actor, source, "settings.apply", doc, authorize)
+	return s.applyLocked(ctx, actor, source, "settings.apply", doc, authorize, 0)
+}
+
+// ApplyAuthorizedExpect is ApplyAuthorized with an optimistic-concurrency
+// check: when expectedParent is non-zero, the write is refused with
+// ErrStaleVersion unless the active version still equals expectedParent
+// (checked INSIDE the writer lock, mirroring strategy.Service).
+func (s *Service) ApplyAuthorizedExpect(ctx context.Context, actor, source string, doc Settings, authorize Authorize, expectedParent int64) (Snapshot, error) {
+	return s.applyLocked(ctx, actor, source, "settings.apply", doc, authorize, expectedParent)
 }
 
 // Rollback re-activates version's payload as a NEW version (parent set
@@ -169,11 +177,17 @@ func (s *Service) Rollback(ctx context.Context, actor, source string, version in
 
 // RollbackAuthorized is Rollback with an in-lock authorization gate.
 func (s *Service) RollbackAuthorized(ctx context.Context, actor, source string, version int64, authorize Authorize) (Snapshot, error) {
+	return s.RollbackAuthorizedExpect(ctx, actor, source, version, authorize, 0)
+}
+
+// RollbackAuthorizedExpect is RollbackAuthorized with the same
+// optimistic-concurrency check as ApplyAuthorizedExpect.
+func (s *Service) RollbackAuthorizedExpect(ctx context.Context, actor, source string, version int64, authorize Authorize, expectedParent int64) (Snapshot, error) {
 	old, err := s.store.Get(ctx, version)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return s.applyLocked(ctx, actor, source, "settings.rollback", old.Settings, authorize)
+	return s.applyLocked(ctx, actor, source, "settings.rollback", old.Settings, authorize, expectedParent)
 }
 
 // Get returns one stored version.
@@ -192,7 +206,7 @@ func (s *Service) PlanDiff(doc Settings) (map[string]strategy.Change, error) {
 	return strategy.DiffAny(s.Current().Settings, doc)
 }
 
-func (s *Service) applyLocked(ctx context.Context, actor, source, action string, doc Settings, authorize Authorize) (Snapshot, error) {
+func (s *Service) applyLocked(ctx context.Context, actor, source, action string, doc Settings, authorize Authorize, expectedParent int64) (Snapshot, error) {
 	if err := doc.Validate(); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %s", ErrInvalid, err)
 	}
@@ -213,6 +227,12 @@ func (s *Service) applyLocked(ctx context.Context, actor, source, action string,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur := s.Current()
+	// Optimistic concurrency, checked inside the writer lock (same
+	// placement as authorize) so a racing writer cannot slip in between
+	// the check and the write.
+	if expectedParent != 0 && cur.Version != expectedParent {
+		return Snapshot{}, &StaleVersionError{Current: cur.Version}
+	}
 	diff, err := strategy.DiffAny(cur.Settings, doc)
 	if err != nil {
 		return Snapshot{}, err

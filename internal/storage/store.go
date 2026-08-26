@@ -47,3 +47,28 @@ func (s *Store) Healthy(ctx context.Context) bool {
 	defer cancel()
 	return s.Pool.Ping(ctx) == nil
 }
+
+// PoolStat is a plain snapshot of the connection pool (BL-18 system
+// health); it exists so callers (internal/api) never need to import
+// pgxpool just to report pool depth.
+type PoolStat struct {
+	AcquiredConns    int32 `json:"acquired_conns"`
+	IdleConns        int32 `json:"idle_conns"`
+	ConstructingConn int32 `json:"constructing_conns"`
+	TotalConns       int32 `json:"total_conns"`
+	MaxConns         int32 `json:"max_conns"`
+	AcquireCount     int64 `json:"acquire_count"`
+	EmptyAcquireCnt  int64 `json:"empty_acquire_count"`
+	CanceledAcquires int64 `json:"canceled_acquire_count"`
+}
+
+// PoolStats snapshots the pgx pool for the system-health endpoint.
+func (s *Store) PoolStats() PoolStat {
+	st := s.Pool.Stat()
+	return PoolStat{
+		AcquiredConns: st.AcquiredConns(), IdleConns: st.IdleConns(),
+		ConstructingConn: st.ConstructingConns(), TotalConns: st.TotalConns(),
+		MaxConns: st.MaxConns(), AcquireCount: st.AcquireCount(),
+		EmptyAcquireCnt: st.EmptyAcquireCount(), CanceledAcquires: st.CanceledAcquireCount(),
+	}
+}

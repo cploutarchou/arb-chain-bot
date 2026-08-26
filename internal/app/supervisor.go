@@ -65,9 +65,21 @@ type CampaignBusy interface {
 	BusyRun() (string, bool)
 }
 
+// ReplayBusy reports whether a console-driven replay run (BL-17) is in
+// progress — replay.Runner.BusyRun satisfies this. A replay run never
+// touches the live *Engine (backtest.Run builds its own books, scanner,
+// and portfolio in-process), so a restart cannot corrupt one; the guard
+// exists only so a restart doesn't silently fight a replay for the same
+// CPU core, giving the operator an honest reason instead of unexplained
+// slowness on both sides.
+type ReplayBusy interface {
+	BusyRun() (string, bool)
+}
+
 // Guard-rail refusals (design §2.5); the API maps these to HTTP codes.
 var (
 	ErrCampaignRunning   = errors.New("engine: campaign run in progress")
+	ErrReplayRunning     = errors.New("engine: replay run in progress")
 	ErrRecordingActive   = errors.New("engine: recording session active")
 	ErrRestartInProgress = errors.New("engine: a restart is already in progress")
 )
@@ -83,8 +95,11 @@ type Supervisor struct {
 	Paper    func() *paper.Engine
 	// Campaigns, when set, refuses a restart while a run is in progress.
 	Campaigns CampaignBusy
-	Grace     time.Duration
-	Log       *slog.Logger
+	// Replays, when set, refuses a restart while a replay run (BL-17) is
+	// in progress — same reasoning as Campaigns (see ReplayBusy).
+	Replays ReplayBusy
+	Grace   time.Duration
+	Log     *slog.Logger
 	// Notify mirrors Engine.notify's signature (severity, key, title, body).
 	Notify func(sev notification.Severity, key, title, body string)
 	// OnState, when set, is called after every state change (hub publish
@@ -173,6 +188,11 @@ func (s *Supervisor) Request(req RestartRequest) error {
 	if s.Campaigns != nil {
 		if id, busy := s.Campaigns.BusyRun(); busy {
 			return fmt.Errorf("%w: campaign run %s is in progress", ErrCampaignRunning, id)
+		}
+	}
+	if s.Replays != nil {
+		if id, busy := s.Replays.BusyRun(); busy {
+			return fmt.Errorf("%w: replay run %s is in progress", ErrReplayRunning, id)
 		}
 	}
 	if !req.StopRecording && s.Recorder != nil {

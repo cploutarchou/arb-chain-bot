@@ -14,11 +14,41 @@ import (
 // Record is one outbox item. Kind selects the writer; payloads are the
 // domain structs (already immutable evidence).
 type Record struct {
-	Kind        string // "opportunity" | "cycle"
+	Kind        string // "opportunity" | "cycle" | "risk_event"
 	Opportunity *opportunity.Opportunity
 	Decision    *risk.Decision
 	Cycle       *execution.CycleResult
 	SessionID   string
+	RiskEvent   *RiskEvent
+}
+
+// RiskEvent is one persisted risk-engine event (BL-31): a circuit-breaker
+// transition or a risk-rejected opportunity. It maps directly onto the
+// risk_events table (migration 000001); Kind distinguishes the two
+// sources so the console can filter/label them.
+type RiskEvent struct {
+	ID            string
+	TS            time.Time
+	Kind          string // "breaker_transition" | "risk_reject"
+	Subject       string // breaker scope, or "triangle:<id>" for a rejection
+	LimitName     string // breaker name, or the failing risk check's name
+	Observed      string
+	Threshold     string
+	Action        string // free-text reason
+	BreakerState  string // breaker's new state; empty for rejections
+	CorrelationID string
+}
+
+// InsertRiskEvent persists one risk_events row (BL-31); idempotent on id.
+func (s *Store) InsertRiskEvent(ctx context.Context, e RiskEvent) error {
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO risk_events (
+			id, ts, kind, subject, limit_name, observed, threshold, action, breaker_state, correlation_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (id) DO NOTHING`,
+		e.ID, e.TS, e.Kind, nullStr(e.Subject), nullStr(e.LimitName), nullStr(e.Observed),
+		nullStr(e.Threshold), nullStr(e.Action), nullStr(e.BreakerState), nullStr(e.CorrelationID))
+	return err
 }
 
 // ensureRefs upserts the exchange/triangle rows an opportunity references
@@ -41,6 +71,17 @@ func (s *Store) ensureRefs(ctx context.Context, op *opportunity.Opportunity) err
 	return err
 }
 
+// opportunityDecision is the structured decision evidence persisted in
+// the `decision` column (BL-27): the full risk verdict, not just the
+// checks sub-object InsertOpportunity has always folded into `legs`
+// (kept there too, for the historical rows that predate this column).
+type opportunityDecision struct {
+	Allowed       bool         `json:"allowed"`
+	ReasonCode    string       `json:"reason_code,omitempty"`
+	Checks        []risk.Check `json:"checks,omitempty"`
+	ConfigVersion int64        `json:"config_version,omitempty"`
+}
+
 // InsertOpportunity persists one evaluated opportunity with its decision
 // evidence (SKILL.md §19, §36).
 func (s *Store) InsertOpportunity(ctx context.Context, op *opportunity.Opportunity, dec *risk.Decision) error {
@@ -54,6 +95,23 @@ func (s *Store) InsertOpportunity(ctx context.Context, op *opportunity.Opportuni
 	if err != nil {
 		return err
 	}
+	var decisionJSON []byte
+	if dec != nil {
+		decisionJSON, err = json.Marshal(opportunityDecision{
+			Allowed: dec.Allowed, ReasonCode: dec.ReasonCode,
+			Checks: dec.Checks, ConfigVersion: dec.ConfigVersion,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	// BookVersions() is the revalidation contract's own per-leg evidence
+	// (internal/opportunity, already exported) — not re-derived here.
+	versions := op.BookVersions()
+	bookVersions := make([]int64, len(versions))
+	for i, v := range versions {
+		bookVersions[i] = int64(v) //nolint:gosec // book versions are far below int64 range
+	}
 	var cfgVersion *int64
 	if op.ConfigVersion != 0 {
 		cfgVersion = &op.ConfigVersion
@@ -66,8 +124,9 @@ func (s *Store) InsertOpportunity(ctx context.Context, op *opportunity.Opportuni
 			gross_profit, net_profit, gross_return_bps, net_return_bps,
 			latency_buffer, risk_buffer, recommended_size,
 			confidence, data_quality, config_version,
-			detected_at, expires_at, decided_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+			detected_at, expires_at, decided_at,
+			decision, book_versions
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		ON CONFLICT (id) DO NOTHING`,
 		op.ID, string(op.Exchange), op.TriangleID, string(op.Status), nullStr(op.Reason),
 		string(op.Start), op.Quote.InputConsumed, legs,
@@ -76,6 +135,7 @@ func (s *Store) InsertOpportunity(ctx context.Context, op *opportunity.Opportuni
 		op.Buffers.LatencyBps, op.Buffers.RiskBps, op.RecommendedSize,
 		op.DataQuality, op.DataQuality, cfgVersion,
 		op.DetectedAt, op.ExpiresAt, time.Now(),
+		decisionJSON, bookVersions,
 	)
 	return err
 }

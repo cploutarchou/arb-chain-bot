@@ -20,15 +20,19 @@ var (
 // RecorderStatus is the live view of the active session (nil-safe zero
 // value = idle).
 type RecorderStatus struct {
-	Running   bool              `json:"running"`
-	SessionID string            `json:"session_id,omitempty"`
-	StartedAt *time.Time        `json:"started_at,omitempty"`
-	Written   int64             `json:"frames_written"`
-	Dropped   int64             `json:"frames_dropped"`
-	Segments  int               `json:"segments_closed"`
-	Bytes     int64             `json:"bytes_closed"`
-	Symbols   []exchange.Symbol `json:"symbols,omitempty"`
-	Dir       string            `json:"dir,omitempty"`
+	Running   bool       `json:"running"`
+	SessionID string     `json:"session_id,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	Written   int64      `json:"frames_written"`
+	Dropped   int64      `json:"frames_dropped"`
+	// QueueDepth/QueueCapacity are the tap-queue backlog (BL-18); zero
+	// while idle (no Recorder to probe).
+	QueueDepth    int               `json:"queue_depth"`
+	QueueCapacity int               `json:"queue_capacity"`
+	Segments      int               `json:"segments_closed"`
+	Bytes         int64             `json:"bytes_closed"`
+	Symbols       []exchange.Symbol `json:"symbols,omitempty"`
+	Dir           string            `json:"dir,omitempty"`
 }
 
 // RecorderControl owns at most one live Recorder and lets the API start
@@ -199,6 +203,8 @@ func (c *RecorderControl) statusLocked() RecorderStatus {
 	st.StartedAt = &started
 	st.Written = c.rec.Written()
 	st.Dropped = c.rec.Dropped()
+	st.QueueDepth = c.rec.Depth()
+	st.QueueCapacity = c.rec.Capacity()
 	st.Segments = c.segs
 	st.Bytes = c.bytes
 	for sym := range c.StreamOfSymbol {
