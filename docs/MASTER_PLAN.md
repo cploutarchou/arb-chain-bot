@@ -388,25 +388,57 @@ data-flow,security,risk}.md`.
 - dependencies: T-032, T-042
 
 ### T-047 Research-debt re-verification
-- status: BLOCKED in this dev environment — exchange documentation
-  sites are unreachable through the sandbox proxy (verified 2026-08-26:
-  developers.binance.com and binance.com both blocked), so the
-  UNVERIFIED items from docs/research/final-platform-selection.md §7
-  cannot be re-checked against primary sources here. Re-run in a
-  network-enabled environment before live-adjacent phases (T-050+).
+- status: DONE (2026-08-26, executed from a network-enabled host).
+  Every UNVERIFIED item from docs/research/final-platform-selection.md
+  §7 was re-pulled from current official sources with source + access
+  date recorded in place (fees.md, exchanges.md, final-platform-selection
+  §7.1/§7.2, okx-connector-checklist.md §14). Resolved: OKX fee ladder
+  (no OKB tier on the current schedule; volume/assets tiers), OKX
+  `market/books` 40 req/2 s and `books-full` 10 req/2 s, Kraken Depth
+  max 500, Coinbase WS 8 conn/s/IP. Corrected: Kraken Tier 1 fees
+  0.40/0.80 % since 2026-07-09 (3-leg 240 bps), Binance U/u two-phase
+  rule, Binance 5 msg/s WS client limit, `account/commission.discount`
+  is a multiplier, no Regular-tier zero-fee promo in a liquid Binance
+  triangle as of 2026-08-26. Explicitly demoted to named runtime-verified
+  assumptions (with burn-in checks): Bitget spot-demo coverage and
+  per-endpoint limits, Coinbase private REST rps and per-connection
+  subscription cap, Gate per-IP WS caps and fee page (HTTP 403 to
+  non-browser clients), Kraken public REST rate, OKX demo-data realism
+  and observed seqId reset. OKX checklist A–I executed in full, including
+  a live `books` capture (0 chain breaks, checksum fixed to 0). No
+  platform decision changed.
+- dependencies: none
 
 ## P3 — OPTIONAL / LATER
 
 ### T-050 Second exchange: OKX connector
-- status: BLOCKED (by SKILL.md §79 first-exchange definition of done)
-- description: strict prevSeqId chain validator, demo-env support,
-  capability descriptor; re-verify docs first (T-047).
-- pre-work (2026-08-26): docs/research/okx-connector-checklist.md — the
-  complete verification protocol (checklists A–I mapped to the exact
-  code seams, design decisions §12, exit criteria §13) to execute from
-  a network-enabled host alongside T-047. OKX doc/API hosts are
-  egress-blocked from this dev environment, so nothing in it is newly
-  verified; the task's status is unchanged.
+- status: BLOCKED (by SKILL.md §79 first-exchange definition of done —
+  gate 1 of okx-connector-checklist.md §0: the T-046 campaign verdict).
+  Research gate (T-047) is cleared.
+- description / acceptance (restated 2026-08-26 from the verified facts,
+  okx-connector-checklist.md §14): `books` channel connector with in-band
+  snapshots (`prevSeqId = -1`) and a strict `prevSeqId == last seqId`
+  validator that (a) accepts keep-alives (`seqId == prevSeqId`, empty
+  sides) as continuity, (b) accepts the documented maintenance reset
+  (`seqId < prevSeqId` with matching `prevSeqId`) under a distinct
+  metric label, (c) resyncs by unsubscribe/resubscribe on any other
+  break; checksum ignored (deprecated, fixed to 0); text `ping`/`pong`
+  keep-alive under the 30 s idle cut; pre-emptive reconnect on
+  `event: notice` code `64008`; 480 requests/hour subscription budget
+  with one multi-arg subscribe per connection; metadata from
+  `/public/instruments` mapping `tickSz`/`lotSz`/`minSz`, both size caps
+  and the quote caps `maxLmtAmt`/`maxMktAmt`, `state` (`live` →
+  TRADING, else HALTED), `MinNotional` = 0; `instruments` WS channel or
+  periodic refresh for rule changes; demo-env support via
+  `openapi.okx.com` + `x-simulated-trading: 1` / `wspap.okx.com`;
+  capability descriptor `{BookInitInBand, IntegrityUpdateChain,
+  RequiresRESTDriftCheck: false, FeeInReceived, HasSpotTestEnv: true,
+  ForcedDisconnect: false (+64008 handler)}`; venue-parameterized
+  replayer and campaign (`-exchange`); burn-in checks for the demoted
+  items (§14 "D" rows) before the descriptor is trusted.
+- pre-work (2026-08-26): docs/research/okx-connector-checklist.md —
+  protocol (A–I, §12, §13) and, since the 2026-08-26 re-verification,
+  the executed record (§14).
 
 ### T-051 Additional exchange (Bybit vs Bitget decision)
 - status: BLOCKED (Phase 21; fresh research required)
@@ -667,3 +699,19 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   (venue-parameterizing marketdata/replay.go and cmd/campaign, seq-reset
   validator semantics, the OKX Capabilities literal) and exit criteria.
   T-050 remains BLOCKED behind T-046/T-047.
+- 2026-08-26 (T-047 executed): research debt re-verified from a
+  network-enabled host — primary pages pulled raw (Binance spot-api-docs
+  repo, OKX docs-v5 5.2 MB reference, OKX help centre + fee page JSON,
+  Kraken docs/support, Bybit help, Coinbase CDP docs, Binance public
+  announcement CMS) plus a live keyless OKX `books` capture. Kraken
+  Tier 1 fees corrected to 0.40/0.80 % (2026-07-09 re-tiering; 3-leg
+  240 bps); OKX OKB ladder debt closed (no OKB tier — volume/assets
+  tiers) and `market/books` limit pinned (40 req/2 s); OKX checksum
+  deprecation confirmed in production since 2026-06-23 with keep-alive
+  and reset semantics quoted from the docs; Binance U/u rule restated
+  two-phase, 5 msg/s client limit added, promo-pair inventory dated (no
+  Regular-tier zero-fee leg in a liquid triangle). Items that stayed
+  unpinned (Gate 403s, Bitget client-rendered docs, Coinbase login-gated
+  fee table, Kraken public rate) are demoted to named runtime-verified
+  assumptions in final-platform-selection.md §7.2. T-047 DONE; T-050
+  acceptance restated; T-050 still BLOCKED on the T-046 verdict.

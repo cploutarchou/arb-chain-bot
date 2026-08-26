@@ -1,7 +1,12 @@
 # Final Platform Selection
 
 Status: DECIDED (synthesis of `exchanges.md`, `fees.md`, `market-data.md`,
-`frameworks.md`, `triangular-constraints.md`; research accessed 2026-08-26)
+`frameworks.md`, `triangular-constraints.md`; research accessed 2026-08-26;
+§7 research debt re-verified 2026-08-26 from a network-enabled host — T-047).
+The re-verification changed no decision: Binance stays first (its numbers
+were confirmed), OKX stays second (its integrity model was confirmed and its
+"UNVERIFIED" items resolved), Kraken's elimination got stronger (Tier 1 taker
+is now 0.80 %).
 
 Decisions:
 - **First exchange: Binance** (score 90/100)
@@ -48,12 +53,13 @@ through visible depth.
 | **Total** | **90** | **77** | **74** | **73** | **63** | **53** | **51** |
 
 Notable judgments behind the numbers:
-- **Economics is eliminatory, not just a score.** Kraken (120 bps 3-leg) and
+- **Economics is eliminatory, not just a score.** Kraken (240 bps 3-leg since 2026-07-09) and
   Coinbase Advanced (360 bps) cannot produce net-positive taker cycles at
   base tier against typical sub-10 bps deviations, whatever their API
   quality. Their high market-data scores are moot for this strategy.
-- **Binance economics are uniquely strong**: 22.5 bps with BNB, active
-  zero-fee promo pairs that can cut one or two legs to zero, and per-pair
+- **Binance economics are uniquely strong**: 22.5 bps with BNB, rotating
+  zero-fee promo pairs that can cut one or two legs to zero when live
+  (none at Regular tier in a liquid triangle on 2026-08-26), and per-pair
   account fee APIs to keep the engine honest.
 - **OKX vs Bybit for #2**: identical bot economics (30 bps). OKX wins on
   feed integrity — its strict prevSeqId chain makes every gap detectable,
@@ -79,7 +85,8 @@ Notable judgments behind the numbers:
   story.
 - Ops constraints: 24h forced disconnect (scheduled pre-emptive reconnect),
   server ping/pong within 1min, 1024 streams/connection, 300 connection
-  attempts/5min, 6000 weight/min REST budget, 429/418 discipline.
+  attempts/5min, 5 incoming client messages/s/connection, 6000 weight/min
+  REST budget, 429/418 discipline (all re-verified 2026-08-26).
 - Market-data host `data-stream.binance.vision` for public feeds.
 - Instruments: single `exchangeInfo` call → PRICE_FILTER / LOT_SIZE /
   NOTIONAL filters into normalized InstrumentRules.
@@ -91,21 +98,34 @@ Notable judgments behind the numbers:
   `demo-stream.binance.com`) — live-equivalent features/filters with
   realistic data — primary development target; spot testnet as fallback.
   Public market data requires no credentials at all.
-- Starting assets (initial config): USDT and USDC primary; FDUSD enabled
-  where zero-fee promo pairs make its triangles structurally cheapest;
-  BTC/ETH/BNB as intermediates. Revisit from measured data.
+- Starting assets (initial config): USDT and USDC primary; FDUSD only if a
+  zero-fee promo makes its triangles structurally cheapest — as of
+  2026-08-26 no such Regular-tier promo is live (fees.md), so FDUSD is not
+  enabled; BTC/ETH/BNB as intermediates. Revisit from measured data.
 
 ## 4. Second exchange: OKX — readiness notes (Phase 20, not now)
 
-- Feed: `books` 400 levels @100ms, in-band snapshot, strict
-  prevSeqId→seqId chain; checksum deprecated (2026) so the chain
-  implementation must be exact, including seqId repeats on keep-alives and
-  reset-lower after maintenance.
-- Demo trading via `x-simulated-trading: 1`; sub-op budget
-  (480/hour/connection) requires batched subscriptions.
+Re-verified 2026-08-26 (okx-connector-checklist.md §14):
+
+- Feed: `books` 400 levels @100 ms, in-band snapshot (`prevSeqId = -1`),
+  strict `prevSeqId == previous seqId` chain per instId; keep-alive after
+  ~60 s idle is an empty update with `seqId == prevSeqId`; a maintenance
+  reset is an update with `seqId < prevSeqId` after which the rule
+  resumes; checksum deprecated in production since 2026-06-23 (present,
+  always 0). All confirmed from the primary docs and a live capture.
+- Demo trading via `x-simulated-trading: 1` against `openapi.okx.com` /
+  `wspap.okx.com`; sub-op budget 480 requests/hour/connection counts
+  requests, not args, so batched subscriptions are cheap; 3 connection
+  attempts/s/IP; 30 s idle timeout with text ping/pong; service-upgrade
+  disconnects are announced 60 s ahead by `event: notice / code 64008`.
+- REST cross-check: `market/books` 40 req/2 s/IP (`sz` ≤ 400),
+  `books-full` 10 req/2 s/IP (≤ 5000).
+- Fees: 8/10 bps Regular; ladder is volume/assets based with **no OKB
+  tier** on the current schedule; fee charged in the received asset.
+- Universe: 1,381 live spot instruments; the six-market recording set
+  exists on OKX; `BTC-USDC`/`ETH-USDC` sit on a unified USD book
+  (`tradeQuoteCcyList`).
 - No official Go SDK — connector fully hand-written (already our model).
-- Re-verify fee ladder (OKB tiers) and rate limits from official docs when
-  Phase 20 begins; both carried UNVERIFIED items in this round.
 
 ## 5. Technology approach (confirmed)
 
@@ -140,8 +160,36 @@ Fees, promo pairs, rate limits, and channel specs rotate. Before Phase 4
 (connector build) starts, and again at every phase boundary that touches a
 venue: re-pull the venue's fee/instrument endpoints at runtime (never
 hardcode), and diff the connector spec against current official docs.
-UNVERIFIED items in this round (OKX OKB ladder and current books rate
-limit; Bitget spot-demo coverage and per-endpoint limits; Coinbase
-private-REST rps and per-connection subscription cap; Gate per-IP WS caps;
-Kraken REST depth max) are tracked as research-debt tasks in
-docs/MASTER_PLAN.md.
+
+### 7.1 Round-1 research debt — status after the 2026-08-26 re-verification
+
+| Item (round 1: UNVERIFIED) | Result | Source, accessed 2026-08-26 |
+|---|---|---|
+| OKX OKB fee ladder | **RESOLVED** — current schedule tiers by 30-day volume or assets on platform; no OKB tier (EU regional page) | okx.com/fees embedded `feeDataInfo` JSON; okx.com/help/trading-fee-rules-faq |
+| OKX `market/books` rate limit | **RESOLVED** — 40 req/2 s/IP (`sz` ≤ 400); `books-full` 10 req/2 s/IP | okx.com/docs-v5/en "Get order book" / "Get full order book" |
+| Bitget spot-demo coverage | **DEMOTED → runtime-verified assumption** (demo assets SUSDT/SBTC/SETH/SUSDC and `paptrading: 1` strongly imply spot, but api-doc pages are client-rendered) — burn-in: connect to `wss://wspap.bitget.com` and subscribe a spot `books` channel | bitget.com/api-doc demotrading pages (shell only) |
+| Bitget per-endpoint REST limits | **DEMOTED → runtime-verified assumption** (global 6,000 req/min/IP; per-endpoint values unreadable) — burn-in: measure 429 onset on `/api/v2/spot/market/orderbook` | bitget.com/api-doc (shell only) |
+| Coinbase private REST rps | **DEMOTED → runtime-verified assumption** (~30 req/s/IP per secondary sources) — burn-in: measure with a read-only key | docs.cdp.coinbase.com changelog (did not render) |
+| Coinbase per-connection subscription cap | **PARTIAL** — 8 connections/s/IP and 8 unauthenticated msgs/s/IP confirmed; no per-connection subscription cap is documented → runtime-verified assumption | docs.cdp.coinbase.com …/websocket/websocket-rate-limits |
+| Gate per-IP WS caps | **DEMOTED → runtime-verified assumption** — gate.com and gate.io docs answer HTTP 403 to non-browser clients | (unreachable) |
+| Kraken REST depth max | **RESOLVED** — `count` maximum 500 | docs.kraken.com/api/docs/rest-api/get-order-book |
+
+Additional corrections found while re-verifying (details in fees.md /
+exchanges.md): Kraken Tier 1 fees are 0.40 %/0.80 % since 2026-07-09 (3-leg
+240 bps); Binance's U/u rule is two-phase (sync bracketing vs steady-state
+gap test); Binance WS allows 5 incoming client messages/s/connection;
+Binance's `account/commission.discount` is a multiplier, not a rebate
+fraction; no Regular-tier zero-fee promo pair exists in a liquid Binance
+triangle as of 2026-08-26 (KGST/USDT only, to 2026-08-31); OKX's
+`books-rpi` channel, four-field size caps, price bands and unified-USD quote
+grouping are new since round 1.
+
+### 7.2 Standing runtime-verified assumptions
+
+Everything demoted above plus: Kraken public-endpoint rate (~1 req/s/IP,
+not on the rate-limit guide); Coinbase fee tiers (table behind login;
+confirm via `transaction_summary`); Gate VIP0 20/20 bps and GT discount
+(pages 403); OKX demo market data being live-mirrored; OKX seqId-reset
+behaviour observed across a real maintenance window (documented, not yet
+captured). Each is tied to a named burn-in check in
+okx-connector-checklist.md §14 or the venue's connector task.
