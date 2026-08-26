@@ -226,6 +226,21 @@ func Flags(c *backtest.Campaign, assets []string) map[string][]string {
 	return out
 }
 
+// Verdicts collects the §80 verdict lines per starting asset with a
+// backend-computed severity attached to each line (BL-05b).
+func Verdicts(c *backtest.Campaign, assets []string) map[string][]Verdict {
+	out := make(map[string][]Verdict, len(assets))
+	for _, a := range assets {
+		flags := c.Flags(a)
+		vs := make([]Verdict, 0, len(flags))
+		for _, f := range flags {
+			vs = append(vs, Verdict{Text: f, Severity: backtest.FlagSeverity(f)})
+		}
+		out[a] = vs
+	}
+	return out
+}
+
 // WriteFiles persists <base>.json (raw evidence) and <base>.md (report).
 func WriteFiles(c *backtest.Campaign, assets []string, base string) (mdPath, jsonPath string, err error) {
 	doc, err := json.MarshalIndent(c, "", "  ")

@@ -15,6 +15,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
+	"github.com/cploutarchou/arb-chain-bot/internal/paper"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
@@ -204,7 +205,9 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		info := api.BuildInfo{Components: names}
 		apiServer := api.NewServer(cfg, log, info)
-		apiServer.Auth = buildAuth(cfg, log, store)
+		authMgr, userAdmin := buildAuth(cfg, log, store)
+		apiServer.Auth = authMgr
+		apiServer.Users = userAdmin
 		apiServer.Strategy = stratSvc
 		hub := realtime.NewHub(256)
 		apiServer.Hub = hub
@@ -309,6 +312,18 @@ func (p paperProxy) Running() bool {
 		return pe.Running()
 	}
 	return false
+}
+
+// Reset delegates to Engine.ResetPaper (BL-10), translating the paper
+// package's own "not idle" sentinel into the API layer's at this
+// boundary — the api package stays free of a direct dependency on
+// internal/paper.
+func (p paperProxy) Reset(ctx context.Context) error {
+	err := p.e.ResetPaper(ctx)
+	if errors.Is(err, paper.ErrActive) {
+		return api.ErrPaperNotIdle
+	}
+	return err
 }
 
 // buildAdvisor selects the AI provider. Keys come from the environment
@@ -440,10 +455,14 @@ func buildStrategy(log *slog.Logger, store *storage.Store) *strategy.Service {
 // buildAuth wires auth stores: pgx-backed when persistence is enabled
 // (sessions survive restarts), in-memory otherwise. The bootstrap admin
 // from the environment is upserted either way (dev convenience;
-// production users are managed through the console).
-func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *auth.Manager {
+// production users are managed through the console). It also returns
+// the users & roles admin service (BL-11) over the same backing store,
+// so console user management works identically with or without a
+// database.
+func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*auth.Manager, *auth.AdminService) {
 	var users auth.UserStore
 	var sessions auth.SessionStore
+	var admin auth.AdminStore
 
 	bootstrapAdmin := func(add func(auth.User) error) {
 		if cfg.AdminEmail == "" || cfg.AdminPassword == "" {
@@ -455,7 +474,7 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 			log.Error("bootstrap admin hash failed", "error", err)
 			return
 		}
-		u := auth.User{ID: "admin-bootstrap", Email: cfg.AdminEmail, PasswordHash: hash, Role: auth.RoleAdmin}
+		u := auth.User{ID: "admin-bootstrap", Email: cfg.AdminEmail, PasswordHash: hash, Role: auth.RoleAdmin, CreatedAt: time.Now().UTC()}
 		if err := add(u); err != nil {
 			log.Error("bootstrap admin store failed", "error", err)
 			return
@@ -465,7 +484,7 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 
 	if store != nil {
 		as := store.Auth()
-		users, sessions = as, as
+		users, sessions, admin = as, as, as
 		bootstrapAdmin(func(u auth.User) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -473,10 +492,10 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 		})
 	} else {
 		mem := auth.NewMemoryStore()
-		users, sessions = mem, mem
+		users, sessions, admin = mem, mem, mem
 		bootstrapAdmin(func(u auth.User) error { mem.AddUser(u); return nil })
 	}
-	return &auth.Manager{
+	mgr := &auth.Manager{
 		Users:    users,
 		Sessions: sessions,
 		Throttle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
@@ -486,4 +505,6 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 		TTL:        12 * time.Hour,
 		Now:        time.Now,
 	}
+	adminSvc := &auth.AdminService{Store: admin, Sessions: sessions, Now: time.Now, IDGen: newULID}
+	return mgr, adminSvc
 }

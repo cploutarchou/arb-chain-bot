@@ -187,7 +187,7 @@ data-flow,security,risk}.md`.
   behavior tested.
 
 ### T-023 Auth, sessions, RBAC
-- priority: P0 · component: auth · status: DONE (Argon2id/PHC, revocable sessions, throttle, CSRF, RBAC matrix pinned; HTTP-layer denial tests; pgx session/user stores follow with T-022)
+- priority: P0 · component: auth · status: DONE (Argon2id/PHC, revocable sessions, throttle, CSRF, RBAC matrix pinned; HTTP-layer denial tests; pgx session/user stores follow with T-022; BL-11 users & roles console API: `GET/POST /api/v1/users`, `POST /api/v1/users/{id}/role|disable|enable|password`, `POST /api/v1/auth/password` — all PermUserManage (ADMIN) + CSRF + audit except the self-service password change, which is requireAuth-only; `auth.AdminService` enforces self-target/last-admin protection and revokes sessions on any credential/role change; works with or without a database via `auth.MemoryStore`)
 - description: Argon2id, server-side sessions, CSRF double-submit, login
   throttling, RBAC middleware + service-layer checks, audit events.
 - dependencies: T-003
@@ -200,7 +200,12 @@ data-flow,security,risk}.md`.
   groups; opportunities (memory ring + DB history), paper cycles +
   per-cycle orders, portfolio snapshot, pnl, risk (limits + breakers +
   reject histogram), audit list, deep /system/health; /readyz gates on
-  DB reachability; honest 404s for absent components)
+  DB reachability; honest 404s for absent components; BL-10 `POST
+  /api/v1/paper/reset` — PermPaperReset (ADMIN) + CSRF + audit, body
+  `{"confirm":"RESET"}` (400 otherwise), 404 outside PAPER mode, 409 if
+  the engine is running or a simulation is in flight; rebuilds the
+  reservation ledger and portfolio to configured initial balances and
+  starts a new paper session row while preserving historical cycles)
 - description: /api/v1 groups (auth, dashboard, scanner, opportunities,
   paper, portfolio, pnl, risk, system, audit, config) with envelope/
   pagination/correlation conventions; WS topic hub with seq + snapshot +
@@ -384,7 +389,14 @@ data-flow,security,risk}.md`.
   profiles + docs/deployment.md make the capture a one-command deploy.
   Remaining: run `make record` on a network-enabled host for real
   Binance sessions across regimes, then `make campaign RECORDING=…`.
-  No profitability claim is made without those runs.
+  No profitability claim is made without those runs. BL-05b:
+  `backtest.FlagSeverity(flag string) string` classifies each §80 verdict
+  line ("bad"/"warn"/"ok" by prefix); `campaign.Run.Verdicts
+  map[string][]Verdict{Text,Severity}` (json `verdicts`) is filled
+  alongside `Flags` on every completed run and persisted in the new
+  `campaign_runs.verdicts` JSONB column (`migrations/000005`), so the
+  console can render tone from backend data instead of grepping report
+  prose.
 - dependencies: T-032, T-042
 
 ### T-047 Research-debt re-verification

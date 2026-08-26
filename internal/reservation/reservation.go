@@ -204,6 +204,32 @@ func (m *Manager) clearHoldsLocked(r *Reservation) {
 	}
 }
 
+// Reset rebuilds the ledger to fresh initial balances, discarding every
+// reservation and conflict hold (BL-10, paper reset). It does not alter
+// any of the arithmetic above: Reserve/Settle/Release/Credit/
+// CheckInvariants are untouched, and the maps this method replaces are
+// the same ones those methods already read and write under m.mu. Callers
+// must ensure no reservation is in flight when calling Reset (the paper
+// engine must be paused with zero active simulations) — Reset does not
+// itself detect or wait for in-flight activity.
+func (m *Manager) Reset(initial map[exchange.Asset]decimal.Decimal) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.available = make(map[exchange.Asset]decimal.Decimal, len(initial))
+	m.reserved = make(map[exchange.Asset]decimal.Decimal)
+	m.initial = make(map[exchange.Asset]decimal.Decimal, len(initial))
+	m.credited = make(map[exchange.Asset]decimal.Decimal)
+	m.consumed = make(map[exchange.Asset]decimal.Decimal)
+	m.byKey = make(map[string]*Reservation)
+	m.byID = make(map[string]*Reservation)
+	m.activeConflicts = make(map[string]string)
+	m.triangleReserved = make(map[string]decimal.Decimal)
+	for a, v := range initial {
+		m.available[a] = v
+		m.initial[a] = v
+	}
+}
+
 // Balance reports (available, reserved) for an asset.
 func (m *Manager) Balance(asset exchange.Asset) (avail, reserved decimal.Decimal) {
 	m.mu.Lock()

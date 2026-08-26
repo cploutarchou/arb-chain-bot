@@ -156,6 +156,20 @@ func TestRunnerLifecycleAndBusy(t *testing.T) {
 	if done.Error != "" || done.ReportMD == "" || done.Flags["USDT"] == nil || done.ReportPath == "" {
 		t.Fatalf("done run = %+v", done)
 	}
+	// BL-05b: Verdicts is filled alongside Flags, one Verdict per flag
+	// line, severity matching backtest.FlagSeverity for that exact text.
+	verdicts := done.Verdicts["USDT"]
+	if len(verdicts) != len(done.Flags["USDT"]) {
+		t.Fatalf("verdicts = %+v, want one per flag in %v", verdicts, done.Flags["USDT"])
+	}
+	for i, flag := range done.Flags["USDT"] {
+		if verdicts[i].Text != flag {
+			t.Fatalf("verdict[%d].Text = %q, want %q", i, verdicts[i].Text, flag)
+		}
+		if want := backtest.FlagSeverity(flag); verdicts[i].Severity != want {
+			t.Fatalf("verdict[%d].Severity = %q, want %q", i, verdicts[i].Severity, want)
+		}
+	}
 	if _, err := os.Stat(done.ReportPath); err != nil {
 		t.Fatalf("report file: %v", err)
 	}

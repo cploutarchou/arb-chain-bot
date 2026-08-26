@@ -23,35 +23,42 @@ func (s *Store) UpsertCampaignRun(ctx context.Context, run campaign.Run) error {
 			return err
 		}
 	}
+	var verdicts []byte
+	if run.Verdicts != nil {
+		if verdicts, err = json.Marshal(run.Verdicts); err != nil {
+			return err
+		}
+	}
 	_, err = s.Pool.Exec(ctx, `
 		INSERT INTO campaign_runs
 			(id, recording_id, request, status, done, total, step, created_at,
-			 started_at, finished_at, error, flags, report_md, report_path, json_path, actor)
+			 started_at, finished_at, error, flags, verdicts, report_md, report_path, json_path, actor)
 		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), $8, $9, $10, NULLIF($11,''),
-			$12, NULLIF($13,''), NULLIF($14,''), NULLIF($15,''), NULLIF($16,''))
+			$12, $13, NULLIF($14,''), NULLIF($15,''), NULLIF($16,''), NULLIF($17,''))
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status, done = EXCLUDED.done, total = EXCLUDED.total,
 			step = EXCLUDED.step, started_at = EXCLUDED.started_at,
 			finished_at = EXCLUDED.finished_at, error = EXCLUDED.error,
-			flags = EXCLUDED.flags, report_md = EXCLUDED.report_md,
+			flags = EXCLUDED.flags, verdicts = EXCLUDED.verdicts, report_md = EXCLUDED.report_md,
 			report_path = EXCLUDED.report_path, json_path = EXCLUDED.json_path`,
 		run.ID, run.Recording, req, run.Status, run.Done, run.Total, run.Step, run.CreatedAt,
-		run.StartedAt, run.FinishedAt, run.Error, flags, run.ReportMD, run.ReportPath, run.JSONPath, run.Actor)
+		run.StartedAt, run.FinishedAt, run.Error, flags, verdicts, run.ReportMD, run.ReportPath, run.JSONPath, run.Actor)
 	return err
 }
 
 const campaignRunColumns = `id, recording_id, request, status, done, total, COALESCE(step,''),
-	created_at, started_at, finished_at, COALESCE(error,''), flags,
+	created_at, started_at, finished_at, COALESCE(error,''), flags, verdicts,
 	COALESCE(report_md,''), COALESCE(report_path,''), COALESCE(json_path,''), COALESCE(actor,'')`
 
 func scanCampaignRun(row pgx.Row, withReport bool) (campaign.Run, error) {
 	var (
-		r     campaign.Run
-		req   []byte
-		flags []byte
+		r        campaign.Run
+		req      []byte
+		flags    []byte
+		verdicts []byte
 	)
 	if err := row.Scan(&r.ID, &r.Recording, &req, &r.Status, &r.Done, &r.Total, &r.Step,
-		&r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.Error, &flags,
+		&r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.Error, &flags, &verdicts,
 		&r.ReportMD, &r.ReportPath, &r.JSONPath, &r.Actor); err != nil {
 		return r, err
 	}
@@ -61,6 +68,11 @@ func scanCampaignRun(row pgx.Row, withReport bool) (campaign.Run, error) {
 	if len(flags) > 0 {
 		if err := json.Unmarshal(flags, &r.Flags); err != nil {
 			return r, fmt.Errorf("storage: campaign run %s flags: %w", r.ID, err)
+		}
+	}
+	if len(verdicts) > 0 {
+		if err := json.Unmarshal(verdicts, &r.Verdicts); err != nil {
+			return r, fmt.Errorf("storage: campaign run %s verdicts: %w", r.ID, err)
 		}
 	}
 	if !withReport {
