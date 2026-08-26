@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -22,21 +23,26 @@ type Outbox struct {
 	// OnPersistError feeds the persistence circuit breaker.
 	OnPersistError func(error)
 
+	once    sync.Once
 	ch      chan Record
 	dropped atomic.Int64
 	written atomic.Int64
 }
 
+// init runs the lazy defaults exactly once: Enqueue (hot-path producers)
+// and Run (writer goroutine) start concurrently, and the unguarded
+// version could create two channels — records enqueued into the orphan
+// were silently lost (audit CR-P1-4).
 func (o *Outbox) init() {
-	if o.QueueSize <= 0 {
-		o.QueueSize = 4096
-	}
-	if o.FlushInterval <= 0 {
-		o.FlushInterval = 250 * time.Millisecond
-	}
-	if o.ch == nil {
+	o.once.Do(func() {
+		if o.QueueSize <= 0 {
+			o.QueueSize = 4096
+		}
+		if o.FlushInterval <= 0 {
+			o.FlushInterval = 250 * time.Millisecond
+		}
 		o.ch = make(chan Record, o.QueueSize)
-	}
+	})
 }
 
 // Enqueue never blocks; false means the record was dropped (counted).
@@ -96,11 +102,9 @@ func (o *Outbox) write(ctx context.Context, rec Record) {
 	case "opportunity":
 		err = o.Store.InsertOpportunity(ctx, rec.Opportunity, rec.Decision)
 	case "cycle":
-		opID := ""
-		if rec.Opportunity != nil {
-			opID = rec.Opportunity.ID
-		}
-		err = o.Store.InsertCycle(ctx, rec.SessionID, opID, rec.Cycle)
+		// The result itself carries OpportunityID (set by the simulator
+		// from the plan), so no caller has to re-attach the linkage.
+		err = o.Store.InsertCycle(ctx, rec.SessionID, rec.Cycle)
 	default:
 		o.Log.Warn("outbox: unknown record kind", "kind", rec.Kind)
 		return

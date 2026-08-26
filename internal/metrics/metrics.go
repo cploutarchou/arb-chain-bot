@@ -15,6 +15,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -203,33 +204,68 @@ type EngineSources struct {
 // instruments. Call once, after the engine's components exist.
 func (m *Metrics) RegisterEngine(src EngineSources) error {
 	meter := m.meter
+	// Instrument-creation failures are collected and joined rather than
+	// discarded (audit P3): a silently-nil instrument would be observed
+	// into the void every scrape.
+	var errs []error
+	i64c := func(name, desc string) api.Int64ObservableCounter {
+		c, err := meter.Int64ObservableCounter(name, api.WithDescription(desc))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return c
+	}
+	i64g := func(name, desc string) api.Int64ObservableGauge {
+		g, err := meter.Int64ObservableGauge(name, api.WithDescription(desc))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return g
+	}
+	f64g := func(name, desc string) api.Float64ObservableGauge {
+		g, err := meter.Float64ObservableGauge(name, api.WithDescription(desc))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return g
+	}
+	f64c := func(name, desc string) api.Float64ObservableCounter {
+		c, err := meter.Float64ObservableCounter(name, api.WithDescription(desc))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return c
+	}
 	var (
-		evals, _      = meter.Int64ObservableCounter("triangles_evaluated", api.WithDescription("triangle evaluations"))
-		detected, _   = meter.Int64ObservableCounter("opportunities_detected", api.WithDescription("opportunities evaluated to a decision"))
-		qualified, _  = meter.Int64ObservableCounter("opportunities_qualified", api.WithDescription("opportunities passing the risk engine"))
-		rejected, _   = meter.Int64ObservableCounter("opportunities_rejected", api.WithDescription("opportunities rejected by the risk engine"))
-		skipped, _    = meter.Int64ObservableCounter("scanner_skipped_unhealthy", api.WithDescription("evaluations skipped on missing/unhealthy books"))
-		dropped, _    = meter.Int64ObservableCounter("scanner_dropped_events", api.WithDescription("scanner events dropped by slow consumers"))
-		triangles, _  = meter.Int64ObservableGauge("triangles_total", api.WithDescription("triangles in the active topology"))
-		frames, _     = meter.Int64ObservableCounter("market_messages", api.WithDescription("market data frames received"))
-		reconnects, _ = meter.Int64ObservableCounter("exchange_reconnects", api.WithDescription("feed session reconnects"))
-		apiErrors, _  = meter.Int64ObservableCounter("exchange_api_errors", api.WithDescription("exchange REST errors"))
-		resyncs, _    = meter.Int64ObservableCounter("orderbook_resync", api.WithDescription("order book resyncs"))
-		seqErrors, _  = meter.Int64ObservableCounter("orderbook_sequence_errors", api.WithDescription("sequence gaps detected"))
-		bookAge, _    = meter.Float64ObservableGauge("orderbook_age_ms", api.WithDescription("book age at scrape"))
-		bookState, _  = meter.Int64ObservableGauge("orderbook_state", api.WithDescription("0 SYNCING,1 HEALTHY,2 STALE,3 CORRUPTED,4 DISCONNECTED"))
-		capAvail, _   = meter.Float64ObservableGauge("capital_available", api.WithDescription("available capital (display-only float)"))
-		capResv, _    = meter.Float64ObservableGauge("capital_reserved", api.WithDescription("reserved capital (display-only float)"))
-		breaker, _    = meter.Int64ObservableGauge("circuit_breaker_state", api.WithDescription("0 CLOSED,1 HALF_OPEN,2 OPEN"))
-		papRecv, _    = meter.Int64ObservableCounter("paper_cycles", api.WithDescription("paper cycles started"))
-		papOK, _      = meter.Int64ObservableCounter("paper_cycles_success", api.WithDescription("paper cycles completed"))
-		papFail, _    = meter.Int64ObservableCounter("paper_cycles_failed", api.WithDescription("paper cycles failed"))
-		papActive, _  = meter.Int64ObservableGauge("paper_active_simulations", api.WithDescription("in-flight simulations"))
-		papPnL, _     = meter.Float64ObservableGauge("paper_pnl", api.WithDescription("realized session PnL per start asset (display-only float)"))
-		feesTotal, _  = meter.Float64ObservableCounter("fees", api.WithDescription("cumulative simulated fees per start asset (display-only float)"))
-		recWritten, _ = meter.Int64ObservableCounter("recorder_frames_written", api.WithDescription("recorded frames written"))
-		recDropped, _ = meter.Int64ObservableCounter("recorder_frames_dropped", api.WithDescription("recorded frames dropped on overflow"))
+		evals      = i64c("triangles_evaluated", "triangle evaluations")
+		detected   = i64c("opportunities_detected", "opportunities evaluated to a decision")
+		qualified  = i64c("opportunities_qualified", "opportunities passing the risk engine")
+		rejected   = i64c("opportunities_rejected", "opportunities rejected by the risk engine")
+		skipped    = i64c("scanner_skipped_unhealthy", "evaluations skipped on missing/unhealthy books")
+		dropped    = i64c("scanner_dropped_events", "scanner events dropped by slow consumers")
+		triangles  = i64g("triangles_total", "triangles in the active topology")
+		frames     = i64c("market_messages", "market data frames received")
+		reconnects = i64c("exchange_reconnects", "feed session reconnects")
+		apiErrors  = i64c("exchange_api_errors", "exchange REST errors")
+		resyncs    = i64c("orderbook_resync", "order book resyncs")
+		seqErrors  = i64c("orderbook_sequence_errors", "sequence gaps detected")
+		bookAge    = f64g("orderbook_age_ms", "book age at scrape")
+		bookState  = i64g("orderbook_state", "0 SYNCING,1 HEALTHY,2 STALE,3 CORRUPTED,4 DISCONNECTED")
+		capAvail   = f64g("capital_available", "available capital (display-only float)")
+		capResv    = f64g("capital_reserved", "reserved capital (display-only float)")
+		breaker    = i64g("circuit_breaker_state", "0 CLOSED,1 HALF_OPEN,2 OPEN")
+		papRecv    = i64c("paper_cycles", "paper cycles started")
+		papOK      = i64c("paper_cycles_success", "paper cycles completed")
+		papFail    = i64c("paper_cycles_failed", "paper cycles failed")
+		papActive  = i64g("paper_active_simulations", "in-flight simulations")
+		papPnL     = f64g("paper_pnl", "realized session PnL per start asset (display-only float)")
+		feesTotal  = f64c("fees", "cumulative simulated fees per start asset (display-only float)")
+		recWritten = i64c("recorder_frames_written", "recorded frames written")
+		recDropped = i64c("recorder_frames_dropped", "recorded frames dropped on overflow")
 	)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
 	insts := []api.Observable{
 		evals, detected, qualified, rejected, skipped, dropped, triangles,
 		frames, reconnects, apiErrors, resyncs, seqErrors, bookAge, bookState,

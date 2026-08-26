@@ -145,9 +145,10 @@ func TestServiceLifecycle(t *testing.T) {
 	if len(swaps) != 3 || swaps[2] != 3 {
 		t.Fatalf("swaps = %v", swaps)
 	}
-	// Audits: v2 apply + v3 rollback (seed has no audit sink call — it
-	// runs through Insert directly, not applyLocked).
-	if len(audits) != 2 || audits[0].Action != "config.apply" || audits[1].Action != "config.rollback" {
+	// Audits: seed (actor "system", audit P3) + v2 apply + v3 rollback.
+	if len(audits) != 3 ||
+		audits[0].Action != "config.seed" || audits[0].Actor != "system" ||
+		audits[1].Action != "config.apply" || audits[2].Action != "config.rollback" {
 		t.Fatalf("audits = %+v", audits)
 	}
 

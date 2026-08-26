@@ -82,7 +82,18 @@ func (s *Store) InsertOpportunity(ctx context.Context, op *opportunity.Opportuni
 
 // InsertCycle persists a settled paper cycle with its orders and fills in
 // one transaction (correlation chain fill → order → cycle → opportunity).
-func (s *Store) InsertCycle(ctx context.Context, sessionID string, opportunityID string, res *execution.CycleResult) error {
+// slippageMeasurable reports whether an outcome carries a meaningful
+// realized-vs-plan slippage (the cycle converted back to the start
+// asset). Keep in sync with the aggregate filters in reports/quality.
+func slippageMeasurable(o execution.Outcome) bool {
+	switch o {
+	case execution.OutcomeAllFilled, execution.OutcomeLeg1Partial, execution.OutcomePartialCycle:
+		return true
+	}
+	return false
+}
+
+func (s *Store) InsertCycle(ctx context.Context, sessionID string, res *execution.CycleResult) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -97,14 +108,21 @@ func (s *Store) InsertCycle(ctx context.Context, sessionID string, opportunityID
 	if err != nil {
 		return err
 	}
+	// SlippageBps is realized-vs-plan and only meaningful for cycles
+	// that reached leg 3 (a mid-cycle failure would persist a ~+10000
+	// artifact); other outcomes store NULL.
+	var slippage any
+	if slippageMeasurable(res.Outcome) {
+		slippage = res.SlippageBps
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO paper_cycles (
 			id, session_id, opportunity_id, outcome, pnl_amount, pnl_asset,
 			fees, slippage_bps, exposure, started_at, settled_at
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (id) DO NOTHING`,
-		res.CycleID, sessionID, nullStr(opportunityID), string(res.Outcome),
-		res.TotalPnL, string(res.StartAsset), fees, res.SlippageBps, exposure,
+		res.CycleID, sessionID, nullStr(res.OpportunityID), string(res.Outcome),
+		res.TotalPnL, string(res.StartAsset), fees, slippage, exposure,
 		res.StartedAt, res.SettledAt); err != nil {
 		return fmt.Errorf("storage: cycle: %w", err)
 	}

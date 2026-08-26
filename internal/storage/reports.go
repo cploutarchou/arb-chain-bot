@@ -30,6 +30,10 @@ func (r *Reports) OpportunityAggregates(ctx context.Context, from, to time.Time)
 	return count, deref(best), deref(avg), nil
 }
 
+// CycleAggregates covers the period. Slippage statistics run over every
+// slippage-bearing cycle (the simulator persists NULL for cycles that
+// never reached leg 3), and "worst" is max(): the sign convention is
+// positive = worse than plan.
 func (r *Reports) CycleAggregates(ctx context.Context, from, to time.Time) (int, int, int, string, string, int, error) {
 	var (
 		total, success, failed, samples int
@@ -39,9 +43,9 @@ func (r *Reports) CycleAggregates(ctx context.Context, from, to time.Time) (int,
 		SELECT count(*),
 		       count(*) FILTER (WHERE outcome = 'ALL_FILLED'),
 		       count(*) FILTER (WHERE outcome <> 'ALL_FILLED'),
-		       round(avg(slippage_bps) FILTER (WHERE outcome = 'ALL_FILLED'), 4)::text,
-		       min(slippage_bps) FILTER (WHERE outcome = 'ALL_FILLED')::text,
-		       count(slippage_bps) FILTER (WHERE outcome = 'ALL_FILLED')
+		       round(avg(slippage_bps), 4)::text,
+		       max(slippage_bps)::text,
+		       count(slippage_bps)
 		FROM paper_cycles
 		WHERE started_at >= $1 AND started_at < $2`,
 		from, to).Scan(&total, &success, &failed, &avgSlip, &worstSlip, &samples)
@@ -74,41 +78,63 @@ func (r *Reports) FailedCycles(ctx context.Context, from, to time.Time, limit in
 	return out, rows.Err()
 }
 
+// TriangleLeaders returns the best triangles by period PnL and, as
+// "worst", only money-LOSING triangles — a profitable triangle never
+// appears on the worst list, and the two lists never overlap.
 func (r *Reports) TriangleLeaders(ctx context.Context, from, to time.Time, limit int) ([]reporting.TriangleStat, []reporting.TriangleStat, error) {
 	if limit <= 0 {
 		limit = 5
 	}
-	rows, err := r.s.Pool.Query(ctx, `
+	scan := func(query string) ([]reporting.TriangleStat, error) {
+		rows, err := r.s.Pool.Query(ctx, query, from, to, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []reporting.TriangleStat
+		for rows.Next() {
+			var t reporting.TriangleStat
+			if err := rows.Scan(&t.TriangleID, &t.Cycles, &t.NetPnL); err != nil {
+				return nil, err
+			}
+			out = append(out, t)
+		}
+		return out, rows.Err()
+	}
+	top, err := scan(`
 		SELECT o.triangle_id, count(*), coalesce(sum(c.pnl_amount), 0)::text
 		FROM paper_cycles c
 		JOIN opportunities o ON o.id = c.opportunity_id
 		WHERE c.started_at >= $1 AND c.started_at < $2
 		GROUP BY o.triangle_id
-		ORDER BY sum(c.pnl_amount) DESC NULLS LAST`, from, to)
+		ORDER BY sum(c.pnl_amount) DESC NULLS LAST
+		LIMIT $3`)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-	var all []reporting.TriangleStat
-	for rows.Next() {
-		var t reporting.TriangleStat
-		if err := rows.Scan(&t.TriangleID, &t.Cycles, &t.NetPnL); err != nil {
-			return nil, nil, err
-		}
-		all = append(all, t)
-	}
-	if err := rows.Err(); err != nil {
+	worst, err := scan(`
+		SELECT o.triangle_id, count(*), coalesce(sum(c.pnl_amount), 0)::text
+		FROM paper_cycles c
+		JOIN opportunities o ON o.id = c.opportunity_id
+		WHERE c.started_at >= $1 AND c.started_at < $2
+		GROUP BY o.triangle_id
+		HAVING sum(c.pnl_amount) < 0
+		ORDER BY sum(c.pnl_amount) ASC NULLS LAST
+		LIMIT $3`)
+	if err != nil {
 		return nil, nil, err
 	}
-	top := all
-	if len(top) > limit {
-		top = top[:limit]
+	inTop := make(map[string]bool, len(top))
+	for _, t := range top {
+		inTop[t.TriangleID] = true
 	}
-	var worst []reporting.TriangleStat
-	for i := len(all) - 1; i >= 0 && len(worst) < limit; i-- {
-		worst = append(worst, all[i])
+	disjoint := worst[:0]
+	for _, w := range worst {
+		if !inTop[w.TriangleID] {
+			disjoint = append(disjoint, w)
+		}
 	}
-	return top, worst, nil
+	return top, disjoint, nil
 }
 
 func (r *Reports) InsertReport(ctx context.Context, rep reporting.Report) error {

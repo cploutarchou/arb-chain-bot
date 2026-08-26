@@ -148,6 +148,9 @@ func (b Bootstrap) Redacted() Bootstrap {
 	if c.AnthropicAPIKey != "" {
 		c.AnthropicAPIKey = "***"
 	}
+	if c.AdminPassword != "" {
+		c.AdminPassword = "***"
+	}
 	return c
 }
 

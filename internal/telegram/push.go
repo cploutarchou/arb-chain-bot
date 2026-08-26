@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
@@ -20,17 +21,22 @@ type PushSink struct {
 	// CountDrop in the wiring).
 	OnDrop func()
 
-	ch chan notification.Delivery
+	once sync.Once
+	ch   chan notification.Delivery
 }
 
 const pushQueue = 64
 
 func (p *PushSink) Name() string { return "telegram" }
 
+// init creates the queue exactly once: Deliver (router goroutine) and
+// Run (drain goroutine) start concurrently, and the unguarded version
+// could make two channels — deliveries into the orphan were silently
+// lost (audit CR-P1-4).
 func (p *PushSink) init() {
-	if p.ch == nil {
+	p.once.Do(func() {
 		p.ch = make(chan notification.Delivery, pushQueue)
-	}
+	})
 }
 
 // Deliver implements notification.Sink; never blocks.

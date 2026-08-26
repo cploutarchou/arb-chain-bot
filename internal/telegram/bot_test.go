@@ -400,9 +400,14 @@ func TestInlineButtonRoundTripAndTamperRejection(t *testing.T) {
 		t.Fatalf("replay answers = %v", ans)
 	}
 
-	// Tampered payload is rejected.
+	// Tampered payload is rejected (flip the last signature character to
+	// a value it is guaranteed not to already be).
 	resumeData := kb.InlineKeyboard[0][1].Data
-	tampered := resumeData[:len(resumeData)-1] + "0"
+	flip := "0"
+	if strings.HasSuffix(resumeData, "0") {
+		flip = "1"
+	}
+	tampered := resumeData[:len(resumeData)-1] + flip
 	bot.HandleUpdate(ctx, Update{UpdateID: 4, Callback: &CallbackQuery{
 		ID: "cb3", From: &User{ID: 100}, Data: tampered,
 	}})
@@ -423,6 +428,16 @@ func TestInlineButtonRoundTripAndTamperRejection(t *testing.T) {
 	}})
 	if svcs.running() {
 		t.Fatal("cross-user callback must not execute")
+	}
+
+	// Peek-before-delete (audit S-015): the failed cross-user attempt
+	// must NOT have consumed the nonce — the entitled user's tap still
+	// works afterwards.
+	bot.HandleUpdate(ctx, Update{UpdateID: 6, Callback: &CallbackQuery{
+		ID: "cb5", From: &User{ID: 100}, Data: kb2.InlineKeyboard[0][1].Data,
+	}})
+	if !svcs.running() {
+		t.Fatal("entitled tap after a forged attempt must still execute")
 	}
 }
 
@@ -548,4 +563,46 @@ func (a *atomic32) inc() int {
 	defer a.mu.Unlock()
 	a.n++
 	return a.n
+}
+
+// Audit S-001: transport errors embed the request URL; the token must
+// never survive into an error string (and thus into logs).
+func TestClientErrorsNeverContainToken(t *testing.T) {
+	const token = "123456789:AAHsuperSECRETtokenVALUE"
+	c := NewClient("http://127.0.0.1:1/bot" + token) // closed port
+	c.HTTP.Timeout = 200 * time.Millisecond
+	_, err := c.GetUpdates(context.Background(), 0, 0)
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("token leaked into error: %s", err)
+	}
+	if err := c.SendMessage(context.Background(), 1, "x", nil); err == nil ||
+		strings.Contains(err.Error(), token) {
+		t.Fatalf("token leaked into send error: %v", err)
+	}
+}
+
+// Acceptance (audit CR-P1-4): the router delivers while Run is starting;
+// lazy init must create exactly one queue so no push is lost to an
+// orphan channel (run with -race).
+func TestPushSinkConcurrentDeliverAndRunRaceFree(t *testing.T) {
+	p := &PushSink{Log: slog.New(slog.NewTextHandler(io.Discard, nil))} // no chats: Run drains without network
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- p.Run(ctx) }()
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				p.Deliver(notification.Delivery{Event: notification.Event{Key: "k", Title: "t"}})
+			}
+		}()
+	}
+	wg.Wait()
+	cancel()
+	<-done
 }

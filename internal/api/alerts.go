@@ -53,9 +53,7 @@ func (s *Server) alertRoutes(mux *http.ServeMux) {
 				WriteError(w, http.StatusInternalServerError, "alert_action_failed", "alert action failed", correlationID(r))
 				return
 			}
-			if s.AuditAction != nil {
-				s.AuditAction(principal.UserID, action, "alert:"+id)
-			}
+			s.audit(r, principal.UserID, action, "alert:"+id)
 			WriteData(w, http.StatusOK, alert)
 		})))
 	}

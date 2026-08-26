@@ -79,7 +79,7 @@ func TestFakeAdvisorEndToEnd(t *testing.T) {
 	}
 
 	// Approve → the strategy service gains a version with the change.
-	snap, err := svc.Approve(ctx, rec.ID, "u-admin", "web")
+	snap, err := svc.Approve(ctx, rec.ID, "u-admin", "web", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestFakeAdvisorEndToEnd(t *testing.T) {
 	}
 
 	// Double decision refused.
-	if _, err := svc.Approve(ctx, rec.ID, "u-admin", "web"); !errors.Is(err, ErrRecommendationDecided) {
+	if _, err := svc.Approve(ctx, rec.ID, "u-admin", "web", nil); !errors.Is(err, ErrRecommendationDecided) {
 		t.Fatalf("double approve err = %v", err)
 	}
 
@@ -144,9 +144,6 @@ func TestInvalidOutputRejected(t *testing.T) {
 		{"not json", "here are my thoughts..."},
 		{"unknown field", `{"summary":"s","surprise":1}`},
 		{"missing summary", `{"findings":[]}`},
-		{"unknown parameter", `{"summary":"s","recommendations":[{"parameter":"risk.does_not_exist","recommended_value":"5","evidence":"e","reason":"r","confidence":"0.5","expected_effect":"x","risks":"y"}]}`},
-		{"out of bounds value", `{"summary":"s","recommendations":[{"parameter":"scanner.ttl_ms","recommended_value":"999999","evidence":"e","reason":"r","confidence":"0.5","expected_effect":"x","risks":"y"}]}`},
-		{"confidence > 1", `{"summary":"s","recommendations":[{"parameter":"scanner.ttl_ms","recommended_value":"500","evidence":"e","reason":"r","confidence":"1.5","expected_effect":"x","risks":"y"}]}`},
 		{"trailing content", `{"summary":"s"} extra`},
 	}
 	for _, tc := range cases {
@@ -301,5 +298,102 @@ func TestAnthropicProviderAgainstFakeEndpoint(t *testing.T) {
 	}
 	if res.Summary != "remote ok" || res.Model != "claude-sonnet-5" {
 		t.Fatalf("res = %+v", res)
+	}
+}
+
+// Audit S-002/P0-2: an approval must respect the APPROVER's per-section
+// permissions — the AI cannot offer a privilege the approver lacks.
+func TestApproveRespectsAuthorizeGate(t *testing.T) {
+	svc, stratSvc, _ := newTestService(t, scripted{raw: `{"summary":"s","recommendations":[{"parameter":"risk.min_net_edge_bps","recommended_value":"0","evidence":"e","reason":"r","confidence":"0.9","expected_effect":"x","risks":"y"}]}`})
+	res, err := svc.RunAnalysis(context.Background(), testInput(KindHourlyHealth))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := res.Recommendations[0]
+
+	deny := func(diff map[string]strategy.Change) error {
+		for range diff {
+			return fmt.Errorf("%w: risk is ADMIN-only", strategy.ErrForbidden)
+		}
+		return nil
+	}
+	if _, err := svc.Approve(context.Background(), rec.ID, "u-operator", "web", deny); !errors.Is(err, strategy.ErrForbidden) {
+		t.Fatalf("denied approve err = %v", err)
+	}
+	// The denial neither changed config nor consumed the recommendation.
+	if stratSvc.Current().Version != 1 {
+		t.Fatalf("config mutated by denied approval: v%d", stratSvc.Current().Version)
+	}
+	if got := svc.Recommendations("proposed"); len(got) != 1 {
+		t.Fatalf("recommendation consumed by denied approval: %+v", got)
+	}
+	// An authorized approver still succeeds afterwards.
+	if _, err := svc.Approve(context.Background(), rec.ID, "u-admin", "web", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !stratSvc.Current().Params.Risk.MinNetEdgeBps.IsZero() {
+		t.Fatalf("authorized approval did not apply")
+	}
+}
+
+// One invalid recommendation is discarded with a note; valid siblings
+// and the analysis itself survive (audit P2-3).
+func TestInvalidRecommendationDiscardedIndividually(t *testing.T) {
+	svc, _, events := newTestService(t, scripted{raw: `{"summary":"s","recommendations":[
+		{"parameter":"scanner.ttl_ms","recommended_value":"500","evidence":"e","reason":"r","confidence":"0.5","expected_effect":"x","risks":"y"},
+		{"parameter":"risk.does_not_exist","recommended_value":"5","evidence":"e","reason":"r","confidence":"0.5","expected_effect":"x","risks":"y"},
+		{"parameter":"scanner.depth","recommended_value":"60","evidence":"e","reason":"r","confidence":"0.5","expected_effect":"x","risks":"y"}]}`})
+	res, err := svc.RunAnalysis(context.Background(), testInput(KindHourlyHealth))
+	if err != nil {
+		t.Fatalf("analysis must survive one bad recommendation: %v", err)
+	}
+	if len(res.Recommendations) != 2 {
+		t.Fatalf("recommendations = %+v", res.Recommendations)
+	}
+	if svc.Failures() != 0 {
+		t.Fatalf("failures = %d", svc.Failures())
+	}
+	found := false
+	for _, f := range res.Findings {
+		if strings.Contains(f, "recommendation 1 discarded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("discard note missing: %v", res.Findings)
+	}
+	for _, ev := range *events {
+		if ev.Key == "ai:failure" {
+			t.Fatalf("item-level discard raised a failure alert: %+v", ev)
+		}
+	}
+}
+
+// Audit P2-2: the fake's TTL rule at and near the validation cap.
+func TestFakeAdvisorTTLCapTable(t *testing.T) {
+	for _, ttl := range []int64{50, 400, 9899, 9900, 9901, 10000} {
+		svc, stratSvc, _ := newTestService(t, Fake{})
+		p := strategy.DefaultParams()
+		if p.Scanner.TTLMs != ttl {
+			p.Scanner.TTLMs = ttl
+			if _, err := stratSvc.Apply(context.Background(), "u-admin", "web", p); err != nil {
+				t.Fatalf("ttl=%d seed: %v", ttl, err)
+			}
+		}
+		in := testInput(KindHourlyHealth)
+		in.Params = stratSvc.Current().Params
+		res, err := svc.RunAnalysis(context.Background(), in)
+		if err != nil {
+			t.Fatalf("ttl=%d: analysis failed: %v", ttl, err)
+		}
+		if svc.Failures() != 0 {
+			t.Fatalf("ttl=%d: failures = %d", ttl, svc.Failures())
+		}
+		if ttl >= 10_000 && len(res.Recommendations) != 0 {
+			t.Fatalf("ttl=%d: recommendation proposed at the cap: %+v", ttl, res.Recommendations)
+		}
+		if ttl < 10_000 && len(res.Recommendations) != 1 {
+			t.Fatalf("ttl=%d: recommendations = %+v", ttl, res.Recommendations)
+		}
 	}
 }

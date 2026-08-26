@@ -27,7 +27,9 @@ func (s *Server) reportRoutes(mux *http.ServeMux) {
 		rows, err := s.Store.Reports().ListReports(r.Context(), kind, limit)
 		s.writeListResult(w, r, "reports", rows, err)
 	}))
-	mux.HandleFunc("POST /api/v1/reports/generate", s.requirePerm(auth.PermReportView, s.requireCSRF(func(w http.ResponseWriter, r *http.Request) {
+	// Generation runs real aggregate queries — held to OPERATOR+ via its
+	// own permission rather than the viewer-held reports:view (audit S-007).
+	mux.HandleFunc("POST /api/v1/reports/generate", s.requirePerm(auth.PermReportGenerate, s.requireCSRF(func(w http.ResponseWriter, r *http.Request) {
 		if s.Reports == nil {
 			WriteError(w, http.StatusNotFound, "reporting_absent", "reporting not running in this profile", correlationID(r))
 			return
@@ -55,9 +57,7 @@ func (s *Server) reportRoutes(mux *http.ServeMux) {
 			return
 		}
 		principal, _ := PrincipalFrom(r.Context())
-		if s.AuditAction != nil {
-			s.AuditAction(principal.UserID, "report.generate", "report:"+rep.ID)
-		}
+		s.audit(r, principal.UserID, "report.generate", "report:"+rep.ID)
 		WriteData(w, http.StatusOK, rep)
 	})))
 }

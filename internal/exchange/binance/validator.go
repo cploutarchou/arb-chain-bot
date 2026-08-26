@@ -3,6 +3,8 @@ package binance
 import (
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 )
@@ -44,8 +46,16 @@ var ErrBufferOverflow = errors.New("binance: init buffer overflow; restart sync"
 
 // Syncer orchestrates the mandatory REST+buffer initialization
 // (docs/research/exchanges.md §Binance): buffer deltas, splice the
-// snapshot, replay the tail, then hand steady-state to Validator.
+// snapshot, replay the tail, then hand steady-state to Validator. The
+// mutex makes OnDelta/OnSnapshot/Synced safe against each other: the
+// feed applies deltas on its session goroutine while snapshot splices
+// arrive from resync goroutines (audit P0: an unlocked interleaving
+// could tear the buffer and mark a wrong book HEALTHY).
 type Syncer struct {
+	// resyncing is the feed's per-market single-flight flag.
+	resyncing atomic.Bool
+
+	mu        sync.Mutex
 	book      *orderbook.Book
 	validator Validator
 	buffer    []orderbook.DepthEvent
@@ -62,12 +72,18 @@ func NewSyncer(book *orderbook.Book, maxBuffer int) *Syncer {
 }
 
 // Synced reports steady-state.
-func (s *Syncer) Synced() bool { return s.synced }
+func (s *Syncer) Synced() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.synced
+}
 
 // OnDelta routes one decoded delta. Before sync: buffered (bounded).
 // After sync: validated and applied; a GAP verdict corrupts the book and
 // flips the syncer back to buffering for the next snapshot.
 func (s *Syncer) OnDelta(ev orderbook.DepthEvent) (orderbook.Action, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.synced {
 		action := s.book.Apply(ev, s.validator)
 		if action == orderbook.ActionGap {
@@ -91,6 +107,8 @@ func (s *Syncer) OnDelta(ev orderbook.DepthEvent) (orderbook.Action, error) {
 // remaining event must satisfy U <= lastUpdateId+1 <= u, else the
 // snapshot is behind the buffered stream and a newer one is required.
 func (s *Syncer) OnSnapshot(snap orderbook.DepthEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !snap.IsSnapshot {
 		return fmt.Errorf("binance: OnSnapshot called with a delta")
 	}

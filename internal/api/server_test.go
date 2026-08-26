@@ -38,6 +38,9 @@ func newTestServer(t *testing.T) (*Server, *http.ServeMux) {
 		TTL:      time.Hour,
 		Now:      time.Now,
 	}
+	s.MetricsHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("# metrics"))
+	})
 	mux := http.NewServeMux()
 	s.routes(mux)
 	return s, mux
@@ -199,11 +202,20 @@ func TestPaperPauseResumeWiring(t *testing.T) {
 
 func TestLogoutRevokesSession(t *testing.T) {
 	_, mux := newTestServer(t)
-	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	cookie, csrf := login(t, mux, "viewer@example.test", "viewer-pw")
 
+	// Logout is CSRF-protected like every mutating route (S-013).
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("logout without csrf = %d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrf)
+	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("logout = %d", rec.Code)
@@ -227,6 +239,119 @@ func TestAuthUnconfiguredFailsClosed(t *testing.T) {
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("%s without auth manager = %d", path, rec.Code)
+		}
+	}
+}
+
+// Acceptance (audit S-003): the same-mux /metrics dev convenience stays
+// behind RBAC — metric names map the platform's internals.
+func TestMetricsEndpointRequiresPermission(t *testing.T) {
+	_, mux := newTestServer(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated /metrics = %d", rec.Code)
+	}
+
+	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "# metrics") {
+		t.Fatalf("viewer /metrics = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Acceptance (audit S-017): a malformed correlation ID is never echoed
+// back verbatim.
+func TestCorrelationIDSanitized(t *testing.T) {
+	_, mux := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/status", nil)
+	req.Header.Set("X-Correlation-ID", "evil\nheader\"injection")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req) // unauthenticated → error envelope carries the ID
+	if strings.Contains(rec.Body.String(), "evil") {
+		t.Fatalf("raw correlation id echoed: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid-correlation-id") {
+		t.Fatalf("sanitized marker missing: %s", rec.Body.String())
+	}
+}
+
+// Denial matrix for the AI and reports mutation routes (audit CR-P2-14):
+// authentication, RBAC, and CSRF are enforced in that order, before any
+// service-absence check leaks route topology.
+func TestAIAndReportsDenialMatrix(t *testing.T) {
+	_, mux := newTestServer(t)
+
+	post := func(path string, cookie *http.Cookie, csrf string) int {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"kind":"daily"}`))
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		if csrf != "" {
+			req.Header.Set("X-CSRF-Token", csrf)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	viewerCookie, viewerCSRF := login(t, mux, "viewer@example.test", "viewer-pw")
+	opCookie, opCSRF := login(t, mux, "op@example.test", "op-pw")
+
+	approve := "/api/v1/ai/recommendations/rec-1/approve"
+	reject := "/api/v1/ai/recommendations/rec-1/reject"
+	generate := "/api/v1/reports/generate"
+
+	for path, cases := range map[string][]struct {
+		name   string
+		cookie *http.Cookie
+		csrf   string
+		want   int
+	}{
+		approve: {
+			{"unauthenticated", nil, "", http.StatusUnauthorized},
+			{"viewer lacks ai:approve", viewerCookie, viewerCSRF, http.StatusForbidden},
+			{"operator without csrf", opCookie, "", http.StatusForbidden},
+			{"operator full — service absent", opCookie, opCSRF, http.StatusNotFound},
+		},
+		reject: {
+			{"unauthenticated", nil, "", http.StatusUnauthorized},
+			{"viewer lacks ai:approve", viewerCookie, viewerCSRF, http.StatusForbidden},
+			{"operator without csrf", opCookie, "", http.StatusForbidden},
+			{"operator full — service absent", opCookie, opCSRF, http.StatusNotFound},
+		},
+		generate: {
+			{"unauthenticated", nil, "", http.StatusUnauthorized},
+			{"viewer lacks reports:generate", viewerCookie, viewerCSRF, http.StatusForbidden},
+			{"operator without csrf", opCookie, "", http.StatusForbidden},
+			{"operator full — generator absent", opCookie, opCSRF, http.StatusNotFound},
+		},
+	} {
+		for _, tc := range cases {
+			if got := post(path, tc.cookie, tc.csrf); got != tc.want {
+				t.Errorf("%s / %s = %d, want %d", path, tc.name, got, tc.want)
+			}
+		}
+	}
+
+	// Reads: viewer may list analyses/reports (view perms), unauth may not.
+	for _, path := range []string{"/api/v1/ai/analyses", "/api/v1/reports"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("unauth GET %s = %d", path, rec.Code)
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(viewerCookie)
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		// Authorized; the backing service/store is absent in this harness.
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("viewer GET %s = %d, want 404 (absent backend)", path, rec.Code)
 		}
 	}
 }

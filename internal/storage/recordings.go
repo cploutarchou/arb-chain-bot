@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
@@ -49,7 +50,9 @@ func (s *Store) ListRecordings(ctx context.Context, limit int) ([]RecordingRow, 
 func (s *Store) UpsertRecordingSegment(ctx context.Context, recordingID string, exchangeID exchange.ExchangeID, streams map[uint16]exchange.Symbol, startedAt time.Time, meta marketdata.SegmentMeta) error {
 	streamDoc := make(map[string]string, len(streams))
 	for id, sym := range streams {
-		streamDoc[string(sym)] = string(rune('0' + id)) // small ids; readable
+		// strconv, not rune arithmetic: ids >= 10 would render as ':',
+		// ';', … and corrupt the stream table (audit CR-P2-9).
+		streamDoc[string(sym)] = strconv.FormatUint(uint64(id), 10)
 	}
 	streamsJSON, err := json.Marshal(streamDoc)
 	if err != nil {

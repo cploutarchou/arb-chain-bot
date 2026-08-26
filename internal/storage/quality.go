@@ -10,9 +10,11 @@ import (
 )
 
 // QualitySamples aggregates per-triangle history for the quality score
-// (T-043). MaxDrawdown stays zero: drawdown is tracked at portfolio
-// level; the API response says so rather than inventing a per-triangle
-// number.
+// (T-043). Slippage statistics cover every slippage-measurable cycle
+// (reached leg 3: ALL_FILLED and both partial outcomes), and NULL
+// aggregates stay unmeasured — the scorer awards nothing for absent
+// evidence. DrawdownKnown stays false: per-triangle drawdown is not
+// recorded yet.
 func (s *Store) QualitySamples(ctx context.Context, from, to time.Time) ([]quality.Sample, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT o.triangle_id,
@@ -20,8 +22,9 @@ func (s *Store) QualitySamples(ctx context.Context, from, to time.Time) ([]quali
 		       count(*) FILTER (WHERE c.outcome = 'ALL_FILLED'),
 		       coalesce(sum(c.pnl_amount), 0)::text,
 		       coalesce(min(c.pnl_amount), 0)::text,
-		       coalesce(round(avg(c.slippage_bps) FILTER (WHERE c.outcome = 'ALL_FILLED'), 4), 0)::text,
-		       coalesce(round(stddev_samp(c.slippage_bps) FILTER (WHERE c.outcome = 'ALL_FILLED'), 4), 0)::text
+		       round(avg(c.slippage_bps), 4)::text,
+		       round(stddev_samp(c.slippage_bps), 4)::text,
+		       count(c.slippage_bps)
 		FROM paper_cycles c
 		JOIN opportunities o ON o.id = c.opportunity_id
 		WHERE c.started_at >= $1 AND c.started_at < $2
@@ -33,27 +36,39 @@ func (s *Store) QualitySamples(ctx context.Context, from, to time.Time) ([]quali
 	byID := map[string]*quality.Sample{}
 	for rows.Next() {
 		var (
-			sm                           quality.Sample
-			net, worst, avgSlip, stdSlip string
+			sm               quality.Sample
+			net, worst       string
+			avgSlip, stdSlip *string // NULL when unmeasured
 		)
 		if err := rows.Scan(&sm.TriangleID, &sm.Cycles, &sm.Successes,
-			&net, &worst, &avgSlip, &stdSlip); err != nil {
+			&net, &worst, &avgSlip, &stdSlip, &sm.SlippageSamples); err != nil {
 			return nil, err
 		}
 		sm.NetPnL = decimal.RequireFromString(net)
 		if w := decimal.RequireFromString(worst); w.IsNegative() {
 			sm.WorstLoss = w
 		}
-		sm.AvgSlippageBps = decimal.RequireFromString(avgSlip)
-		sm.SlippageStdBps = decimal.RequireFromString(stdSlip)
-		s := sm
-		byID[sm.TriangleID] = &s
+		if avgSlip != nil {
+			sm.AvgSlippageBps = decimal.RequireFromString(*avgSlip)
+		}
+		if stdSlip != nil {
+			sm.SlippageStdBps = decimal.RequireFromString(*stdSlip)
+		} else if sm.SlippageSamples > 1 {
+			// Shouldn't happen (stddev_samp is non-NULL for n>=2), but
+			// never let a missing dispersion masquerade as measured.
+			sm.SlippageSamples = 1
+		}
+		row := sm
+		byID[sm.TriangleID] = &row
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	windowHours := int(to.Sub(from) / time.Hour)
+	// WindowHours counts the hour buckets the window touches, matching
+	// how EdgeWindows buckets by date_trunc('hour', ...): a rolling 24h
+	// window spans up to 25 buckets.
+	windowHours := int(to.Truncate(time.Hour).Sub(from.Truncate(time.Hour))/time.Hour) + 1
 	if windowHours < 1 {
 		windowHours = 1
 	}

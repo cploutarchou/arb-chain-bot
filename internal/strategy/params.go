@@ -66,6 +66,20 @@ type NotificationParams struct {
 	Routes map[string][]string `json:"routes,omitempty"`
 }
 
+// Clone returns a deep copy. Routes is the only reference type in the
+// tree; without the copy a caller could mutate an immutable version's
+// routing in place (audit P3).
+func (p Params) Clone() Params {
+	c := p
+	if p.Notifications.Routes != nil {
+		c.Notifications.Routes = make(map[string][]string, len(p.Notifications.Routes))
+		for k, v := range p.Notifications.Routes {
+			c.Notifications.Routes[k] = append([]string(nil), v...)
+		}
+	}
+	return c
+}
+
 // DefaultParams are the conservative bootstrap values; they match the
 // previously hard-coded engine defaults so a fresh install behaves
 // identically to before the config service existed.
@@ -165,8 +179,11 @@ func (p Params) Validate() error {
 	}
 
 	n := p.Notifications
-	if n.CooldownSeconds < 0 || n.CooldownSeconds > 3600 {
-		return fmt.Errorf("strategy: notifications.cooldown_seconds out of [0,3600]")
+	// Zero is rejected rather than silently coerced: the notification
+	// service would substitute its 60s default, and a config that reads
+	// 0 while behaving as 60 lies to the operator (audit CR-P2-8).
+	if n.CooldownSeconds < 1 || n.CooldownSeconds > 3600 {
+		return fmt.Errorf("strategy: notifications.cooldown_seconds out of [1,3600]")
 	}
 	for sev, chans := range n.Routes {
 		switch sev {

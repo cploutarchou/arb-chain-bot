@@ -44,13 +44,17 @@ access, targeted exchange-side compromise.
 - Passwords: Argon2id (tuned params documented in code); no plaintext
   anywhere; constant-time comparison; password change revokes other
   sessions.
-- Sessions: random 256-bit tokens, server-side session table (revocable),
-  HttpOnly + Secure + SameSite=Lax cookies, absolute + idle expiry.
+- Sessions: random 256-bit tokens, stored server-side ONLY as SHA-256
+  digests (a leaked sessions table yields no usable bearer tokens);
+  revocable; disabling a user invalidates their live sessions at lookup;
+  HttpOnly + Secure + SameSite=Lax cookies; absolute expiry (12h). Idle
+  expiry is not implemented — the absolute lifetime is the bound.
 - CSRF: double-submit token header required on all mutating browser
-  endpoints (cookie-authenticated); WS upgrade validated against session +
-  Origin allowlist.
-- Rate limiting: per-IP and per-account login throttling with backoff and
-  lockout alerting; global API rate limits per session.
+  endpoints (cookie-authenticated), logout included; WS upgrade validated
+  against session + Origin allowlist.
+- Rate limiting: per-(account,IP) and per-IP login throttling with
+  lockout; Argon2 verification concurrency is bounded process-wide so
+  login floods cannot exhaust memory.
 - MFA: architecture reserves an enrollment/verification step in the login
   flow (TOTP first); not required for MVP but the session model records
   `mfa_enrolled`.

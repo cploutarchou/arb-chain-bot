@@ -57,6 +57,10 @@ var ErrNoChange = errors.New("strategy: no changes against current version")
 // ErrInvalid wraps validation failures (callers map it to 400).
 var ErrInvalid = errors.New("strategy: invalid parameters")
 
+// ErrForbidden wraps authorization refusals from an Authorize gate
+// (callers map it to 403).
+var ErrForbidden = errors.New("strategy: change not permitted for this actor")
+
 // ErrNotFound reports an unknown version (Get/Rollback).
 var ErrNotFound = errors.New("strategy: version not found")
 
@@ -100,6 +104,16 @@ func (s *Service) Load(ctx context.Context) (Snapshot, error) {
 			return Snapshot{}, err
 		}
 		snap = Snapshot{Version: version, Params: def, CreatedBy: "system", CreatedAt: createdAt}
+		// The seed is a config activation like any other: audit it with
+		// the system actor (created_by stays NULL in the row — it FKs
+		// users — but the trail records who made version 1 exist).
+		if s.audit != nil {
+			s.audit(ctx, AuditEvent{
+				Actor: "system", Source: "system", Action: "config.seed",
+				Entity: "strategy_config", EntityID: fmt.Sprintf("%d", version),
+				After: payload,
+			})
+		}
 		s.log.Info("strategy config seeded", "version", version)
 	}
 	if err := snap.Params.Validate(); err != nil {
@@ -109,10 +123,13 @@ func (s *Service) Load(ctx context.Context) (Snapshot, error) {
 	return snap, nil
 }
 
-// Current returns the active snapshot (zero Version before Load).
+// Current returns the active snapshot (zero Version before Load). The
+// params are deep-copied so no caller can mutate the stored version.
 func (s *Service) Current() Snapshot {
 	if p := s.cur.Load(); p != nil {
-		return *p
+		snap := *p
+		snap.Params = snap.Params.Clone()
+		return snap
 	}
 	return Snapshot{}
 }
@@ -130,19 +147,36 @@ func (s *Service) Subscribe(fn func(Snapshot)) {
 	}
 }
 
+// Authorize inspects the diff a change would produce and refuses it by
+// returning an error. It runs INSIDE the writer lock, against the diff
+// that is actually written — a pre-flight check outside the lock can be
+// invalidated by a concurrent apply (audit: TOCTOU on the permission
+// gate). nil authorizes everything.
+type Authorize func(diff map[string]Change) error
+
 // Apply validates, versions, persists, audits, and hot-swaps p.
 func (s *Service) Apply(ctx context.Context, actor, source string, p Params) (Snapshot, error) {
-	return s.applyLocked(ctx, actor, source, "config.apply", p)
+	return s.ApplyAuthorized(ctx, actor, source, p, nil)
+}
+
+// ApplyAuthorized is Apply with an in-lock authorization gate.
+func (s *Service) ApplyAuthorized(ctx context.Context, actor, source string, p Params, authorize Authorize) (Snapshot, error) {
+	return s.applyLocked(ctx, actor, source, "config.apply", p, authorize)
 }
 
 // Rollback re-activates version's payload as a NEW version (parent set
 // to the rolled-back-to version) so history stays append-only.
 func (s *Service) Rollback(ctx context.Context, actor, source string, version int64) (Snapshot, error) {
+	return s.RollbackAuthorized(ctx, actor, source, version, nil)
+}
+
+// RollbackAuthorized is Rollback with an in-lock authorization gate.
+func (s *Service) RollbackAuthorized(ctx context.Context, actor, source string, version int64, authorize Authorize) (Snapshot, error) {
 	old, err := s.store.Get(ctx, version)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	snap, err := s.applyLocked(ctx, actor, source, "config.rollback", old.Params)
+	snap, err := s.applyLocked(ctx, actor, source, "config.rollback", old.Params, authorize)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -165,7 +199,7 @@ func (s *Service) PlanDiff(p Params) (map[string]Change, error) {
 	return Diff(s.Current().Params, p)
 }
 
-func (s *Service) applyLocked(ctx context.Context, actor, source, action string, p Params) (Snapshot, error) {
+func (s *Service) applyLocked(ctx context.Context, actor, source, action string, p Params, authorize Authorize) (Snapshot, error) {
 	if err := p.Validate(); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %s", ErrInvalid, err)
 	}
@@ -178,6 +212,11 @@ func (s *Service) applyLocked(ctx context.Context, actor, source, action string,
 	}
 	if len(diff) == 0 && cur.Version != 0 {
 		return Snapshot{}, ErrNoChange
+	}
+	if authorize != nil {
+		if err := authorize(diff); err != nil {
+			return Snapshot{}, err
+		}
 	}
 	payload, err := json.Marshal(p)
 	if err != nil {
