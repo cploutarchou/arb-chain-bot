@@ -103,6 +103,7 @@ type Bot struct {
 	// PollTimeout for getUpdates (tests use 0 for immediate returns).
 	PollTimeout time.Duration
 
+	once        sync.Once
 	callbackKey []byte
 	mu          sync.Mutex
 	pending     map[string]pendingAction // nonce → action awaiting a tap
@@ -126,19 +127,20 @@ func (b *Bot) Name() string { return "telegram" }
 func (b *Bot) Messages() int64 { return b.msgs.Load() }
 func (b *Bot) Errors() int64   { return b.errs.Load() }
 
+// init runs the lazy defaults exactly once. A racing double-create of
+// callbackKey would sign buttons with a key that verification no longer
+// holds, rejecting every legitimate tap (audit CR-P1-4 defect class).
 func (b *Bot) init() {
-	if b.callbackKey == nil {
+	b.once.Do(func() {
 		b.callbackKey = make([]byte, 32)
 		if _, err := rand.Read(b.callbackKey); err != nil {
 			panic("telegram: callback key entropy unavailable: " + err.Error())
 		}
-	}
-	if b.pending == nil {
 		b.pending = map[string]pendingAction{}
-	}
-	if b.PollTimeout == 0 {
-		b.PollTimeout = 50 * time.Second
-	}
+		if b.PollTimeout == 0 {
+			b.PollTimeout = 50 * time.Second
+		}
+	})
 }
 
 // Run long-polls until ctx cancels.
@@ -211,14 +213,18 @@ func (b *Bot) handleMessage(ctx context.Context, msg *Message) {
 		cmd = cmd[:i] // arguments are ignored; strict command set only
 	}
 	actor := fmt.Sprintf("telegram:%d", msg.From.ID)
-	text, kb, perm := b.dispatch(cmd, actor)
-	if perm != "" && !auth.Can(role, auth.Permission(perm)) {
-		b.send(ctx, msg.Chat.ID, "Forbidden: your role lacks "+perm+".", nil)
+	c, known := b.dispatch(cmd, actor)
+	if !known {
+		b.send(ctx, msg.Chat.ID, "Unknown command. /help lists the available commands.", nil)
 		return
 	}
-	if text == "" {
-		text = "Unknown command. /help lists the available commands."
+	// Permission BEFORE execution (audit S-004): a denied command must
+	// have no side effects, not just a suppressed reply.
+	if c.perm != "" && !auth.Can(role, c.perm) {
+		b.send(ctx, msg.Chat.ID, "Forbidden: your role lacks "+string(c.perm)+".", nil)
+		return
 	}
+	text, kb := c.run()
 	b.send(ctx, msg.Chat.ID, text, kb)
 }
 
@@ -241,8 +247,16 @@ func (b *Bot) newCallback(action string, userID int64) string {
 		panic("telegram: nonce entropy unavailable: " + err.Error())
 	}
 	n := hex.EncodeToString(nonce)
+	now := time.Now()
 	b.mu.Lock()
-	b.pending[n] = pendingAction{action: action, userID: userID, expires: time.Now().Add(callbackTTL)}
+	// Opportunistic sweep: buttons that were never tapped would otherwise
+	// accumulate forever. Volumes are tiny, so O(n) per issue is fine.
+	for k, p := range b.pending {
+		if now.After(p.expires) {
+			delete(b.pending, k)
+		}
+	}
+	b.pending[n] = pendingAction{action: action, userID: userID, expires: now.Add(callbackTTL)}
 	b.mu.Unlock()
 	return "v1|" + n + "|" + b.signCallback(n, action, userID)
 }
@@ -253,7 +267,11 @@ func (b *Bot) signCallback(nonce, action string, userID int64) string {
 	return hex.EncodeToString(mac.Sum(nil))[:16]
 }
 
-// takeCallback validates and consumes a callback payload.
+// takeCallback validates and consumes a callback payload. Verification
+// runs BEFORE the delete (audit S-015): a caller who fails the user
+// binding or the signature must not consume someone else's pending
+// action — only the entitled tap (or expiry) retires the nonce, and the
+// nonce stays single-use for that entitled caller.
 func (b *Bot) takeCallback(data string, userID int64) (string, bool) {
 	parts := strings.Split(data, "|")
 	if len(parts) != 3 || parts[0] != "v1" {
@@ -261,17 +279,19 @@ func (b *Bot) takeCallback(data string, userID int64) (string, bool) {
 	}
 	nonce, sig := parts[1], parts[2]
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	p, ok := b.pending[nonce]
-	if ok {
-		delete(b.pending, nonce) // single use, even on failed verification
-	}
-	b.mu.Unlock()
-	if !ok || time.Now().After(p.expires) || p.userID != userID {
+	if !ok {
 		return "", false
 	}
-	if !hmac.Equal([]byte(sig), []byte(b.signCallback(nonce, p.action, p.userID))) {
+	if time.Now().After(p.expires) {
+		delete(b.pending, nonce)
 		return "", false
 	}
+	if p.userID != userID || !hmac.Equal([]byte(sig), []byte(b.signCallback(nonce, p.action, p.userID))) {
+		return "", false
+	}
+	delete(b.pending, nonce)
 	return p.action, true
 }
 

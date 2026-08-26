@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -83,10 +83,11 @@ type ScannerSection struct {
 }
 
 type OppSection struct {
-	Persisted  int    `json:"persisted"` // rows in period (DB)
-	BestBps    string `json:"best_net_bps,omitempty"`
-	AvgBps     string `json:"avg_net_bps,omitempty"`
-	FromMemory bool   `json:"from_memory"` // true = ring only, no DB
+	// QualifiedPersisted counts QUALIFIED opportunity rows in the period.
+	QualifiedPersisted int    `json:"qualified_persisted"`
+	BestBps            string `json:"best_net_bps,omitempty"`
+	AvgBps             string `json:"avg_net_bps,omitempty"`
+	FromMemory         bool   `json:"from_memory"` // true = ring only, no DB
 }
 
 type CycleSection struct {
@@ -175,6 +176,13 @@ type Generator struct {
 	Log     *slog.Logger
 	IDGen   func() string
 	Now     func() time.Time
+
+	// Scanner counters from the engine are cumulative since process
+	// start; per kind we keep the previous snapshot so a report shows
+	// the PERIOD delta (audit P1-3). The first report has no baseline
+	// and says so.
+	mu       sync.Mutex
+	baseline map[Kind]ScannerSection
 }
 
 // Generate builds one report for the period ending now.
@@ -195,7 +203,27 @@ func (g *Generator) Generate(ctx context.Context, kind Kind) (Report, error) {
 		r.ExchangeHealth = g.Sources.Exchange()
 	}
 	if g.Sources.Scanner != nil {
-		r.Scanner = g.Sources.Scanner()
+		cum := g.Sources.Scanner()
+		g.mu.Lock()
+		if g.baseline == nil {
+			g.baseline = map[Kind]ScannerSection{}
+		}
+		base, hasBase := g.baseline[kind]
+		g.baseline[kind] = cum
+		g.mu.Unlock()
+		if hasBase {
+			r.Scanner = ScannerSection{
+				Evaluations: cum.Evaluations - base.Evaluations,
+				Qualified:   cum.Qualified - base.Qualified,
+				Rejected:    cum.Rejected - base.Rejected,
+				Skipped:     cum.Skipped - base.Skipped,
+				Dropped:     cum.Dropped - base.Dropped,
+			}
+		} else {
+			r.Scanner = cum
+			r.Notes = append(r.Notes,
+				"scanner counters are since process start (no previous report baseline for this kind)")
+		}
 		if r.Scanner.Evaluations > 0 {
 			rate := decimal.NewFromInt(r.Scanner.Qualified).
 				Div(decimal.NewFromInt(r.Scanner.Evaluations)).Mul(decimal.NewFromInt(100))
@@ -222,7 +250,7 @@ func (g *Generator) Generate(ctx context.Context, kind Kind) (Report, error) {
 
 	if h := g.Sources.History; h != nil {
 		if count, best, avg, err := h.OpportunityAggregates(ctx, r.PeriodStart, r.PeriodEnd); err == nil {
-			r.Opportunities = OppSection{Persisted: count, BestBps: best, AvgBps: avg}
+			r.Opportunities = OppSection{QualifiedPersisted: count, BestBps: best, AvgBps: avg}
 		} else {
 			r.Notes = append(r.Notes, "opportunity history query failed: "+err.Error())
 		}
@@ -238,9 +266,13 @@ func (g *Generator) Generate(ctx context.Context, kind Kind) (Report, error) {
 		}
 		if failed, err := h.FailedCycles(ctx, r.PeriodStart, r.PeriodEnd, 10); err == nil {
 			r.FailedCycles = failed
+		} else {
+			r.Notes = append(r.Notes, "failed-cycle query failed: "+err.Error())
 		}
 		if top, worst, err := h.TriangleLeaders(ctx, r.PeriodStart, r.PeriodEnd, 5); err == nil {
 			r.TopTriangles, r.WorstTriangles = top, worst
+		} else {
+			r.Notes = append(r.Notes, "triangle-leader query failed: "+err.Error())
 		}
 	} else {
 		r.Opportunities.FromMemory = true
@@ -349,18 +381,6 @@ func (r Report) MarshalPayload() (json.RawMessage, error) { return json.Marshal(
 // UnmarshalPayload restores a persisted report.
 func (r *Report) UnmarshalPayload(raw []byte) error { return json.Unmarshal(raw, r) }
 
-// SortTriangleStats orders by net PnL descending (helper for sources).
-func SortTriangleStats(stats []TriangleStat) {
-	sort.Slice(stats, func(i, j int) bool {
-		a, errA := decimal.NewFromString(stats[i].NetPnL)
-		b, errB := decimal.NewFromString(stats[j].NetPnL)
-		if errA != nil || errB != nil {
-			return stats[i].NetPnL > stats[j].NetPnL
-		}
-		return a.GreaterThan(b)
-	})
-}
-
 // Scheduler emits daily and weekly reports.
 type Scheduler struct {
 	Generator *Generator
@@ -372,14 +392,25 @@ type Scheduler struct {
 func (s *Scheduler) Name() string { return "reporting" }
 
 func (s *Scheduler) Run(ctx context.Context) error {
-	if s.Daily <= 0 {
+	// Explicit intervals (tests) tick from now; the defaults align to
+	// calendar boundaries so "daily" means midnight UTC and "weekly"
+	// means Monday 00:00 UTC — restarts don't drift the schedule.
+	now := time.Now().UTC()
+	dailyDelay, weeklyDelay := s.Daily, s.Weekly
+	if dailyDelay <= 0 {
 		s.Daily = 24 * time.Hour
+		dailyDelay = time.Until(now.Truncate(24 * time.Hour).Add(24 * time.Hour))
 	}
-	if s.Weekly <= 0 {
+	if weeklyDelay <= 0 {
 		s.Weekly = 7 * 24 * time.Hour
+		daysToMonday := (8 - int(now.Weekday())) % 7
+		if daysToMonday == 0 {
+			daysToMonday = 7
+		}
+		weeklyDelay = time.Until(now.Truncate(24*time.Hour).AddDate(0, 0, daysToMonday))
 	}
-	daily := time.NewTicker(s.Daily)
-	weekly := time.NewTicker(s.Weekly)
+	daily := time.NewTimer(dailyDelay)
+	weekly := time.NewTimer(weeklyDelay)
 	defer daily.Stop()
 	defer weekly.Stop()
 	for {
@@ -389,8 +420,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-daily.C:
 			kind = KindDaily
+			daily.Reset(s.Daily)
 		case <-weekly.C:
 			kind = KindWeekly
+			weekly.Reset(s.Weekly)
 		}
 		if _, err := s.Generator.Generate(ctx, kind); err != nil {
 			s.Log.Error("report generation failed", "kind", string(kind), "error", err)

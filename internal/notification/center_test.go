@@ -159,3 +159,27 @@ func TestRegisterAlwaysReceivesEverySeverity(t *testing.T) {
 		t.Fatalf("center missed unrouted-severity delivery: %+v", got)
 	}
 }
+
+// Acceptance (audit CR-P1-4): the first deliveries race in from several
+// router goroutines; lazy init must not double-create the state maps
+// (run with -race).
+func TestCenterConcurrentFirstDeliveriesRaceFree(t *testing.T) {
+	var seq int64
+	var idMu sync.Mutex
+	c := &Center{
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		IDGen: func() string { idMu.Lock(); defer idMu.Unlock(); seq++; return fmt.Sprintf("al-%d", seq) },
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			deliver(c, SeverityWarning, fmt.Sprintf("race:%d", i), 0)
+		}(i)
+	}
+	wg.Wait()
+	if got := len(c.List("", 100)); got != 8 {
+		t.Fatalf("alerts after concurrent first deliveries = %d, want 8", got)
+	}
+}

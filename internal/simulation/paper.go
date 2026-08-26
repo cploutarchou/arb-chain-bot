@@ -151,11 +151,12 @@ func cycleRNG(seed int64, cycleID string, leg int) *rand.Rand {
 func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (execution.CycleResult, error) {
 	op := plan.Opportunity
 	res := execution.CycleResult{
-		CycleID:    plan.CycleID,
-		StartAsset: op.Start,
-		Exposure:   make(map[exchange.Asset]decimal.Decimal),
-		Fees:       make(map[exchange.Asset]decimal.Decimal),
-		StartedAt:  e.clock.Now(),
+		CycleID:       plan.CycleID,
+		OpportunityID: op.ID,
+		StartAsset:    op.Start,
+		Exposure:      make(map[exchange.Asset]decimal.Decimal),
+		Fees:          make(map[exchange.Asset]decimal.Decimal),
+		StartedAt:     e.clock.Now(),
 	}
 
 	if op.Expired(res.StartedAt) {

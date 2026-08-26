@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -79,6 +80,7 @@ type Service struct {
 	// Timeout bounds one provider call (default 60s).
 	Timeout time.Duration
 
+	once     sync.Once
 	mu       sync.Mutex
 	analyses []AnalysisResult // ring, newest last
 	recs     map[string]*Recommendation
@@ -89,16 +91,20 @@ type Service struct {
 
 const analysesCap = 32
 
+// init is called from every entry point; sync.Once makes the lazy
+// defaults race-free when the first calls arrive concurrently (audit
+// CR-P1-4 — the unguarded version could double-create the map and
+// write Now/Timeout while another goroutine read them).
 func (s *Service) init() {
-	if s.recs == nil {
+	s.once.Do(func() {
 		s.recs = map[string]*Recommendation{}
-	}
-	if s.Now == nil {
-		s.Now = time.Now
-	}
-	if s.Timeout <= 0 {
-		s.Timeout = 60 * time.Second
-	}
+		if s.Now == nil {
+			s.Now = time.Now
+		}
+		if s.Timeout <= 0 {
+			s.Timeout = 60 * time.Second
+		}
+	})
 }
 
 // Requests / Failures back ai_requests_total / ai_failures_total.
@@ -127,10 +133,14 @@ func (s *Service) RunAnalysis(ctx context.Context, in Input) (AnalysisResult, er
 		return AnalysisResult{}, s.fail("provider call failed", err)
 	}
 	current := in.Params
-	resp, err := parseResponse(raw, current)
+	resp, discarded, err := parseResponse(raw, current)
 	if err != nil {
 		return AnalysisResult{}, s.fail("output rejected", err)
 	}
+	for _, reason := range discarded {
+		s.Log.Warn("ai recommendation discarded", "reason", reason)
+	}
+	resp.Findings = append(resp.Findings, discarded...)
 
 	now := s.Now().UTC()
 	res := AnalysisResult{
@@ -236,8 +246,13 @@ func (s *Service) Recommendations(status string) []Recommendation {
 
 // Approve applies the recommendation through the strategy service (the
 // same validated, versioned, audited path as a human edit) and marks it
-// approved. actor is the platform user ID.
-func (s *Service) Approve(ctx context.Context, id, actor, source string) (strategy.Snapshot, error) {
+// approved. actor is the platform user ID. authorize is the approver's
+// per-section RBAC gate, evaluated inside the strategy writer lock —
+// an AI recommendation must never grant a permission its approver does
+// not hold (audit S-002/P0-2: an OPERATOR could previously approve a
+// risk.* change that the config API reserves for ADMIN). nil authorize
+// is for trusted internal callers only.
+func (s *Service) Approve(ctx context.Context, id, actor, source string, authorize strategy.Authorize) (strategy.Snapshot, error) {
 	s.init()
 	s.mu.Lock()
 	rec, ok := s.recs[id]
@@ -245,19 +260,29 @@ func (s *Service) Approve(ctx context.Context, id, actor, source string) (strate
 		s.mu.Unlock()
 		return strategy.Snapshot{}, ErrRecommendationNotFound
 	}
-	if rec.Status != "proposed" || s.Now().After(rec.ExpiresAt) {
+	if rec.Status != "proposed" || rec.deciding || s.Now().After(rec.ExpiresAt) {
 		s.mu.Unlock()
 		return strategy.Snapshot{}, ErrRecommendationDecided
 	}
+	rec.deciding = true // hold the reservation across the unlocked apply
 	parameter, value := rec.Parameter, rec.RecommendedValue
 	s.mu.Unlock()
+	release := func() {
+		s.mu.Lock()
+		if r, ok := s.recs[id]; ok {
+			r.deciding = false
+		}
+		s.mu.Unlock()
+	}
 
 	next, err := strategy.ApplyChange(s.Strategy.Current().Params, parameter, coerceValue(value))
 	if err != nil {
+		release()
 		return strategy.Snapshot{}, err
 	}
-	snap, err := s.Strategy.Apply(ctx, actor, source, next)
+	snap, err := s.Strategy.ApplyAuthorized(ctx, actor, source, next, authorize)
 	if err != nil {
+		release()
 		return strategy.Snapshot{}, err
 	}
 	s.decide(ctx, id, "approved", actor)
@@ -280,7 +305,7 @@ func (s *Service) Reject(ctx context.Context, id, actor string) error {
 		s.mu.Unlock()
 		return ErrRecommendationNotFound
 	}
-	if rec.Status != "proposed" {
+	if rec.Status != "proposed" || rec.deciding {
 		s.mu.Unlock()
 		return ErrRecommendationDecided
 	}
@@ -311,7 +336,12 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	// Cut on a rune boundary so notification bodies stay valid UTF-8.
+	cut := n - 1
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 func currentValueAt(p strategy.Params, path string) string {

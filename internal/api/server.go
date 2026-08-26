@@ -60,8 +60,9 @@ type Server struct {
 	Alerts *notification.Center
 	// AI, when set, backs the advisor routes.
 	AI *ai.Service
-	// AuditAction records control actions (source=web); nil = log only.
-	AuditAction func(actor, action, entity string)
+	// AuditAction records control actions (source=web) with the caller's
+	// IP and correlation ID for forensics (audit S-008); nil = log only.
+	AuditAction func(actor, action, entity, ip, correlationID string)
 	// Reads, when set, backs the live read groups (engine profiles).
 	Reads ReadModel
 	// Store, when set, backs the history read groups.
@@ -134,7 +135,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 		_, _ = w.Write([]byte("ready"))
 	})
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(s.handleLogout))
+	// CSRF on logout too (audit S-013): a cross-site logout is a nuisance
+	// attack, and the wrap costs nothing.
+	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(s.requireCSRF(s.handleLogout)))
 	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
 
 	mux.HandleFunc("GET /api/v1/system/status", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +158,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	}))
 	// Paper controls (RBAC + CSRF). Outside PAPER mode the engine is absent
 	// and the routes answer 404 honestly.
-	paperGate := func(fn func(PaperController)) http.HandlerFunc {
+	paperGate := func(action string, fn func(PaperController)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if s.Paper == nil {
 				WriteError(w, http.StatusNotFound, "paper_absent", "paper engine not running (mode is not PAPER)", correlationID(r))
@@ -163,13 +166,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 			}
 			p, _ := PrincipalFrom(r.Context())
 			fn(s.Paper)
+			s.audit(r, p.UserID, action, "paper_engine")
 			s.log.Info("paper engine control",
 				"actor", p.UserID, "path", r.URL.Path, "running", s.Paper.Running())
 			WriteData(w, http.StatusOK, map[string]any{"running": s.Paper.Running()})
 		}
 	}
-	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Pause() }))))
-	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Resume() }))))
+	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate("paper.pause", func(p PaperController) { p.Pause() }))))
+	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate("paper.resume", func(p PaperController) { p.Resume() }))))
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 	s.configRoutes(mux)
 	s.alertRoutes(mux)
@@ -177,8 +181,20 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.readRoutes(mux)
 	s.reportRoutes(mux)
 	if s.MetricsHandler != nil {
-		mux.Handle("GET /metrics", s.MetricsHandler)
+		// Same-mux dev convenience stays behind RBAC (audit S-003):
+		// metric names and label values map the platform's internals.
+		mux.HandleFunc("GET /metrics", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
+			s.MetricsHandler.ServeHTTP(w, r)
+		}))
 	}
+}
+
+// audit records one web control action with request forensics; nil-safe.
+func (s *Server) audit(r *http.Request, actor, action, entity string) {
+	if s.AuditAction == nil {
+		return
+	}
+	s.AuditAction(actor, action, entity, clientAddr(r).String(), correlationID(r))
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {
@@ -202,7 +218,7 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 		s.log.Debug("http request",
 			"method", r.Method, "path", r.URL.Path, "status", rec.status,
 			"duration_ms", time.Since(start).Milliseconds(),
-			"correlation_id", r.Header.Get("X-Correlation-ID"),
+			"correlation_id", correlationID(r),
 		)
 	})
 }
@@ -255,6 +271,9 @@ func WriteError(w http.ResponseWriter, status int, code, msg, correlationID stri
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// Belt-and-braces against MIME sniffing on API responses that may
+	// echo user-influenced strings (audit S-011).
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

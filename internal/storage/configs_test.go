@@ -175,8 +175,18 @@ func TestQualitySamples(t *testing.T) {
 	if !found.WorstLoss.Equal(decimal.RequireFromString("-0.8")) {
 		t.Fatalf("worst = %s", found.WorstLoss)
 	}
-	if found.EdgeWindows != 1 || found.WindowHours != 24 {
+	// A [now-24h, now] window touches 25 hour buckets (both partial
+	// edge hours count), so persistence can reach 25/25, never 26/25.
+	if found.EdgeWindows != 1 || found.WindowHours != 25 {
 		t.Fatalf("edge/windows = %d/%d", found.EdgeWindows, found.WindowHours)
+	}
+	// Slippage stats come only from slippage-measurable cycles: the
+	// TIMEOUT row stores NULL and must not dilute the mean.
+	if found.SlippageSamples != 1 {
+		t.Fatalf("slippage samples = %d, want 1", found.SlippageSamples)
+	}
+	if !found.AvgSlippageBps.Equal(decimal.RequireFromString("-1.2")) {
+		t.Fatalf("avg slippage = %s", found.AvgSlippageBps)
 	}
 	scored := quality.Rank(samples, quality.Config{})
 	if len(scored) == 0 || scored[0].Total <= 0 {

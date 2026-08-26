@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,21 +25,25 @@ type Recorder struct {
 	OnSegment      func(SegmentMeta) // called after each successful close
 	StreamOfSymbol map[exchange.Symbol]uint16
 
+	once    sync.Once
 	ch      chan Frame
 	dropped atomic.Int64
 	written atomic.Int64
 }
 
+// init runs the lazy defaults exactly once: feed tap goroutines and the
+// Run drain start concurrently, and an unguarded double-make of the
+// channel would silently lose frames (audit CR-P1-4 defect class).
 func (r *Recorder) init() {
-	if r.RotateFrames <= 0 {
-		r.RotateFrames = 200_000
-	}
-	if r.QueueSize <= 0 {
-		r.QueueSize = 8192
-	}
-	if r.ch == nil {
+	r.once.Do(func() {
+		if r.RotateFrames <= 0 {
+			r.RotateFrames = 200_000
+		}
+		if r.QueueSize <= 0 {
+			r.QueueSize = 8192
+		}
 		r.ch = make(chan Frame, r.QueueSize)
-	}
+	})
 }
 
 func (r *Recorder) Name() string { return "recorder" }

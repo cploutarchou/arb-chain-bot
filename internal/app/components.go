@@ -87,6 +87,16 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	center := &notification.Center{Log: log, IDGen: newULID, Now: time.Now}
 	if store != nil {
 		center.Store = store.Alerts()
+		// Rehydrate unresolved alerts so a restart does not blank the
+		// console while incidents are still open (audit CR-P2-10).
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if active, err := store.Alerts().LoadActive(ctx, 500); err != nil {
+			log.Error("alert rehydration failed", "error", err)
+		} else if len(active) > 0 {
+			center.LoadActive(active)
+			log.Info("alert center rehydrated", "active", len(active))
+		}
+		cancel()
 	}
 	notify.RegisterAlways(center)
 
@@ -118,6 +128,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		engine.Strategy = stratSvc
 		engine.Metrics = mtr
 		engine.Notifier = notify
+		engine.Center = center
 		others = append(others, engine)
 
 		if aiSvc != nil {
@@ -314,8 +325,24 @@ func telegramAudit(log *slog.Logger, store *storage.Store) func(actor, action, e
 	return sourceAudit(log, store, "telegram")
 }
 
-func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity string) {
-	return sourceAudit(log, store, "web")
+// webAudit carries the caller's IP and correlation ID into the audit row
+// (audit S-008) — web is the surface where those forensics exist.
+func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity, ip, correlationID string) {
+	return func(actor, action, entity, ip, correlationID string) {
+		if store == nil {
+			log.Info("audit event (memory-only)", "actor", actor, "action", action,
+				"entity", entity, "source", "web", "ip", ip, "correlation_id", correlationID)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.InsertAuditEvent(ctx, storage.AuditRow{
+			ID: newULID(), Actor: actor, Source: "web",
+			Action: action, Entity: entity, IP: ip, CorrelationID: correlationID,
+		}); err != nil {
+			log.Error("audit insert failed", "source", "web", "error", err)
+		}
+	}
 }
 
 // buildStrategy wires the versioned config service: DB-backed rows when
@@ -400,7 +427,10 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 		Users:    users,
 		Sessions: sessions,
 		Throttle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
-		TTL:      12 * time.Hour,
-		Now:      time.Now,
+		// Wider per-IP net so rotating emails cannot evade the account
+		// throttle (audit S-006).
+		IPThrottle: auth.NewThrottle(20, time.Minute, 10*time.Minute),
+		TTL:        12 * time.Hour,
+		Now:        time.Now,
 	}
 }

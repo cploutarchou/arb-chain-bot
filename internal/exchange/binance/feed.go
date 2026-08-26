@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,7 +49,18 @@ type Feed struct {
 	// scraper; the hot path only pays single atomic adds.
 	Stats FeedStats
 
+	// syncers is replaced per session while resync goroutines from the
+	// previous session may still be running; every access goes through
+	// the mutex. Per-market single-flight for resyncs lives on Syncer.
+	syncMu  sync.Mutex
 	syncers map[exchange.MarketID]*Syncer
+}
+
+func (f *Feed) getSyncer(id exchange.MarketID) (*Syncer, bool) {
+	f.syncMu.Lock()
+	defer f.syncMu.Unlock()
+	s, ok := f.syncers[id]
+	return s, ok
 }
 
 // FeedStats are the feed's atomic counters.
@@ -118,13 +130,16 @@ func (f *Feed) session(ctx context.Context) error {
 
 	// Fresh books + syncers each session; the registry swap makes stale
 	// views visibly DISCONNECTED-era (versions restart).
-	f.syncers = make(map[exchange.MarketID]*Syncer, len(f.Symbols))
+	fresh := make(map[exchange.MarketID]*Syncer, len(f.Symbols))
 	for _, sym := range f.Symbols {
 		id := exchange.MarketID{Exchange: ID, Symbol: sym}
 		book := orderbook.New(id, f.MaxDepth)
 		f.Books.Add(book)
-		f.syncers[id] = NewSyncer(book, 0)
+		fresh[id] = NewSyncer(book, 0)
 	}
+	f.syncMu.Lock()
+	f.syncers = fresh
+	f.syncMu.Unlock()
 
 	// Snapshot fetches run beside the read loop, paced for REST weight
 	// (250 per 5000-level call against the 6000/min budget).
@@ -186,7 +201,7 @@ func (f *Feed) handleFrame(ctx context.Context, frame []byte) {
 	if f.LatencyObserver != nil && !ev.EventTime.IsZero() {
 		f.LatencyObserver(recv.Sub(ev.EventTime))
 	}
-	syncer, ok := f.syncers[ev.Market]
+	syncer, ok := f.getSyncer(ev.Market)
 	if !ok {
 		return
 	}
@@ -230,10 +245,17 @@ func (f *Feed) fetchSnapshots(ctx context.Context, done chan<- error) {
 // resyncMarket fetches a snapshot and splices it; ErrSnapshotBehindBuffer
 // retries with fresh snapshots (bounded).
 func (f *Feed) resyncMarket(ctx context.Context, id exchange.MarketID) {
-	syncer, ok := f.syncers[id]
+	syncer, ok := f.getSyncer(id)
 	if !ok {
 		return
 	}
+	// Single flight per market: a second gap during an in-flight resync
+	// changes nothing — the running resync fetches a newer snapshot and
+	// the buffer keeps accumulating under the syncer lock.
+	if !syncer.resyncing.CompareAndSwap(false, true) {
+		return
+	}
+	defer syncer.resyncing.Store(false)
 	f.Stats.Resyncs.Add(1)
 	for attempt := 0; attempt < 5; attempt++ {
 		body, snap, err := f.REST.DepthRaw(ctx, id.Symbol, SnapshotDepthLimit)
@@ -265,7 +287,13 @@ func (f *Feed) resyncMarket(ctx context.Context, id exchange.MarketID) {
 }
 
 func (f *Feed) markAll(fn func(*orderbook.Book)) {
+	f.syncMu.Lock()
+	ids := make([]exchange.MarketID, 0, len(f.syncers))
 	for id := range f.syncers {
+		ids = append(ids, id)
+	}
+	f.syncMu.Unlock()
+	for _, id := range ids {
 		if b, ok := f.Books.Get(id); ok {
 			fn(b)
 		}

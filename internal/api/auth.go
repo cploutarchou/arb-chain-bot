@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"regexp"
 	"strings"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
@@ -91,6 +92,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  sess.ExpiresAt,
 	})
+	s.audit(r, sess.UserID, "auth.login", "user:"+sess.UserID)
 	WriteData(w, http.StatusOK, loginResponse{Role: string(sess.Role), CSRFToken: s.csrfFor(sess.Token)})
 }
 
@@ -102,6 +104,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
+	if p, ok := PrincipalFrom(r.Context()); ok {
+		s.audit(r, p.UserID, "auth.logout", "user:"+p.UserID)
+	}
 	WriteData(w, http.StatusOK, map[string]string{"status": "logged_out"})
 }
 
@@ -167,7 +172,18 @@ func (s *Server) requirePerm(p auth.Permission, next http.HandlerFunc) http.Hand
 	})
 }
 
-func correlationID(r *http.Request) string { return r.Header.Get("X-Correlation-ID") }
+// correlationIDPattern bounds what a client-supplied correlation ID may
+// look like before it is echoed into responses, logs, and audit rows
+// (audit S-017): short, printable, no whitespace or control characters.
+var correlationIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+func correlationID(r *http.Request) string {
+	id := r.Header.Get("X-Correlation-ID")
+	if id == "" || correlationIDPattern.MatchString(id) {
+		return id
+	}
+	return "invalid-correlation-id"
+}
 
 func clientAddr(r *http.Request) netip.Addr {
 	host := r.RemoteAddr

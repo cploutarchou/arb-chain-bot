@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
+	"github.com/cploutarchou/arb-chain-bot/internal/api"
+	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
@@ -184,7 +186,10 @@ func (t telegramServices) AIApprove(id, actor string) (int64, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	snap, err := t.ai.Approve(ctx, id, actor, "telegram")
+	// Allowlisted Telegram identities act as OPERATOR; the same
+	// per-section RBAC as the web path applies, so risk.* approvals
+	// stay ADMIN-only and are refused here.
+	snap, err := t.ai.Approve(ctx, id, actor, "telegram", api.SectionAuthorizer(auth.RoleOperator))
 	if err != nil {
 		return 0, err
 	}
@@ -212,7 +217,10 @@ func (t telegramServices) GenerateReport(kind string) (string, bool) {
 	defer cancel()
 	rep, err := t.rep.Generate(ctx, k)
 	if err != nil {
-		return "Report generation failed: " + err.Error(), true
+		// Generic echo only (audit S-017): raw errors can carry DSNs or
+		// query text; the log keeps the detail.
+		t.e.log.Error("telegram report generation failed", "kind", kind, "error", err)
+		return "Report generation failed; details are in the server log.", true
 	}
 	return reporting.Digest(rep), true
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
 // aiRoutes expose the advisor: analyses and recommendations to viewers,
@@ -40,14 +41,14 @@ func (s *Server) aiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/ai/recommendations/{id}/approve", s.requirePerm(auth.PermAIApprove, s.requireCSRF(gate(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		principal, _ := PrincipalFrom(r.Context())
-		snap, err := s.AI.Approve(r.Context(), id, principal.UserID, "web")
+		// The approver's own per-section RBAC applies to the change the
+		// recommendation makes — an AI proposal never widens privileges.
+		snap, err := s.AI.Approve(r.Context(), id, principal.UserID, "web", SectionAuthorizer(principal.Role))
 		if err != nil {
 			s.writeAIError(w, r, err)
 			return
 		}
-		if s.AuditAction != nil {
-			s.AuditAction(principal.UserID, "ai_recommendation.approve", "ai_recommendation:"+id)
-		}
+		s.audit(r, principal.UserID, "ai_recommendation.approve", "ai_recommendation:"+id)
 		WriteData(w, http.StatusOK, map[string]any{"config_version": snap.Version})
 	}))))
 	mux.HandleFunc("POST /api/v1/ai/recommendations/{id}/reject", s.requirePerm(auth.PermAIApprove, s.requireCSRF(gate(func(w http.ResponseWriter, r *http.Request) {
@@ -57,9 +58,7 @@ func (s *Server) aiRoutes(mux *http.ServeMux) {
 			s.writeAIError(w, r, err)
 			return
 		}
-		if s.AuditAction != nil {
-			s.AuditAction(principal.UserID, "ai_recommendation.reject", "ai_recommendation:"+id)
-		}
+		s.audit(r, principal.UserID, "ai_recommendation.reject", "ai_recommendation:"+id)
 		WriteData(w, http.StatusOK, map[string]any{"status": "rejected"})
 	}))))
 }
@@ -70,6 +69,8 @@ func (s *Server) writeAIError(w http.ResponseWriter, r *http.Request, err error)
 		WriteError(w, http.StatusNotFound, "recommendation_not_found", "no such recommendation", correlationID(r))
 	case errors.Is(err, ai.ErrRecommendationDecided):
 		WriteError(w, http.StatusConflict, "already_decided", "recommendation already decided or expired", correlationID(r))
+	case errors.Is(err, strategy.ErrForbidden):
+		WriteError(w, http.StatusForbidden, "forbidden", err.Error(), correlationID(r))
 	default:
 		s.log.Error("ai action failed", "error", err)
 		WriteError(w, http.StatusInternalServerError, "ai_action_failed", "action failed", correlationID(r))

@@ -98,7 +98,11 @@ type CyclePlan struct {
 // CycleResult is the settled simulation of one plan.
 type CycleResult struct {
 	CycleID string
-	Outcome Outcome
+	// OpportunityID carries the plan's opportunity through to persistence
+	// so the cycle→opportunity correlation chain never depends on callers
+	// re-attaching it (empty only for results not born from a plan).
+	OpportunityID string
+	Outcome       Outcome
 
 	StartAsset    exchange.Asset
 	InputConsumed decimal.Decimal // start asset deployed on leg 1

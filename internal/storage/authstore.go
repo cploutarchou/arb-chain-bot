@@ -67,12 +67,15 @@ func (a *AuthStore) CreateSession(ctx context.Context, sess auth.Session) error 
 	return err
 }
 
+// SessionByToken resolves a session by its digest key. Disabling a user
+// invalidates their live sessions immediately (audit S-005) — the join
+// filters them out here rather than trusting a later revocation sweep.
 func (a *AuthStore) SessionByToken(ctx context.Context, token string) (auth.Session, error) {
 	row := a.s.Pool.QueryRow(ctx, `
 		SELECT s.id, s.user_id, u.role, s.created_at, s.expires_at,
 		       COALESCE(s.revoked_at, 'epoch'::timestamptz)
 		FROM sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.id = $1`, token)
+		WHERE s.id = $1 AND u.status <> 'disabled'`, token)
 	var sess auth.Session
 	var role string
 	var revoked time.Time

@@ -112,6 +112,11 @@ func (s *Scanner) currentStrategy() Strategy {
 	return Strategy{Cfg: s.Cfg, Resolver: s.Resolver}
 }
 
+// CurrentConfig exposes the live evaluation config so callers outside
+// the scan loop (e.g. the engine's staleness sweep) honor hot-swapped
+// values instead of the boot literals.
+func (s *Scanner) CurrentConfig() Config { return s.currentStrategy().Cfg }
+
 // Run drains dirty markets with a worker pool until ctx cancels.
 func (s *Scanner) Run(ctx context.Context) error {
 	if s.Cfg.Workers <= 0 {

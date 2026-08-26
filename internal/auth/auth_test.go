@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -160,8 +161,8 @@ func TestRBACMatrix(t *testing.T) {
 	}
 	viewerDenied := []Permission{
 		PermViewAudit, PermPaperControl, PermPaperReset, PermScannerConfig,
-		PermAIApprove, PermAlertAck, PermRiskConfig, PermExchangeConfig,
-		PermUserManage, PermSystemConfig,
+		PermAIApprove, PermAlertAck, PermReportGenerate, PermRiskConfig,
+		PermExchangeConfig, PermUserManage, PermSystemConfig,
 	}
 	for _, p := range viewerAllowed {
 		if !Can(RoleViewer, p) {
@@ -181,7 +182,8 @@ func TestRBACMatrix(t *testing.T) {
 			t.Fatalf("operator allowed %s", p)
 		}
 	}
-	if !Can(RoleOperator, PermPaperControl) || !Can(RoleOperator, PermAIApprove) {
+	if !Can(RoleOperator, PermPaperControl) || !Can(RoleOperator, PermAIApprove) ||
+		!Can(RoleOperator, PermReportGenerate) {
 		t.Fatal("operator missing core permissions")
 	}
 	all := append(append([]Permission{}, viewerAllowed...), viewerDenied...)
@@ -204,5 +206,59 @@ func TestCSRF(t *testing.T) {
 		if err := VerifyCSRF(bad[0], bad[1]); !errors.Is(err, ErrInvalidCSRF) {
 			t.Fatalf("csrf %v accepted", bad)
 		}
+	}
+}
+
+// Acceptance (audit S-005): the session store must only ever hold token
+// digests — a leaked table then contains no usable bearer credentials.
+func TestSessionStoreHoldsOnlyTokenDigests(t *testing.T) {
+	m, store := manager(t)
+	ctx := context.Background()
+	s, err := m.Login(ctx, "op@example.test", "correct horse battery staple", ip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SessionByToken(ctx, s.Token); !errors.Is(err, ErrInvalidSession) {
+		t.Fatal("store is keyed by the RAW token; it must hold digests only")
+	}
+	stored, err := store.SessionByToken(ctx, HashToken(s.Token))
+	if err != nil {
+		t.Fatalf("digest lookup failed: %v", err)
+	}
+	if stored.Token == s.Token {
+		t.Fatal("stored session retains the raw token")
+	}
+	// The raw token still validates and revokes through the manager.
+	if _, err := m.Validate(ctx, s.Token); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Logout(ctx, s.Token); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Acceptance (audit S-006): rotating emails from one IP cannot evade the
+// account throttle — the per-IP net catches the spray.
+func TestIPThrottleCatchesEmailRotation(t *testing.T) {
+	m, store := manager(t)
+	m.IPThrottle = NewThrottle(5, time.Minute, 5*time.Minute)
+	hash, _ := HashPassword("pw2")
+	store.AddUser(User{ID: "u9", Email: "second@example.test", PasswordHash: hash, Role: RoleViewer})
+	ctx := context.Background()
+	// 5 failures spread over distinct emails: each (email, ip) key stays
+	// under the account limit, but the IP key saturates.
+	for i := 0; i < 5; i++ {
+		email := fmt.Sprintf("ghost%d@example.test", i)
+		if _, err := m.Login(ctx, email, "wrong", ip); !errors.Is(err, ErrUnknownUser) {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+	}
+	if _, err := m.Login(ctx, "second@example.test", "pw2", ip); !errors.Is(err, ErrThrottled) {
+		t.Fatalf("ip throttle did not engage: %v", err)
+	}
+	// Another IP is unaffected.
+	other := netip.MustParseAddr("198.51.100.77")
+	if _, err := m.Login(ctx, "second@example.test", "pw2", other); err != nil {
+		t.Fatalf("clean ip blocked: %v", err)
 	}
 }

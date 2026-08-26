@@ -152,6 +152,11 @@ func TestAllFilledReproducesPlan(t *testing.T) {
 	if res.Outcome != execution.OutcomeAllFilled {
 		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
 	}
+	// The correlation chain starts here: the result carries the plan's
+	// opportunity so persistence never needs caller-side re-attachment.
+	if res.OpportunityID != "op-1" {
+		t.Fatalf("opportunity linkage = %q", res.OpportunityID)
+	}
 	if !res.InputConsumed.Equal(d("1000")) || !res.FinalAmount.Equal(d("1016.94204")) {
 		t.Fatalf("in=%s final=%s", res.InputConsumed, res.FinalAmount)
 	}

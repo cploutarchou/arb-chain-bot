@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -63,8 +64,8 @@ func (s *Server) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_payload", "invalid config payload: "+err.Error(), correlationID(r))
 		return
 	}
-	s.applyParams(w, r, p, func(actor string) (strategy.Snapshot, error) {
-		return s.Strategy.Apply(r.Context(), actor, "web", p)
+	s.applyParams(w, r, func(actor string, authorize strategy.Authorize) (strategy.Snapshot, error) {
+		return s.Strategy.ApplyAuthorized(r.Context(), actor, "web", p, authorize)
 	})
 }
 
@@ -76,44 +77,41 @@ func (s *Server) handleConfigRollback(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_payload", "body must be {\"version\": n}", correlationID(r))
 		return
 	}
-	target, err := s.Strategy.Get(r.Context(), body.Version)
-	if err != nil {
-		s.writeConfigError(w, r, err)
-		return
-	}
-	s.applyParams(w, r, target.Params, func(actor string) (strategy.Snapshot, error) {
-		return s.Strategy.Rollback(r.Context(), actor, "web", body.Version)
+	s.applyParams(w, r, func(actor string, authorize strategy.Authorize) (strategy.Snapshot, error) {
+		return s.Strategy.RollbackAuthorized(r.Context(), actor, "web", body.Version, authorize)
 	})
 }
 
-// applyParams enforces per-section permissions on the diff the change
-// would produce, then runs do and writes the outcome.
-func (s *Server) applyParams(w http.ResponseWriter, r *http.Request, p strategy.Params, do func(actor string) (strategy.Snapshot, error)) {
+// applyParams runs the change with per-section authorization evaluated
+// INSIDE the strategy service's writer lock — against the diff that is
+// actually written, so a concurrent apply cannot invalidate the check.
+func (s *Server) applyParams(w http.ResponseWriter, r *http.Request, do func(actor string, authorize strategy.Authorize) (strategy.Snapshot, error)) {
 	principal, _ := PrincipalFrom(r.Context())
-	diff, err := s.Strategy.PlanDiff(p)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_payload", "diff computation failed", correlationID(r))
-		return
-	}
-	for _, section := range strategy.TopLevelSections(diff) {
-		need := auth.PermScannerConfig
-		if section == "risk" {
-			need = auth.PermRiskConfig
-		}
-		if !auth.Can(principal.Role, need) {
-			WriteError(w, http.StatusForbidden, "forbidden",
-				"changing "+section+" requires "+string(need), correlationID(r))
-			return
-		}
-	}
-	snap, err := do(principal.UserID)
+	authorize := SectionAuthorizer(principal.Role)
+	snap, err := do(principal.UserID, authorize)
 	if err != nil {
 		s.writeConfigError(w, r, err)
 		return
 	}
 	s.log.Info("strategy config change applied",
-		"version", snap.Version, "actor", principal.UserID, "changes", len(diff))
+		"version", snap.Version, "actor", principal.UserID)
 	WriteData(w, http.StatusOK, snap)
+}
+
+// SectionAuthorizer builds the in-lock gate mapping changed config
+// sections to RBAC permissions for one principal role. Shared by the
+// config routes and the AI-approval path (audit S-002/P0-2: approvals
+// previously bypassed the risk→ADMIN mapping entirely).
+func SectionAuthorizer(role auth.Role) strategy.Authorize {
+	return func(diff map[string]strategy.Change) error {
+		for _, section := range strategy.TopLevelSections(diff) {
+			need := auth.PermissionForConfigSection(section)
+			if !auth.Can(role, need) {
+				return fmt.Errorf("%w: changing %s requires %s", strategy.ErrForbidden, section, need)
+			}
+		}
+		return nil
+	}
 }
 
 func (s *Server) writeConfigError(w http.ResponseWriter, r *http.Request, err error) {
@@ -122,6 +120,8 @@ func (s *Server) writeConfigError(w http.ResponseWriter, r *http.Request, err er
 		WriteError(w, http.StatusConflict, "no_change", "payload equals the current version", correlationID(r))
 	case errors.Is(err, strategy.ErrNotFound):
 		WriteError(w, http.StatusNotFound, "version_not_found", "no such config version", correlationID(r))
+	case errors.Is(err, strategy.ErrForbidden):
+		WriteError(w, http.StatusForbidden, "forbidden", err.Error(), correlationID(r))
 	case errors.Is(err, strategy.ErrInvalid):
 		WriteError(w, http.StatusBadRequest, "invalid_config", err.Error(), correlationID(r))
 	default:

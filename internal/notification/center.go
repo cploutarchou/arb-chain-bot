@@ -66,6 +66,7 @@ type Center struct {
 	// OnChange fires after every lifecycle change (hub publish).
 	OnChange func(Alert)
 
+	once  sync.Once
 	mu    sync.Mutex
 	byID  map[string]*Alert
 	byKey map[string]*Alert // unresolved alert per key
@@ -77,14 +78,16 @@ type Center struct {
 // grows past the cap rather than dropping one.
 const centerCap = 1024
 
+// init runs the lazy defaults exactly once; concurrent first deliveries
+// previously raced on the map creation outside c.mu (audit CR-P1-4).
 func (c *Center) init() {
-	if c.byID == nil {
+	c.once.Do(func() {
 		c.byID = map[string]*Alert{}
 		c.byKey = map[string]*Alert{}
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
+		if c.Now == nil {
+			c.Now = time.Now
+		}
+	})
 }
 
 func (c *Center) Name() string { return "center" }
@@ -202,6 +205,34 @@ func (c *Center) Get(id string) (Alert, bool) {
 		return Alert{}, false
 	}
 	return *a, true
+}
+
+// LoadActive hydrates the center from persisted unresolved alerts at
+// boot (audit CR-P2-10): without it a restart empties the console's
+// alert list while the store still holds active incidents. Existing
+// in-memory entries win; loaded alerts do not re-notify.
+func (c *Center) LoadActive(alerts []Alert) {
+	c.init()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, a := range alerts {
+		if a.State == AlertResolved {
+			continue
+		}
+		if _, exists := c.byID[a.ID]; exists {
+			continue
+		}
+		cp := a
+		if cp.SevName == "" {
+			cp.SevName = cp.Severity.String()
+		}
+		c.byID[cp.ID] = &cp
+		if cur, ok := c.byKey[cp.Key]; !ok || cur.State == AlertResolved {
+			c.byKey[cp.Key] = &cp
+		}
+		c.order = append(c.order, cp.ID)
+	}
+	c.evictLocked()
 }
 
 // ActiveCount reports unresolved alerts (status payloads).

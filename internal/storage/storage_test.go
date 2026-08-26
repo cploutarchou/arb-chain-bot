@@ -3,9 +3,11 @@ package storage
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/netip"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,7 +135,8 @@ func TestOpportunityAndCyclePersistence(t *testing.T) {
 	}
 	mkt := exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"}
 	res := execution.CycleResult{
-		CycleID: "cyc-1", Outcome: execution.OutcomeAllFilled, StartAsset: "USDT",
+		CycleID: "cyc-1", OpportunityID: "op-1",
+		Outcome: execution.OutcomeAllFilled, StartAsset: "USDT",
 		InputConsumed: d("1000"), FinalAmount: d("1016.94204"),
 		RealizedPnL: d("16.94204"), TotalPnL: d("16.94204"),
 		Exposure: map[exchange.Asset]decimal.Decimal{"ETH": d("0.0001")},
@@ -151,10 +154,10 @@ func TestOpportunityAndCyclePersistence(t *testing.T) {
 		}},
 		StartedAt: t0, SettledAt: t0.Add(200 * time.Millisecond),
 	}
-	if err := s.InsertCycle(ctx, "sess-1", "op-1", &res); err != nil {
+	if err := s.InsertCycle(ctx, "sess-1", &res); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertCycle(ctx, "sess-1", "op-1", &res); err != nil { // idempotent
+	if err := s.InsertCycle(ctx, "sess-1", &res); err != nil { // idempotent
 		t.Fatal(err)
 	}
 	// Correlation chain fill → order → cycle → opportunity intact.
@@ -246,11 +249,24 @@ func TestUpsertMarketsAndOutbox(t *testing.T) {
 	if !ob.Enqueue(Record{Kind: "opportunity", Opportunity: &op, Decision: &risk.Decision{}}) {
 		t.Fatal("enqueue refused")
 	}
+	// Cycle records carry their opportunity linkage inside the result
+	// (audit CR-P1-3) — no caller-side re-attachment.
+	if err := s.EnsurePaperSession(ctx, "sess-ob", "PAPER", map[string]string{"USDT": "100"}, 1, 7); err != nil {
+		t.Fatal(err)
+	}
+	cyc := execution.CycleResult{
+		CycleID: "cyc-ob", OpportunityID: "op-ob",
+		Outcome: execution.OutcomeAllFilled, StartAsset: "USDT",
+		StartedAt: t0, SettledAt: t0.Add(time.Second),
+	}
+	if !ob.Enqueue(Record{Kind: "cycle", Cycle: &cyc, SessionID: "sess-ob"}) {
+		t.Fatal("enqueue refused")
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- ob.Run(runCtx) }()
 	deadline := time.After(3 * time.Second)
-	for ob.Written() < 1 {
+	for ob.Written() < 2 {
 		select {
 		case <-deadline:
 			t.Fatal("outbox never wrote")
@@ -263,9 +279,38 @@ func TestUpsertMarketsAndOutbox(t *testing.T) {
 	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM opportunities WHERE id='op-ob'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("outbox persisted = %d err=%v", count, err)
 	}
+	var linked string
+	if err := s.Pool.QueryRow(ctx, `SELECT opportunity_id FROM paper_cycles WHERE id='cyc-ob'`).Scan(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if linked != "op-ob" {
+		t.Fatalf("cycle→opportunity linkage = %q", linked)
+	}
 	if ob.Dropped() != 0 {
 		t.Fatalf("dropped = %d", ob.Dropped())
 	}
 }
 
 func clientIP() (a netip.Addr) { return netip.MustParseAddr("203.0.113.1") }
+
+// Acceptance (audit CR-P1-4): hot-path producers may hit a zero-value
+// outbox concurrently; lazy init must create exactly one queue so no
+// record lands in an orphan channel (run with -race).
+func TestOutboxConcurrentEnqueueRaceFree(t *testing.T) {
+	ob := &Outbox{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	var wg sync.WaitGroup
+	const producers, each = 8, 50
+	for i := 0; i < producers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < each; j++ {
+				ob.Enqueue(Record{Kind: "cycle", Cycle: &execution.CycleResult{}})
+			}
+		}()
+	}
+	wg.Wait()
+	if got := len(ob.ch); got != producers*each {
+		t.Fatalf("queued = %d, want %d (records lost to a second channel?)", got, producers*each)
+	}
+}

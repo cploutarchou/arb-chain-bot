@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/netip"
 	"sync"
@@ -63,26 +65,45 @@ var (
 	ErrInvalidPassword = ErrPasswordMismatch
 )
 
+// HashToken returns the hex SHA-256 digest of a session token. Stores
+// index sessions by digest only (audit S-005): a leaked sessions table
+// then contains no usable bearer credentials, and the lookup stays a
+// constant-time key compare.
+func HashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // Manager owns login/logout/validation.
 type Manager struct {
 	Users    UserStore
 	Sessions SessionStore
-	Throttle *Throttle
-	TTL      time.Duration // absolute session lifetime
-	IdleTTL  time.Duration // reserved for idle expiry (0 = disabled)
-	Now      func() time.Time
+	// Throttle locks out one (email, ip) pair after repeated failures;
+	// IPThrottle caps total failures per source IP so rotating emails
+	// does not evade the lockout (audit S-006). Either may be nil.
+	Throttle   *Throttle
+	IPThrottle *Throttle
+	TTL        time.Duration // absolute session lifetime
+	Now        func() time.Time
 }
 
 // Login verifies credentials and mints a session. Failures feed the
-// throttle; throttled accounts fail before password verification.
+// throttles; throttled callers fail before password verification (no
+// Argon2 work for a locked-out key).
 func (m *Manager) Login(ctx context.Context, email, password string, ip netip.Addr) (Session, error) {
 	key := email + "|" + ip.String()
 	if m.Throttle != nil && !m.Throttle.Allow(key, m.Now()) {
 		return Session{}, ErrThrottled
 	}
+	if m.IPThrottle != nil && !m.IPThrottle.Allow(ip.String(), m.Now()) {
+		return Session{}, ErrThrottled
+	}
 	fail := func() {
 		if m.Throttle != nil {
 			m.Throttle.Fail(key, m.Now())
+		}
+		if m.IPThrottle != nil {
+			m.IPThrottle.Fail(ip.String(), m.Now())
 		}
 	}
 	u, err := m.Users.UserByEmail(ctx, email)
@@ -113,7 +134,11 @@ func (m *Manager) Login(ctx context.Context, email, password string, ip netip.Ad
 		ExpiresAt: m.Now().Add(m.TTL),
 		IP:        ip,
 	}
-	if err := m.Sessions.CreateSession(ctx, s); err != nil {
+	// The store only ever sees the digest; the raw token exists in the
+	// caller's cookie and nowhere else (audit S-005).
+	stored := s
+	stored.Token = HashToken(token)
+	if err := m.Sessions.CreateSession(ctx, stored); err != nil {
 		return Session{}, err
 	}
 	if m.Throttle != nil {
@@ -127,7 +152,7 @@ func (m *Manager) Validate(ctx context.Context, token string) (Session, error) {
 	if token == "" {
 		return Session{}, ErrInvalidSession
 	}
-	s, err := m.Sessions.SessionByToken(ctx, token)
+	s, err := m.Sessions.SessionByToken(ctx, HashToken(token))
 	if err != nil {
 		return Session{}, ErrInvalidSession
 	}
@@ -143,7 +168,7 @@ func (m *Manager) Validate(ctx context.Context, token string) (Session, error) {
 
 // Logout revokes the session.
 func (m *Manager) Logout(ctx context.Context, token string) error {
-	return m.Sessions.RevokeSession(ctx, token, m.Now())
+	return m.Sessions.RevokeSession(ctx, HashToken(token), m.Now())
 }
 
 // fakeHash equalizes timing for unknown users (any valid-format hash).

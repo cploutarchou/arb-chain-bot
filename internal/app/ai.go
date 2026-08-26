@@ -13,6 +13,9 @@ func (e *Engine) AIInput(kind ai.AnalysisKind) ai.Input {
 	st := e.Status()
 	in := ai.Input{
 		Kind: kind, At: time.Now().UTC(), Mode: string(e.cfg.Mode),
+		// Honest labeling: these counters accumulate since process start;
+		// they are NOT per-analysis-period deltas (audit P3).
+		CountersScope: "cumulative since process start",
 		Scanner: ai.ScannerSummary{
 			Evaluations: st.Evaluations, Qualified: st.Qualified,
 			Rejected: st.Rejected, SkippedBooks: st.Skipped, DroppedEvents: st.Dropped,
@@ -54,9 +57,11 @@ func (e *Engine) AIInput(kind ai.AnalysisKind) ai.Input {
 			})
 		}
 	}
-	if e.Notifier != nil {
-		// Recent ring is enough for the "how noisy are we" signal.
-		in.Alerts = ai.AlertSummary{Active: len(e.Notifier.Recent(0))}
+	if e.Center != nil {
+		// The center's live count, not the recent-deliveries ring: the
+		// ring caps at its buffer size and counts resolved noise too
+		// (audit P3).
+		in.Alerts = ai.AlertSummary{Active: e.Center.ActiveCount()}
 	}
 	return in
 }
