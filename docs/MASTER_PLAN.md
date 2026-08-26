@@ -179,7 +179,7 @@ data-flow,security,risk}.md`.
   qualified/rejected opportunities out, deterministically; -race clean.
 
 ### T-022 Storage layer + outbox
-- priority: P0 · component: storage · status: TODO
+- priority: P0 · component: storage · status: DONE (pgx repos + auth stores + outbox; integration-tested on PG16; CI service container wired)
 - description: pgx repositories for core tables, batching outbox with
   overflow accounting + persistence breaker signal.
 - dependencies: T-003
