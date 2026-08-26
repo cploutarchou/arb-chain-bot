@@ -217,7 +217,8 @@ data-flow,security,risk}.md`.
 - note: full page inventory (SKILL.md §31) tracked by T-040.
 
 ### T-031 Market-data chaos test suite
-- priority: P1 · component: testing · status: TODO
+- priority: P1 · component: testing · status: DONE (SKILL §71 scenarios
+  against the real syncer+books in binance/chaos_test.go; all -race)
 - description: fault-injection fixtures per SKILL.md §71 driving
   connector+book: disconnect, storm, duplication, loss, out-of-order,
   snapshot delay, REST failure, freeze, clock skew, burst.
@@ -226,7 +227,9 @@ data-flow,security,risk}.md`.
   data), documented transitions.
 
 ### T-032 Recorder & deterministic replay
-- priority: P1 · component: marketdata · status: TODO
+- priority: P1 · component: marketdata · status: DONE (segment format +
+  recorder + replay determinism golden test; BACKTEST full-run UI is
+  T-041)
 - description: raw-frame segment writer (zstd, rotation, sha256,
   metadata), REST-snapshot capture, replay driver feeding the live code
   path with recorded clock + seed.
@@ -338,3 +341,9 @@ data-flow,security,risk}.md`.
   `docs/research/*`, architecture in `docs/`). All implementation tasks
   start as TODO; statuses change only when acceptance criteria actually
   pass (`go test ./...`, CI). Never mark DONE ahead of the tree.
+- 2026-08-26 (later): all P0 tasks T-001..T-024 DONE (see per-task
+  notes). P1 progress: T-031 chaos suite and T-032 recorder/replay DONE
+  with `-race` green across 20 packages; storage integration tests run
+  against local PostgreSQL 16 (`ARB_TEST_DATABASE_URL`). Hosted CI runs
+  still fail at runner provisioning (account-level Actions issue,
+  documented on PR #1) — code-level checks pass locally.
