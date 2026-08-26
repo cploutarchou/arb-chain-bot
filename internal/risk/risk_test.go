@@ -33,12 +33,12 @@ func opFixture(netBps, netProfit, input string) *opportunity.Opportunity {
 
 func healthyCtx() Context {
 	return Context{
-		Now:           t0.Add(100 * time.Millisecond),
-		ConfigVersion: 7,
-		BookStates:    [3]orderbook.State{orderbook.StateHealthy, orderbook.StateHealthy, orderbook.StateHealthy},
-		BookAges:      [3]time.Duration{50 * time.Millisecond, 60 * time.Millisecond, 70 * time.Millisecond},
-		DataQuality:   d("0.99"),
-		ClockHealthy:  true,
+		Now:              t0.Add(100 * time.Millisecond),
+		ConfigVersion:    7,
+		BookStates:       [3]orderbook.State{orderbook.StateHealthy, orderbook.StateHealthy, orderbook.StateHealthy},
+		BookAges:         [3]time.Duration{50 * time.Millisecond, 60 * time.Millisecond, 70 * time.Millisecond},
+		DataQuality:      d("0.99"),
+		ClockHealthy:     true,
 		CapitalAvailable: d("10000"),
 		CapitalReserved:  d("0"),
 	}

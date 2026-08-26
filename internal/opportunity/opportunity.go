@@ -97,22 +97,22 @@ func Build(id string, exch exchange.ExchangeID, quote pricing.CycleQuote, b Buff
 		netBps = estFinal.Div(input).Sub(decimal.NewFromInt(1)).Mul(tenK)
 	}
 	return Opportunity{
-		ID:             id,
-		Exchange:       exch,
-		TriangleID:     quote.Triangle,
-		Start:          quote.Start,
-		Quote:          quote,
-		Buffers:        b,
-		BufferAmount:   bufferAmt,
-		EstimatedFinal: estFinal,
-		NetProfit:      netProfit,
-		NetReturnBps:   netBps,
-		GrossReturnBps: quote.ReturnBps,
+		ID:              id,
+		Exchange:        exch,
+		TriangleID:      quote.Triangle,
+		Start:           quote.Start,
+		Quote:           quote,
+		Buffers:         b,
+		BufferAmount:    bufferAmt,
+		EstimatedFinal:  estFinal,
+		NetProfit:       netProfit,
+		NetReturnBps:    netBps,
+		GrossReturnBps:  quote.ReturnBps,
 		RecommendedSize: input,
-		DetectedAt:     now,
-		ExpiresAt:      now.Add(ttl),
-		ConfigVersion:  configVersion,
-		Status:         StatusDetected,
+		DetectedAt:      now,
+		ExpiresAt:       now.Add(ttl),
+		ConfigVersion:   configVersion,
+		Status:          StatusDetected,
 	}
 }
 

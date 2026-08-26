@@ -36,7 +36,7 @@ type Limits struct {
 
 	MinDataQuality decimal.Decimal // 0..1
 
-	OpportunityTTL time.Duration
+	OpportunityTTL   time.Duration
 	LatencyBufferBps decimal.Decimal
 	RiskBufferBps    decimal.Decimal
 }
