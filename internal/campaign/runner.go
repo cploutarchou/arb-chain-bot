@@ -29,6 +29,14 @@ var ErrBusy = errors.New("campaign: another run is in progress")
 // ErrNotFound is returned by Get for unknown run ids.
 var ErrNotFound = errors.New("campaign: run not found")
 
+// Verdict is one §80 verdict line paired with its severity (BL-05b): the
+// backend classifies tone so the console never string-matches report
+// prose to decide whether a verdict is good, cautionary, or bad.
+type Verdict struct {
+	Text     string `json:"text"`
+	Severity string `json:"severity"`
+}
+
 // Run is one campaign job as the console sees it.
 type Run struct {
 	ID         string              `json:"id"`
@@ -43,10 +51,13 @@ type Run struct {
 	FinishedAt *time.Time          `json:"finished_at,omitempty"`
 	Error      string              `json:"error,omitempty"`
 	Flags      map[string][]string `json:"flags,omitempty"`
-	ReportMD   string              `json:"report_md,omitempty"`
-	ReportPath string              `json:"report_path,omitempty"`
-	JSONPath   string              `json:"json_path,omitempty"`
-	Actor      string              `json:"actor,omitempty"`
+	// Verdicts mirrors Flags with a severity attached per line (BL-05b);
+	// filled alongside Flags whenever a run completes.
+	Verdicts   map[string][]Verdict `json:"verdicts,omitempty"`
+	ReportMD   string               `json:"report_md,omitempty"`
+	ReportPath string               `json:"report_path,omitempty"`
+	JSONPath   string               `json:"json_path,omitempty"`
+	Actor      string               `json:"actor,omitempty"`
 }
 
 // Summary strips the report body for list views.
@@ -176,12 +187,14 @@ func (r *Runner) execute(id, segDir string) {
 	mdPath, jsonPath, werr := WriteFiles(c, req.Assets, base)
 	md := Markdown(c, req.Assets)
 	flags := Flags(c, req.Assets)
+	verdicts := Verdicts(c, req.Assets)
 	r.update(id, func(run *Run) {
 		run.Status = StatusDone
 		run.FinishedAt = &fin
 		run.Done = run.Total
 		run.Step = ""
 		run.Flags = flags
+		run.Verdicts = verdicts
 		run.ReportMD = md
 		run.ReportPath, run.JSONPath = mdPath, jsonPath
 		if werr != nil {

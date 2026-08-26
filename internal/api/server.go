@@ -73,6 +73,8 @@ type Server struct {
 	Recorder RecorderController
 	// Campaigns, when set, backs the §80 campaign routes.
 	Campaigns CampaignService
+	// Users, when set, backs the users & roles console routes (BL-11).
+	Users UserAdmin
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -81,7 +83,18 @@ type PaperController interface {
 	Pause()
 	Resume()
 	Running() bool
+	// Reset rebuilds the paper portfolio/reservations to the configured
+	// initial balances and starts a new paper session row, preserving
+	// historical cycles/orders (BL-10). Returns ErrPaperNotIdle if the
+	// engine is running or a simulation is in flight — callers must
+	// Pause() first.
+	Reset(ctx context.Context) error
 }
+
+// ErrPaperNotIdle is returned by PaperController.Reset when the engine
+// is still running or a simulation is in flight (BL-10); the HTTP layer
+// maps it to 409.
+var ErrPaperNotIdle = errors.New("api: paper engine must be paused with zero active simulations before reset")
 
 func NewServer(cfg config.Bootstrap, log *slog.Logger, info BuildInfo) *Server {
 	if info.Version == "" {
@@ -178,6 +191,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate("paper.pause", func(p PaperController) { p.Pause() }))))
 	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate("paper.resume", func(p PaperController) { p.Resume() }))))
+	s.paperResetRoute(mux)
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 	s.configRoutes(mux)
 	s.alertRoutes(mux)
@@ -185,6 +199,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.readRoutes(mux)
 	s.reportRoutes(mux)
 	s.opsRoutes(mux)
+	s.usersRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):
 		// metric names and label values map the platform's internals.

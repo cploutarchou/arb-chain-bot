@@ -20,6 +20,7 @@ func (s *Store) Auth() *AuthStore { return &AuthStore{s: s} }
 var (
 	_ auth.UserStore    = (*AuthStore)(nil)
 	_ auth.SessionStore = (*AuthStore)(nil)
+	_ auth.AdminStore   = (*AuthStore)(nil)
 )
 
 func (a *AuthStore) UserByEmail(ctx context.Context, email string) (auth.User, error) {
@@ -53,6 +54,106 @@ func (a *AuthStore) UpsertUser(ctx context.Context, u auth.User) error {
 		    status = EXCLUDED.status`,
 		u.ID, u.Email, u.PasswordHash, string(u.Role), status)
 	return err
+}
+
+// ListUsers returns every account, oldest first, for the console user
+// roster (BL-11). Password hashes are never selected — callers of this
+// method never need them.
+func (a *AuthStore) ListUsers(ctx context.Context) ([]auth.User, error) {
+	rows, err := a.s.Pool.Query(ctx, `
+		SELECT id, email, role, status = 'disabled', created_at
+		FROM users ORDER BY created_at ASC, email ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.User
+	for rows.Next() {
+		var u auth.User
+		var role string
+		if err := rows.Scan(&u.ID, &u.Email, &role, &u.Disabled, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		u.Role = auth.Role(role)
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UserByID resolves one account by primary key (existence checks, and
+// the self-service password-change path, both need this — UserByEmail
+// alone cannot serve them).
+func (a *AuthStore) UserByID(ctx context.Context, id string) (auth.User, error) {
+	row := a.s.Pool.QueryRow(ctx, `
+		SELECT id, email, password_hash, role, status = 'disabled', created_at
+		FROM users WHERE id = $1`, id)
+	var u auth.User
+	var role string
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &role, &u.Disabled, &u.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return auth.User{}, auth.ErrUnknownUser
+		}
+		return auth.User{}, err
+	}
+	u.Role = auth.Role(role)
+	return u, nil
+}
+
+// CreateUser inserts a brand-new account and fails closed on a
+// duplicate email — unlike UpsertUser (bootstrap admin convenience),
+// this must never silently overwrite an existing user's credentials or
+// role (that would be a privilege-escalation primitive, not an "invite"
+// action).
+func (a *AuthStore) CreateUser(ctx context.Context, u auth.User) error {
+	tag, err := a.s.Pool.Exec(ctx, `
+		INSERT INTO users (id, email, display_name, password_hash, role, status, created_at)
+		VALUES ($1, $2, $2, $3, $4, 'active', $5)
+		ON CONFLICT (email) DO NOTHING`,
+		u.ID, u.Email, u.PasswordHash, string(u.Role), u.CreatedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return auth.ErrDuplicateEmail
+	}
+	return nil
+}
+
+func (a *AuthStore) UpdateUserRole(ctx context.Context, id string, role auth.Role) error {
+	tag, err := a.s.Pool.Exec(ctx, `UPDATE users SET role = $2 WHERE id = $1`, id, string(role))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return auth.ErrUnknownUser
+	}
+	return nil
+}
+
+func (a *AuthStore) SetUserDisabled(ctx context.Context, id string, disabled bool) error {
+	status := "active"
+	if disabled {
+		status = "disabled"
+	}
+	tag, err := a.s.Pool.Exec(ctx, `UPDATE users SET status = $2 WHERE id = $1`, id, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return auth.ErrUnknownUser
+	}
+	return nil
+}
+
+func (a *AuthStore) SetUserPassword(ctx context.Context, id, passwordHash string) error {
+	tag, err := a.s.Pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, id, passwordHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return auth.ErrUnknownUser
+	}
+	return nil
 }
 
 func (a *AuthStore) CreateSession(ctx context.Context, sess auth.Session) error {
