@@ -7,6 +7,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
+	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 	"github.com/cploutarchou/arb-chain-bot/internal/telegram"
 )
@@ -17,11 +18,12 @@ import (
 // through the same paper controller the web console uses, so state is
 // one and the same.
 type telegramServices struct {
-	e  *Engine
-	n  *notification.Service
-	c  *notification.Center
-	s  *strategy.Service
-	ai *ai.Service
+	e   *Engine
+	n   *notification.Service
+	c   *notification.Center
+	s   *strategy.Service
+	ai  *ai.Service
+	rep *reporting.Generator
 }
 
 func (t telegramServices) Status() telegram.StatusView {
@@ -196,6 +198,23 @@ func (t telegramServices) AIReject(id, actor string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return t.ai.Reject(ctx, id, actor)
+}
+
+func (t telegramServices) GenerateReport(kind string) (string, bool) {
+	if t.rep == nil {
+		return "", false
+	}
+	k := reporting.KindDaily
+	if kind == "weekly" {
+		k = reporting.KindWeekly
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	rep, err := t.rep.Generate(ctx, k)
+	if err != nil {
+		return "Report generation failed: " + err.Error(), true
+	}
+	return reporting.Digest(rep), true
 }
 
 func (t telegramServices) PaperPause(string) bool {
