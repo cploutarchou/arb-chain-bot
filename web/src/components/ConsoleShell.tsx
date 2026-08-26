@@ -60,11 +60,11 @@ const GROUPS: NavGroup[] = [
     title: "System",
     items: [
       { label: "Exchanges", href: "/exchanges" },
-      { label: "Markets" },
+      { label: "Markets", href: "/settings#markets" },
       { label: "System Health", href: "/system" },
       { label: "Audit Log", href: "/audit" },
       { label: "Telegram" },
-      { label: "Users & Security" },
+      { label: "Users & Security", href: "/settings#users" },
     ],
   },
 ];

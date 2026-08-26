@@ -118,14 +118,23 @@ export function Button({
   disabled,
   danger,
   children,
+  type = "button",
 }: {
   onClick: () => void;
   disabled?: boolean;
   danger?: boolean;
   children: ReactNode;
+  // Explicit "button" default: a <button> with no type attribute defaults
+  // to "submit" per the HTML spec, so any Button placed inside a <form>
+  // (Users & roles create form, Session password form) would otherwise
+  // fire that form's onSubmit on click — including a plain "Cancel"
+  // button, which must never trigger a mutation. Pass type="submit"
+  // explicitly for the one button per form that should actually submit.
+  type?: "button" | "submit";
 }) {
   return (
     <button
+      type={type}
       onClick={onClick}
       disabled={disabled}
       className={`rounded border px-2.5 py-1 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
@@ -157,6 +166,7 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   danger,
+  confirmDisabled,
   onConfirm,
   onCancel,
 }: {
@@ -165,6 +175,9 @@ export function ConfirmDialog({
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  // Gates the confirm button itself (e.g. type-to-confirm RESET) without
+  // affecting Escape/Cancel, which must always work.
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -220,7 +233,7 @@ export function ConfirmDialog({
         <div className="mb-4 text-[13px] text-[var(--text-dim)]">{body}</div>
         <div className="flex justify-end gap-2">
           <Button onClick={onCancel}>{cancelLabel}</Button>
-          <Button onClick={onConfirm} danger={danger}>
+          <Button onClick={onConfirm} danger={danger} disabled={confirmDisabled}>
             {confirmLabel}
           </Button>
         </div>
