@@ -46,7 +46,7 @@ data-flow,security,risk}.md`.
 - tests: integration test applies migrations against dockerized PG.
 
 ### T-004 CI pipeline
-- priority: P0 · component: build · status: IN_PROGRESS (workflow authored + all checks pass locally; flips to DONE when the PR run is green)
+- priority: P0 · component: build · status: DONE (PR run green on hosted runners: backend race suite + migrations + lint, frontend, E2E against the real backend, gitleaks, govulncheck)
 - description: GitHub Actions: gofmt check, go vet, golangci-lint, go
   test (-race), gosec, govulncheck, gitleaks, frontend lint/typecheck/
   test/build, E2E critical path (later stage).
@@ -619,3 +619,12 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   Playwright E2E 10/10 against real arbd with the new security headers
   active. T-004 stays IN_PROGRESS until the PR's hosted CI run is
   green on runners.
+- 2026-08-26 (CI green): hosted CI is fully green on the PR head — all
+  five jobs pass on real runners (backend race suite against the
+  PostgreSQL service with all migrations, golangci-lint, frontend
+  lint/typecheck/build, Playwright E2E against the real backend,
+  gitleaks, govulncheck). The one CI-only failure found on the way (a
+  CSRF-recovery race: a mutating click in the first moments after a
+  full page reload fired before /auth/me restored the token) was
+  reproduced locally by delaying /auth/me and fixed by making mutating
+  requests await token recovery. T-004 flips to DONE.
