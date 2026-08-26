@@ -38,6 +38,9 @@ test("login reaches overview with live system status", async ({ page }) => {
 });
 
 test("every nav page renders content or an honest state", async ({ page }) => {
+  // Fifteen page visits; dev-server first compiles push past the
+  // default budget.
+  test.setTimeout(120_000);
   await login(page);
   const pages: [string, RegExp][] = [
     ["/scanner", /Scanner|Loading/],
