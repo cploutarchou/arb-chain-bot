@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -40,6 +41,65 @@ func (s *Store) ListRecordings(ctx context.Context, limit int) ([]RecordingRow, 
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RecordingStreams loads one recording's stream table (stream id →
+// symbol) for replay/backtest, inverting the persisted symbol→id map.
+func (s *Store) RecordingStreams(ctx context.Context, recordingID string) (map[uint16]exchange.Symbol, error) {
+	var doc json.RawMessage
+	err := s.Pool.QueryRow(ctx, `
+		SELECT streams FROM market_recording_metadata WHERE id = $1`, recordingID).Scan(&doc)
+	if err != nil {
+		return nil, fmt.Errorf("storage: recording %s: %w", recordingID, err)
+	}
+	var symToID map[string]string
+	if err := json.Unmarshal(doc, &symToID); err != nil {
+		return nil, fmt.Errorf("storage: recording %s streams: %w", recordingID, err)
+	}
+	out := make(map[uint16]exchange.Symbol, len(symToID))
+	for sym, idStr := range symToID {
+		id, err := strconv.ParseUint(idStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("storage: recording %s stream id %q: %w", recordingID, idStr, err)
+		}
+		out[uint16(id)] = exchange.Symbol(sym)
+	}
+	return out, nil
+}
+
+// LoadMarkets returns persisted markets with their instrument rules —
+// the metadata a backtest needs without exchange egress.
+func (s *Store) LoadMarkets(ctx context.Context, exchangeID exchange.ExchangeID) ([]exchange.Market, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT id, symbol, base_asset, quote_asset, enabled, status, rules
+		FROM markets WHERE exchange_id = $1 ORDER BY id`, string(exchangeID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []exchange.Market
+	for rows.Next() {
+		var id, symbol, base, quote, status string
+		var enabled bool
+		var rulesDoc json.RawMessage
+		if err := rows.Scan(&id, &symbol, &base, &quote, &enabled, &status, &rulesDoc); err != nil {
+			return nil, err
+		}
+		m := exchange.Market{
+			ID:      exchange.MarketID{Exchange: exchangeID, Symbol: exchange.Symbol(symbol)},
+			Base:    exchange.Asset(base),
+			Quote:   exchange.Asset(quote),
+			Enabled: enabled,
+			Status:  exchange.MarketStatus(status),
+		}
+		if len(rulesDoc) > 0 {
+			if err := json.Unmarshal(rulesDoc, &m.Rules); err != nil {
+				return nil, fmt.Errorf("storage: market %s rules: %w", id, err)
+			}
+		}
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
