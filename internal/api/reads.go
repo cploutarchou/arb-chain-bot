@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/quality"
 )
 
 // ReadModel supplies the live read-side groups (engine-backed). Absent
@@ -88,6 +90,33 @@ func (s *Server) readRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/audit", s.requirePerm(auth.PermViewAudit, needStore(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.Store.ListAuditEvents(r.Context(), r.URL.Query().Get("entity"), limitOf(r))
 		s.writeListResult(w, r, "events", rows, err)
+	})))
+	mux.HandleFunc("GET /api/v1/triangles/quality", s.requirePerm(auth.PermViewDashboard, needStore(func(w http.ResponseWriter, r *http.Request) {
+		hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+		if hours < 1 || hours > 24*30 {
+			hours = 24
+		}
+		to := time.Now().UTC()
+		samples, err := s.Store.QualitySamples(r.Context(), to.Add(-time.Duration(hours)*time.Hour), to)
+		if err != nil {
+			s.writeListResult(w, r, "scores", nil, err)
+			return
+		}
+		cfg := quality.Config{}
+		if s.Strategy != nil {
+			// The configured minimum expected profit is the natural
+			// per-cycle reference for full profitability credit.
+			if ref := s.Strategy.Current().Params.Risk.MinExpectedProfit; ref.IsPositive() {
+				cfg.ReferenceProfitPerCycle = ref
+			}
+		}
+		WriteData(w, http.StatusOK, map[string]any{
+			"window_hours": hours,
+			"scores":       quality.Rank(samples, cfg),
+			"notes": []string{
+				"drawdown component reflects portfolio-level tracking; per-triangle drawdown is not recorded yet",
+			},
+		})
 	})))
 }
 

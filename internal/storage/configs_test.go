@@ -7,9 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/quality"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
@@ -116,5 +118,68 @@ func TestStrategyConfigsRoundTrip(t *testing.T) {
 	}
 	if audits != 1 {
 		t.Fatalf("audit rows = %d, want 1", audits)
+	}
+}
+
+func TestQualitySamples(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	// Reuse the persisted fixture from the opportunity/cycle test by
+	// inserting a minimal chain here (independent test data).
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO exchanges (id, name) VALUES ('binance','binance') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO triangles (id, exchange_id, starting_asset, legs, canonical_key)
+		VALUES ('tri-q','binance','USDT','[]'::jsonb,'tri-q') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO opportunities (id, exchange_id, triangle_id, status, starting_asset, starting_amount, legs, detected_at)
+		VALUES ('op-q','binance','tri-q','QUALIFIED','USDT',1000,'[]'::jsonb, now() - interval '1 hour')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO paper_sessions (id, mode, started_at, starting_balances, config_version, seed)
+		VALUES ('sess-q','PAPER', now(), '{}'::jsonb, 1, 1) ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO paper_cycles (id, session_id, opportunity_id, outcome, pnl_amount, pnl_asset, slippage_bps, started_at, settled_at)
+		VALUES
+		('cyc-q1','sess-q','op-q','ALL_FILLED', 2.5,'USDT',-1.2, now() - interval '50 minutes', now() - interval '49 minutes'),
+		('cyc-q2','sess-q','op-q','TIMEOUT',   -0.8,'USDT',NULL, now() - interval '40 minutes', now() - interval '39 minutes')`); err != nil {
+		t.Fatal(err)
+	}
+
+	samples, err := s.QualitySamples(ctx, time.Now().Add(-24*time.Hour), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *quality.Sample
+	for i := range samples {
+		if samples[i].TriangleID == "tri-q" {
+			found = &samples[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("tri-q missing: %+v", samples)
+	}
+	if found.Cycles != 2 || found.Successes != 1 {
+		t.Fatalf("sample counts = %+v", found)
+	}
+	if !found.NetPnL.Equal(decimal.RequireFromString("1.7")) {
+		t.Fatalf("net = %s", found.NetPnL)
+	}
+	if !found.WorstLoss.Equal(decimal.RequireFromString("-0.8")) {
+		t.Fatalf("worst = %s", found.WorstLoss)
+	}
+	if found.EdgeWindows != 1 || found.WindowHours != 24 {
+		t.Fatalf("edge/windows = %d/%d", found.EdgeWindows, found.WindowHours)
+	}
+	scored := quality.Rank(samples, quality.Config{})
+	if len(scored) == 0 || scored[0].Total <= 0 {
+		t.Fatalf("rank = %+v", scored)
 	}
 }
