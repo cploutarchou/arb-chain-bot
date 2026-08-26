@@ -302,8 +302,16 @@ func (r *Runner) Get(ctx context.Context, id string) (Run, error) {
 
 // Busy reports whether a run is in progress.
 func (r *Runner) Busy() bool {
+	_, busy := r.BusyRun()
+	return busy
+}
+
+// BusyRun reports whether a run is in progress and, if so, its id — the
+// supervisor's restart guard rail (T-057 design §2.5) names the run in
+// its refusal message.
+func (r *Runner) BusyRun() (string, bool) {
 	r.init()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.current != ""
+	return r.current, r.current != ""
 }

@@ -1,38 +1,40 @@
-package strategy
+package platform
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
-// Snapshot is one immutable config version. Components read a snapshot
-// per evaluation and cite its Version in every decision.
+// Snapshot is one immutable settings version.
 type Snapshot struct {
-	Version       int64     `json:"version"`
-	Params        Params    `json:"params"`
-	CreatedBy     string    `json:"created_by,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	ParentVersion int64     `json:"parent_version,omitempty"`
+	Version   int64     `json:"version"`
+	Settings  Settings  `json:"settings"`
+	CreatedBy string    `json:"created_by,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ParentVer int64     `json:"parent_version,omitempty"`
 }
 
 // VersionInfo is the list-view row (payload omitted; diff kept).
 type VersionInfo struct {
-	Version       int64           `json:"version"`
-	CreatedBy     string          `json:"created_by,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	Active        bool            `json:"active"`
-	ParentVersion int64           `json:"parent_version,omitempty"`
-	Diff          json.RawMessage `json:"diff,omitempty"`
+	Version   int64           `json:"version"`
+	CreatedBy string          `json:"created_by,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	Active    bool            `json:"active"`
+	ParentVer int64           `json:"parent_version,omitempty"`
+	Diff      json.RawMessage `json:"diff,omitempty"`
 }
 
-// Store persists version rows. Insert must atomically deactivate the
-// previous active row and activate the new one.
+// Store persists version rows; mirrors strategy.Store exactly (same
+// append-only shape, one active row) — see design §1.4 for why this is
+// not a shared generic with strategy.Store.
 type Store interface {
 	Insert(ctx context.Context, createdBy string, payload, diff json.RawMessage, parent int64) (version int64, createdAt time.Time, err error)
 	Active(ctx context.Context) (Snapshot, bool, error)
@@ -40,37 +42,39 @@ type Store interface {
 	List(ctx context.Context, limit int) ([]VersionInfo, error)
 }
 
-// AuditEvent is the config-change audit record handed to the sink.
+// AuditEvent is the settings-change audit record handed to the sink.
 type AuditEvent struct {
 	Actor    string
-	Source   string // web|telegram|system|ai
-	Action   string // config.apply | config.rollback
-	Entity   string // "strategy_config"
+	Source   string // web|telegram|system
+	Action   string // settings.apply | settings.rollback | settings.seed
+	Entity   string // "platform_settings"
 	EntityID string // new version number
 	Before   json.RawMessage
 	After    json.RawMessage
 }
 
-// ErrNoChange rejects an Apply whose payload equals the current version.
-var ErrNoChange = errors.New("strategy: no changes against current version")
+// Authorize inspects the diff a change would produce and refuses it by
+// returning an error. It runs INSIDE the writer lock, against the diff
+// that is actually written (TOCTOU fix mirrored from strategy.Service).
+type Authorize func(diff map[string]strategy.Change) error
 
-// ErrInvalid wraps validation failures (callers map it to 400).
-var ErrInvalid = errors.New("strategy: invalid parameters")
-
-// ErrForbidden wraps authorization refusals from an Authorize gate
-// (callers map it to 403).
-var ErrForbidden = errors.New("strategy: change not permitted for this actor")
-
-// ErrNotFound reports an unknown version (Get/Rollback).
-var ErrNotFound = errors.New("strategy: version not found")
-
-// Service owns the current snapshot: hot swap on Apply, consistent reads
-// via Current, subscriber fan-out for components that cache derived
-// forms (scanner config, risk resolver).
+// Service owns the current settings snapshot: hot swap on Apply,
+// consistent reads via Current, subscriber fan-out.
 type Service struct {
 	store Store
 	log   *slog.Logger
 	audit func(context.Context, AuditEvent) // nil = log only
+
+	// Catalog, when set, makes Apply/Rollback dry-run the topology
+	// (design D8: "a settings version that cannot build a topology is
+	// rejected at apply time"). nil disables the check (tests that do
+	// not care about symbol/triangle validity may omit it); the wiring
+	// always sets it in production.
+	Catalog Catalog
+	// Mode, when non-empty, makes Apply/Rollback enforce
+	// Settings.ValidatePaperMode (an enabled venue needs paper_enabled
+	// set while the process runs in PAPER mode).
+	Mode config.Mode
 
 	mu     sync.Mutex // serializes writers (Apply/Rollback/Load)
 	cur    atomic.Pointer[Snapshot]
@@ -81,9 +85,10 @@ func NewService(store Store, log *slog.Logger, audit func(context.Context, Audit
 	return &Service{store: store, log: log, audit: audit}
 }
 
-// Load installs the active version, seeding the store with defaults
-// (actor "system") when none exists yet.
-func (s *Service) Load(ctx context.Context) (Snapshot, error) {
+// Load installs the active version, seeding the store with Seed(cfg)
+// (actor "system") when none exists yet. On every later boot it logs
+// that the first-boot env seeds are ignored (D5).
+func (s *Service) Load(ctx context.Context, cfg config.Bootstrap) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snap, ok, err := s.store.Active(ctx)
@@ -91,7 +96,7 @@ func (s *Service) Load(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	if !ok {
-		def := DefaultParams()
+		def := Seed(cfg)
 		if err := def.Validate(); err != nil {
 			return Snapshot{}, err
 		}
@@ -103,32 +108,31 @@ func (s *Service) Load(ctx context.Context) (Snapshot, error) {
 		if err != nil {
 			return Snapshot{}, err
 		}
-		snap = Snapshot{Version: version, Params: def, CreatedBy: "system", CreatedAt: createdAt}
-		// The seed is a config activation like any other: audit it with
-		// the system actor (created_by stays NULL in the row — it FKs
-		// users — but the trail records who made version 1 exist).
+		snap = Snapshot{Version: version, Settings: def, CreatedBy: "system", CreatedAt: createdAt}
 		if s.audit != nil {
 			s.audit(ctx, AuditEvent{
-				Actor: "system", Source: "system", Action: "config.seed",
-				Entity: "strategy_config", EntityID: fmt.Sprintf("%d", version),
+				Actor: "system", Source: "system", Action: "settings.seed",
+				Entity: "platform_settings", EntityID: fmt.Sprintf("%d", version),
 				After: payload,
 			})
 		}
-		s.log.Info("strategy config seeded", "version", version)
+		s.log.Info("platform settings seeded", "version", version)
+	} else {
+		s.log.Info(fmt.Sprintf("env symbol/asset/balance/allowlist variables ignored; platform settings v%d is authoritative", snap.Version))
 	}
-	if err := snap.Params.Validate(); err != nil {
-		return Snapshot{}, fmt.Errorf("strategy: stored active version %d invalid: %w", snap.Version, err)
+	if err := snap.Settings.Validate(); err != nil {
+		return Snapshot{}, fmt.Errorf("platform: stored active version %d invalid: %w", snap.Version, err)
 	}
 	s.swap(snap)
 	return snap, nil
 }
 
 // Current returns the active snapshot (zero Version before Load). The
-// params are deep-copied so no caller can mutate the stored version.
+// settings are deep-copied so no caller can mutate the stored version.
 func (s *Service) Current() Snapshot {
 	if p := s.cur.Load(); p != nil {
 		snap := *p
-		snap.Params = snap.Params.Clone()
+		snap.Settings = snap.Settings.Clone()
 		return snap
 	}
 	return Snapshot{}
@@ -136,8 +140,8 @@ func (s *Service) Current() Snapshot {
 
 // Subscribe registers fn to run on every swap (registration order) and,
 // when a snapshot is already active, delivers it immediately under the
-// writer lock — so registration misses no version. Callbacks must be
-// fast and non-blocking.
+// writer lock — registration misses no version. Callbacks must be fast
+// and non-blocking.
 func (s *Service) Subscribe(fn func(Snapshot)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -147,21 +151,14 @@ func (s *Service) Subscribe(fn func(Snapshot)) {
 	}
 }
 
-// Authorize inspects the diff a change would produce and refuses it by
-// returning an error. It runs INSIDE the writer lock, against the diff
-// that is actually written — a pre-flight check outside the lock can be
-// invalidated by a concurrent apply (audit: TOCTOU on the permission
-// gate). nil authorizes everything.
-type Authorize func(diff map[string]Change) error
-
-// Apply validates, versions, persists, audits, and hot-swaps p.
-func (s *Service) Apply(ctx context.Context, actor, source string, p Params) (Snapshot, error) {
-	return s.ApplyAuthorized(ctx, actor, source, p, nil)
+// Apply validates, versions, persists, audits, and hot-swaps doc.
+func (s *Service) Apply(ctx context.Context, actor, source string, doc Settings) (Snapshot, error) {
+	return s.ApplyAuthorized(ctx, actor, source, doc, nil)
 }
 
 // ApplyAuthorized is Apply with an in-lock authorization gate.
-func (s *Service) ApplyAuthorized(ctx context.Context, actor, source string, p Params, authorize Authorize) (Snapshot, error) {
-	return s.applyLocked(ctx, actor, source, "config.apply", p, authorize)
+func (s *Service) ApplyAuthorized(ctx context.Context, actor, source string, doc Settings, authorize Authorize) (Snapshot, error) {
+	return s.applyLocked(ctx, actor, source, "settings.apply", doc, authorize)
 }
 
 // Rollback re-activates version's payload as a NEW version (parent set
@@ -176,11 +173,7 @@ func (s *Service) RollbackAuthorized(ctx context.Context, actor, source string, 
 	if err != nil {
 		return Snapshot{}, err
 	}
-	snap, err := s.applyLocked(ctx, actor, source, "config.rollback", old.Params, authorize)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	return snap, nil
+	return s.applyLocked(ctx, actor, source, "settings.rollback", old.Settings, authorize)
 }
 
 // Get returns one stored version.
@@ -193,29 +186,34 @@ func (s *Service) List(ctx context.Context, limit int) ([]VersionInfo, error) {
 	return s.store.List(ctx, limit)
 }
 
-// Subscribers reports the number of registered swap callbacks
-// (test/observability seam for T-057 E6: Engine.Run must register its
-// hot-swap callback at most once across a supervised restart).
-func (s *Service) Subscribers() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.onSwap)
-}
-
-// PlanDiff computes the diff p would produce against the current
+// PlanDiff computes the diff doc would produce against the current
 // version (API permission mapping + change previews).
-func (s *Service) PlanDiff(p Params) (map[string]Change, error) {
-	return Diff(s.Current().Params, p)
+func (s *Service) PlanDiff(doc Settings) (map[string]strategy.Change, error) {
+	return strategy.DiffAny(s.Current().Settings, doc)
 }
 
-func (s *Service) applyLocked(ctx context.Context, actor, source, action string, p Params, authorize Authorize) (Snapshot, error) {
-	if err := p.Validate(); err != nil {
+func (s *Service) applyLocked(ctx context.Context, actor, source, action string, doc Settings, authorize Authorize) (Snapshot, error) {
+	if err := doc.Validate(); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %s", ErrInvalid, err)
+	}
+	if s.Mode != "" {
+		if err := doc.ValidatePaperMode(s.Mode); err != nil {
+			return Snapshot{}, fmt.Errorf("%w: %s", ErrInvalid, err)
+		}
+	}
+	if s.Catalog != nil {
+		// D8: a document that cannot build a topology is rejected HERE,
+		// at apply time (and identically at rollback time — a version
+		// whose symbols were since delisted must fail the same way),
+		// never discovered for the first time when the engine restarts.
+		if _, err := ValidateAgainstCatalog(ctx, doc, s.Catalog); err != nil {
+			return Snapshot{}, err
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur := s.Current()
-	diff, err := Diff(cur.Params, p)
+	diff, err := strategy.DiffAny(cur.Settings, doc)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -227,7 +225,7 @@ func (s *Service) applyLocked(ctx context.Context, actor, source, action string,
 			return Snapshot{}, err
 		}
 	}
-	payload, err := json.Marshal(p)
+	payload, err := json.Marshal(doc)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -240,21 +238,21 @@ func (s *Service) applyLocked(ctx context.Context, actor, source, action string,
 		return Snapshot{}, err
 	}
 	snap := Snapshot{
-		Version: version, Params: p,
-		CreatedBy: actor, CreatedAt: createdAt, ParentVersion: cur.Version,
+		Version: version, Settings: doc,
+		CreatedBy: actor, CreatedAt: createdAt, ParentVer: cur.Version,
 	}
 	s.swap(snap)
 
-	before, _ := json.Marshal(cur.Params)
+	before, _ := json.Marshal(cur.Settings)
 	ev := AuditEvent{
 		Actor: actor, Source: source, Action: action,
-		Entity: "strategy_config", EntityID: fmt.Sprintf("%d", version),
+		Entity: "platform_settings", EntityID: fmt.Sprintf("%d", version),
 		Before: before, After: payload,
 	}
 	if s.audit != nil {
 		s.audit(ctx, ev)
 	}
-	s.log.Info("strategy config activated",
+	s.log.Info("platform settings activated",
 		"version", version, "parent", cur.Version,
 		"actor", actor, "source", source, "action", action, "changes", len(diff))
 	return snap, nil
@@ -286,15 +284,15 @@ func NewMemoryStore() *MemoryStore { return &MemoryStore{now: time.Now} }
 func (m *MemoryStore) Insert(_ context.Context, createdBy string, payload, diff json.RawMessage, parent int64) (int64, time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var p Params
-	if err := json.Unmarshal(payload, &p); err != nil {
+	var doc Settings
+	if err := json.Unmarshal(payload, &doc); err != nil {
 		return 0, time.Time{}, err
 	}
 	version := int64(len(m.rows) + 1)
 	createdAt := m.now().UTC()
 	m.rows = append(m.rows, memRow{snap: Snapshot{
-		Version: version, Params: p,
-		CreatedBy: createdBy, CreatedAt: createdAt, ParentVersion: parent,
+		Version: version, Settings: doc,
+		CreatedBy: createdBy, CreatedAt: createdAt, ParentVer: parent,
 	}, diff: diff})
 	m.active = version
 	return version, createdAt, nil
@@ -330,7 +328,7 @@ func (m *MemoryStore) List(_ context.Context, limit int) ([]VersionInfo, error) 
 		out = append(out, VersionInfo{
 			Version: r.snap.Version, CreatedBy: r.snap.CreatedBy,
 			CreatedAt: r.snap.CreatedAt, Active: r.snap.Version == m.active,
-			ParentVersion: r.snap.ParentVersion, Diff: r.diff,
+			ParentVer: r.snap.ParentVer, Diff: r.diff,
 		})
 	}
 	return out, nil

@@ -18,6 +18,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
+	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
@@ -75,6 +76,20 @@ type Server struct {
 	Campaigns CampaignService
 	// Users, when set, backs the users & roles console routes (BL-11).
 	Users UserAdmin
+	// Platform, when set, backs the versioned platform-settings routes
+	// (T-057: venues/symbols/fees/paper balances/Telegram allowlist).
+	Platform *platform.Service
+	// PlatformCatalog, when set, backs the "plan" (markets/triangles)
+	// field on GET/preview/apply. nil omits "plan" from the response
+	// rather than failing the request.
+	PlatformCatalog platform.Catalog
+	// Restart, when set, backs the supervised-engine restart routes.
+	Restart RestartController
+	// BotRunning, when set, reports whether the Telegram bot was
+	// actually constructed — field_timing's "telegram.allowlist" is hot
+	// only then (components.go:170: an empty boot allowlist never
+	// builds the bot, so the first entry needs a restart).
+	BotRunning func() bool
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -200,6 +215,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.reportRoutes(mux)
 	s.opsRoutes(mux)
 	s.usersRoutes(mux)
+	s.platformRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):
 		// metric names and label values map the platform's internals.

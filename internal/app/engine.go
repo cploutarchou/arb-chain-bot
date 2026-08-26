@@ -25,6 +25,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/paper"
+	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/portfolio"
 	"github.com/cploutarchou/arb-chain-bot/internal/pricing"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
@@ -36,17 +37,35 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
+// bpsDivisor converts platform-settings basis points into a fractional
+// rate (fees.Rate): 10 bps -> 0.001.
+var bpsDivisor = decimal.NewFromInt(10_000)
+
 // Engine assembles the trading core for the first exchange: metadata →
 // topology → feed → books → scanner. It runs until ctx cancels; a failed
 // metadata bootstrap keeps retrying rather than pretending to scan.
 //
-// Current wiring status (docs/MASTER_PLAN.md is authoritative): live feed
-// + scanner + risk + reservation are wired; the paper engine loop,
-// persistence, and realtime fan-out attach behind the scanner's event
-// stream as their tasks complete.
+// Engine.Run is re-entered by app.Supervisor across a restart (T-057):
+// nothing this file registers on the Hub, the Metrics meter, or the
+// Notifier may capture a per-run local — it must resolve through an
+// e.mu-guarded accessor, or the console and Prometheus end up reporting
+// a dead run after the first restart. That single invariant is the
+// review checklist for every change in this file
+// (docs/design/platform-settings-and-restart.md §2.1).
 type Engine struct {
 	cfg config.Bootstrap
 	log *slog.Logger
+
+	// RESTHost overrides the metadata/REST endpoint; empty uses
+	// binance.MarketDataRESTHost. Test seam only (integration tests
+	// point it at an httptest server).
+	RESTHost string
+	// WSHost overrides the market-data WebSocket endpoint; empty uses
+	// binance.MarketDataWSHost. Test seam only — without it, a
+	// re-entrancy test would dial the real venue over the network
+	// (this sandbox has outbound access, so the test would be slow and
+	// non-hermetic rather than merely failing).
+	WSHost string
 
 	// Hub, when set by the component wiring, receives scanner/health
 	// events for the console.
@@ -65,7 +84,17 @@ type Engine struct {
 	// Center, when set, supplies the live active-alert count (AI input).
 	Center *notification.Center
 
-	mu        sync.RWMutex
+	mu sync.RWMutex
+
+	// settings is the platform-settings document the NEXT Run reads
+	// (T-057 E7). ApplySettings is called by the supervisor between
+	// runs only, so Run reads it without contention. settingsVersion==0
+	// means ApplySettings was never called (direct-constructed engines
+	// in tests / ProfileScanner without a platform.Service): Run then
+	// falls back to platform.Seed(e.cfg), preserving today's behavior.
+	settings        platform.Settings
+	settingsVersion int64
+
 	scn       *scanner.Scanner
 	topo      *graph.Topology
 	pap       *paper.Engine
@@ -74,9 +103,15 @@ type Engine struct {
 	feed      *binance.Feed
 	resv      *reservation.Manager
 	brk       *risk.Registry
+	books     *orderbook.Set    // retained so metrics accessors survive a restart (E4)
+	starts    []exchange.Asset  // this run's starting assets (E4 accessor source)
+	catalog   []exchange.Market // full bootstrap metadata slice, retained for Catalog() (E2)
 	marker    portfolio.BookMarker
 	ready     bool
 	sessionID string // current paper/persistence session id; rotated by ResetPaper (BL-10)
+
+	metricsOnce   sync.Once // E4: RegisterEngine wired once across restarts
+	subscribeOnce sync.Once // E6: Strategy.Subscribe registered once across restarts
 
 	oppMu        sync.Mutex
 	recentOpps   []RecentOpportunity
@@ -225,6 +260,112 @@ func (e *Engine) Paper() *paper.Engine {
 	return e.pap
 }
 
+// Catalog returns the full bootstrap metadata slice retained from the
+// last successful metadata fetch (E2), independent of the configured
+// symbol scope — the seam ValidateAgainstCatalog's engineCatalog uses.
+func (e *Engine) Catalog() []exchange.Market {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make([]exchange.Market, len(e.catalog))
+	copy(out, e.catalog)
+	return out
+}
+
+// SessionID returns the current paper/persistence session id (E10's
+// EndPaperSession input; the Supervisor reads this right before
+// cancelling a run so it knows which session to close).
+func (e *Engine) SessionID() string {
+	return e.currentSessionID()
+}
+
+// RunningWorkers returns the live scanner's Workers count (0 when no
+// scanner is running). Supervisor's "strategy vN (scanner.workers)"
+// pending-reason source compares this against a newly-applied strategy
+// snapshot (design §2.3 "one restart banner, two documents").
+func (e *Engine) RunningWorkers() int {
+	if scn := e.currentScanner(); scn != nil {
+		return scn.CurrentConfig().Workers
+	}
+	return 0
+}
+
+// ApplySettings stores the platform-settings document the NEXT Run
+// reads (T-057 E7). The supervisor calls this only between runs.
+func (e *Engine) ApplySettings(s platform.Settings, version int64) {
+	e.mu.Lock()
+	e.settings = s.Clone()
+	e.settingsVersion = version
+	e.mu.Unlock()
+}
+
+// currentSettings resolves the document Run should use: the last
+// applied one, or platform.Seed(e.cfg) when ApplySettings was never
+// called (direct-constructed engines in tests keep working unchanged).
+func (e *Engine) currentSettings() platform.Settings {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.settingsVersion == 0 {
+		return platform.Seed(e.cfg)
+	}
+	return e.settings.Clone()
+}
+
+// --- e.mu-guarded accessors -------------------------------------------
+//
+// Every callback registered on a process-lifetime object (Hub topics,
+// Metrics pull sources) must resolve the CURRENT run's objects through
+// one of these instead of closing over a per-run local (design §2.1).
+
+func (e *Engine) currentScanner() *scanner.Scanner {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.scn
+}
+
+func (e *Engine) currentTopology() *graph.Topology {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.topo
+}
+
+func (e *Engine) currentFeed() *binance.Feed {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.feed
+}
+
+func (e *Engine) currentBooks() *orderbook.Set {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.books
+}
+
+func (e *Engine) currentReservation() *reservation.Manager {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.resv
+}
+
+func (e *Engine) currentBreakers() *risk.Registry {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.brk
+}
+
+func (e *Engine) currentPortfolio() *portfolio.Portfolio {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.port
+}
+
+func (e *Engine) currentStarts() []exchange.Asset {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make([]exchange.Asset, len(e.starts))
+	copy(out, e.starts)
+	return out
+}
+
 // currentSessionID / setSessionID let ResetPaper rotate the session a
 // settled cycle is tagged with (new cycles get the new session; already
 // -persisted history keeps its original tag — SKILL §37).
@@ -246,15 +387,19 @@ var errPaperNotBootstrapped = errors.New("engine: paper engine not bootstrapped 
 
 // paperInitialBalances recomputes the configured starting balances the
 // same way Run does, so ResetPaper rebuilds the ledger to exactly what a
-// fresh boot would have started with.
+// fresh boot (or the last applied platform settings) would start with.
+// This reads the applied platform settings, NOT ARB_PAPER_BALANCE — env
+// vars are first-boot seeds only (design D5); a paper reset must not
+// silently revert balances to the environment default.
 func (e *Engine) paperInitialBalances() (map[exchange.Asset]decimal.Decimal, error) {
-	balance, err := decimal.NewFromString(e.cfg.PaperBalance)
-	if err != nil {
-		return nil, fmt.Errorf("engine: invalid ARB_PAPER_BALANCE: %w", err)
-	}
-	initial := make(map[exchange.Asset]decimal.Decimal, len(e.cfg.StartingAssets))
-	for _, a := range e.cfg.StartingAssets {
-		initial[exchange.Asset(a)] = balance
+	settings := e.currentSettings()
+	initial := make(map[exchange.Asset]decimal.Decimal, len(settings.Paper.Balances))
+	for asset, raw := range settings.Paper.Balances {
+		v, err := decimal.NewFromString(raw)
+		if err != nil {
+			return nil, fmt.Errorf("engine: invalid platform paper balance for %s: %w", asset, err)
+		}
+		initial[exchange.Asset(asset)] = v
 	}
 	return initial, nil
 }
@@ -313,15 +458,40 @@ func (e *Engine) ResetPaper(ctx context.Context) error {
 }
 
 func (e *Engine) Run(ctx context.Context) error {
-	rest := binance.NewRESTClient(binance.MarketDataRESTHost)
+	// E1: reset every per-run field BEFORE bootstrapMetadata, which
+	// retries with backoff — otherwise Status() advertises the PREVIOUS
+	// run's dead topology as ready for minutes into a restart.
+	e.mu.Lock()
+	e.scn, e.topo, e.pap, e.rctl, e.port = nil, nil, nil, nil, nil
+	e.feed, e.resv, e.brk, e.books, e.starts, e.catalog = nil, nil, nil, nil, nil, nil
+	e.marker = portfolio.BookMarker{}
+	e.ready = false
+	e.mu.Unlock()
+	e.oppMu.Lock()
+	e.recentOpps, e.rejectCounts = nil, nil
+	e.oppMu.Unlock()
+
+	host := e.RESTHost
+	if host == "" {
+		host = binance.MarketDataRESTHost
+	}
+	rest := binance.NewRESTClient(host)
 
 	markets, err := e.bootstrapMetadata(ctx, rest)
 	if err != nil {
 		return err
 	}
+	e.mu.Lock()
+	e.catalog = markets // E2: full slice retained regardless of configured scope
+	e.mu.Unlock()
 
-	symbols := make(map[string]bool, len(e.cfg.Symbols))
-	for _, s := range e.cfg.Symbols {
+	settings := e.currentSettings()
+	venue, ok := settings.Venues[string(binance.ID)]
+	if !ok {
+		return fmt.Errorf("engine: no platform settings configured for venue %s", binance.ID)
+	}
+	symbols := make(map[string]bool, len(venue.Symbols))
+	for _, s := range venue.Symbols {
 		symbols[s] = true
 	}
 	var scoped []exchange.Market
@@ -339,8 +509,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		return fmt.Errorf("engine: none of the configured symbols exist on %s", binance.ID)
 	}
 
-	starts := make([]exchange.Asset, 0, len(e.cfg.StartingAssets))
-	for _, a := range e.cfg.StartingAssets {
+	starts := make([]exchange.Asset, 0, len(venue.StartingAssets))
+	for _, a := range venue.StartingAssets {
 		starts = append(starts, exchange.Asset(a))
 	}
 	topo := graph.Build(binance.ID, scoped, starts)
@@ -391,28 +561,44 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.rctl = rctl
 	e.mu.Unlock()
 
-	// Base-tier taker fees; per-account refresh is a follow-up task
-	// (fees are re-pulled at runtime, never hardcoded for real accounts —
-	// docs/research/fees.md). 10 bps default per current verified schedule.
+	// Venue fee schedule from the applied platform settings (T-057 §1.5):
+	// bps -> fractional rate, per-symbol overrides, then the compiled-in
+	// token-discount profile gated on the operator's toggle.
 	sched, err := fees.NewSchedule(binance.ID, binance.Capabilities.FeeConvention,
-		fees.Rate{Maker: decimal.RequireFromString("0.001"), Taker: decimal.RequireFromString("0.001")})
+		fees.Rate{Maker: venue.Fees.MakerBps.Div(bpsDivisor), Taker: venue.Fees.TakerBps.Div(bpsDivisor)})
 	if err != nil {
 		return err
 	}
-
-	balance, err := decimal.NewFromString(e.cfg.PaperBalance)
-	if err != nil {
-		return fmt.Errorf("engine: invalid ARB_PAPER_BALANCE: %w", err)
+	for sym, o := range venue.Fees.Overrides {
+		mid := exchange.MarketID{Exchange: binance.ID, Symbol: exchange.Symbol(sym)}
+		if err := sched.SetOverride(mid, fees.Rate{Maker: o.MakerBps.Div(bpsDivisor), Taker: o.TakerBps.Div(bpsDivisor)}); err != nil {
+			return fmt.Errorf("engine: fee override %s: %w", sym, err)
+		}
 	}
+	if venue.Fees.TokenDiscount {
+		if d, ok := fees.VenueDiscount(binance.ID); ok {
+			d.Enabled = true
+			sched.Discount = d
+		}
+	}
+
 	initial := make(map[exchange.Asset]decimal.Decimal, len(starts))
-	for _, a := range starts {
-		initial[a] = balance
+	for asset, raw := range settings.Paper.Balances {
+		v, err := decimal.NewFromString(raw)
+		if err != nil {
+			return fmt.Errorf("engine: invalid platform paper balance for %s: %w", asset, err)
+		}
+		initial[exchange.Asset(asset)] = v
 	}
 	resv := reservation.New(initial, newULID, time.Now)
 
+	wsHost := e.WSHost
+	if wsHost == "" {
+		wsHost = binance.MarketDataWSHost
+	}
 	books := orderbook.NewSet()
 	feed := &binance.Feed{
-		WSHost:  binance.MarketDataWSHost,
+		WSHost:  wsHost,
 		REST:    rest,
 		Books:   books,
 		Symbols: feedSymbols,
@@ -456,17 +642,31 @@ func (e *Engine) Run(ctx context.Context) error {
 		Out: make(chan scanner.Event, 256),
 	}
 	scn.ClockHealthy.Store(true)
+	e.attachRunObservers(scn, feed)
 	if e.Strategy != nil {
-		// Versioned config replaces the fallback literals above: the
-		// subscription delivers the active snapshot immediately and every
-		// later Apply/Rollback hot-swaps the running scanner.
-		e.Strategy.Subscribe(func(snap strategy.Snapshot) {
+		// E6: register the hot-swap callback ONCE across the engine's
+		// lifetime — Strategy.Service.Subscribe otherwise accumulates one
+		// callback per restart, each calling SetStrategy on an
+		// increasingly stale (or dead) scanner. The callback resolves
+		// the CURRENT run's scanner through the accessor and no-ops
+		// once Run has moved on (or not started a new one yet).
+		e.subscribeOnce.Do(func() {
+			e.Strategy.Subscribe(func(snap strategy.Snapshot) {
+				if live := e.currentScanner(); live != nil {
+					live.SetStrategy(scanner.Strategy{
+						Cfg:      snap.Params.ScannerConfig(snap.Version),
+						Resolver: snap.Params.RiskResolver(),
+					})
+				}
+			})
+		})
+		// Subscribe only fires immediately on its FIRST registration, so
+		// every later Run must apply the current snapshot itself.
+		if snap := e.Strategy.Current(); snap.Version != 0 {
 			scn.SetStrategy(scanner.Strategy{
 				Cfg:      snap.Params.ScannerConfig(snap.Version),
 				Resolver: snap.Params.RiskResolver(),
 			})
-		})
-		if snap := e.Strategy.Current(); snap.Version != 0 {
 			// Workers is start-time-only, so copy it into the base config
 			// the Run loop reads.
 			scn.Cfg.Workers = snap.Params.Scanner.Workers
@@ -561,27 +761,48 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.mu.Lock()
 	e.scn, e.topo, e.pap, e.port, e.ready = scn, topo, paperEng, port, true
-	e.feed, e.resv, e.brk = feed, resv, breakers
+	e.feed, e.resv, e.brk, e.books, e.starts = feed, resv, breakers, books, starts
 	e.marker = portfolio.BookMarker{Books: books, Markets: scoped}
 	e.mu.Unlock()
+	// Honest readiness across the inter-run gap: once this Run call
+	// returns (ctx cancelled, restart, or fatal error), Ready must go
+	// back to false immediately, not linger true until the NEXT Run
+	// happens to reach this point. A supervisor restart polls Ready to
+	// decide when the new run has actually finished bootstrapping; a
+	// stale true here would report "ready" for a still-connecting
+	// engine (or a permanently dead one after a fatal exit).
+	defer func() {
+		e.mu.Lock()
+		e.ready = false
+		e.mu.Unlock()
+	}()
 	e.notify(notification.SeverityInfo, "engine:ready", "Engine ready",
 		fmt.Sprintf("%d triangles over %d markets in %s mode", len(topo.Triangles), len(scoped), e.cfg.Mode))
 	defer e.notify(notification.SeverityInfo, "engine:stopped", "Engine stopped", "shutdown or fatal component exit")
 
-	if e.Metrics != nil {
-		e.wireMetrics(scn, topo, feed, books, resv, breakers, paperEng, port, rctl, starts)
-	}
+	// E4: register the pull-metrics sources once, with accessor-based
+	// closures; re-registering per restart would double-count OTel
+	// instruments and callbacks.
+	e.registerMetricsOnce()
 
 	if e.Hub != nil {
 		e.Hub.RegisterTopic("scanner", func() (json.RawMessage, error) {
 			return json.Marshal(e.Status())
 		})
-		e.Hub.RegisterTopic("health", func() (json.RawMessage, error) {
-			return json.Marshal(map[string]any{"engine": e.Status(), "mode": string(e.cfg.Mode)})
-		})
 		e.Hub.RegisterTopic("recordings", func() (json.RawMessage, error) {
-			return json.Marshal(map[string]any{"recorder": rctl.Status()})
+			// E5: resolve the CURRENT run's recorder control through the
+			// accessor rather than the "rctl" local — RegisterTopic
+			// overwrites (safe to call every run), but a captured local
+			// would keep reporting the previous (dead) run's recorder.
+			var status marketdata.RecorderStatus
+			if c := e.Recorder(); c != nil {
+				status = c.Status()
+			}
+			return json.Marshal(map[string]any{"recorder": status})
 		})
+		// "health" is registered by the wiring (components.go), not
+		// here: it needs to fold in supervisor restart state, which the
+		// engine cannot see (design §2.6).
 	}
 	if e.cfg.Mode == config.ModeRecord {
 		if _, err := rctl.Start(ctx); err != nil {
@@ -589,27 +810,51 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
-	errCh := make(chan error, 6)
-	go func() { errCh <- feed.Run(ctx) }()
-	go func() { errCh <- scn.Run(ctx) }()
-	go func() { errCh <- e.consumeEvents(ctx, scn, paperIn, outbox) }()
+	// E3: child goroutines must not outlive Run. runCtx is cancelled
+	// either when the parent ctx is (normal shutdown/restart) or when a
+	// child returns a fatal error (this Run's own decision); either way
+	// Run waits (bounded by ShutdownGrace) for every goroutine it spawned
+	// to actually return before it returns itself — otherwise a restart
+	// would produce two feeds, two scanners and two outboxes racing on
+	// e.scn, and the outbox's cancel-path drain (3s deadline) would never
+	// get to run before the next Run starts overwriting persisted state.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 8)
+	spawn := func(fn func(context.Context) error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- fn(runCtx)
+		}()
+	}
+	spawn(feed.Run)
+	spawn(scn.Run)
+	spawn(func(c context.Context) error { return e.consumeEvents(c, scn, paperIn, outbox) })
 	if paperEng != nil {
-		go func() { errCh <- paperEng.Run(ctx) }()
+		spawn(paperEng.Run)
 	}
 	if outbox != nil {
-		go func() { errCh <- outbox.Run(ctx) }()
+		spawn(outbox.Run)
 	}
 
 	// Staleness sweep: books that stop ticking degrade to STALE.
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+
+	var runErr error
+loop:
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case err := <-errCh:
-			if err != nil && ctx.Err() == nil {
-				return err
+			runErr = ctx.Err()
+			break loop
+		case cerr := <-errCh:
+			if cerr != nil && !errors.Is(cerr, context.Canceled) {
+				runErr = cerr
+				break loop
 			}
 		case now := <-ticker.C:
 			// Live config, not the boot literal: a hot-swapped
@@ -622,6 +867,16 @@ func (e *Engine) Run(ctx context.Context) error {
 			}
 		}
 	}
+	cancelRun()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(e.cfg.ShutdownGrace):
+		e.log.Error("engine: shutdown grace exceeded; child goroutines still running", "grace", e.cfg.ShutdownGrace.String())
+	}
+	return runErr
 }
 
 // consumeEvents fans scanner events out: qualified opportunities go to
@@ -715,14 +970,16 @@ func (e *Engine) bootstrapMetadata(ctx context.Context, rest *binance.RESTClient
 	}
 }
 
-// wireMetrics attaches the engine's instrument sources: sync observers
-// on the scanner/feed and pull callbacks over the existing atomics.
-func (e *Engine) wireMetrics(
-	scn *scanner.Scanner, topo *graph.Topology, feed *binance.Feed,
-	books *orderbook.Set, resv *reservation.Manager, breakers *risk.Registry,
-	paperEng *paper.Engine, port *portfolio.Portfolio,
-	rctl *marketdata.RecorderControl, starts []exchange.Asset,
-) {
+// attachRunObservers wires the sync observers (EvalObserver,
+// LatencyObserver) onto THIS run's scanner/feed. Unlike
+// registerMetricsOnce, this runs every Run: the objects are per-run and
+// the observers must be re-attached to each fresh one. scn may be nil on
+// the first call (feed exists before the scanner does); the second call
+// with scn set fills it in.
+func (e *Engine) attachRunObservers(scn *scanner.Scanner, feed *binance.Feed) {
+	if e.Metrics == nil {
+		return
+	}
 	m := e.Metrics
 	scn.EvalObserver = func(d time.Duration) {
 		m.ObserveEval(float64(d.Nanoseconds()) / 1e6)
@@ -731,101 +988,151 @@ func (e *Engine) wireMetrics(
 	feed.LatencyObserver = func(d time.Duration) {
 		recordLatency(float64(d.Nanoseconds()) / 1e6)
 	}
-	src := metrics.EngineSources{
-		Scanner: func() metrics.ScannerStats {
-			return metrics.ScannerStats{
-				Evaluations:   scn.Stats.Evaluations.Load(),
-				Qualified:     scn.Stats.Qualified.Load(),
-				Rejected:      scn.Stats.Rejected.Load(),
-				SkippedBooks:  scn.Stats.SkippedBooks.Load(),
-				DroppedEvents: scn.Stats.DroppedEvts.Load(),
-			}
-		},
-		Triangles: func() int64 { return int64(len(topo.Triangles)) },
-		Feed: func() metrics.FeedStats {
-			return metrics.FeedStats{
-				Exchange:   string(binance.ID),
-				Frames:     feed.Stats.Frames.Load(),
-				Reconnects: feed.Stats.Reconnects.Load(),
-				APIErrors:  feed.Stats.APIErrors.Load(),
-				Resyncs:    feed.Stats.Resyncs.Load(),
-				SeqErrors:  feed.Stats.SeqGaps.Load(),
-			}
-		},
-		Books: func() []metrics.BookStat {
-			now := time.Now()
-			ids := books.All()
-			out := make([]metrics.BookStat, 0, len(ids))
-			for _, id := range ids {
-				view, ok := books.View(id, 1)
-				if !ok {
-					continue
+}
+
+// registerMetricsOnce attaches the engine's pull-metrics sources to the
+// meter exactly once across the engine's lifetime (E4): every source is
+// an accessor-based closure (e.currentX()), so the SAME registered
+// callback keeps reporting the live run's numbers across a restart
+// instead of the run it was registered against.
+func (e *Engine) registerMetricsOnce() {
+	if e.Metrics == nil {
+		return
+	}
+	e.metricsOnce.Do(func() {
+		m := e.Metrics
+		src := metrics.EngineSources{
+			Scanner: func() metrics.ScannerStats {
+				scn := e.currentScanner()
+				if scn == nil {
+					return metrics.ScannerStats{}
 				}
-				out = append(out, metrics.BookStat{
-					Exchange: string(id.Exchange), Market: string(id.Symbol),
-					AgeMS: float64(view.Age(now).Nanoseconds()) / 1e6,
-					State: view.State.String(),
-				})
-			}
-			return out
-		},
-		Capital: func() []metrics.CapitalStat {
-			out := make([]metrics.CapitalStat, 0, len(starts))
-			for _, a := range starts {
-				avail, reserved := resv.Balance(a)
-				out = append(out, metrics.CapitalStat{
-					Asset:     string(a),
-					Available: avail.InexactFloat64(), Reserved: reserved.InexactFloat64(),
-				})
-			}
-			return out
-		},
-		Breakers: func() []metrics.BreakerStat {
-			states := breakers.States()
-			out := make([]metrics.BreakerStat, 0, len(states))
-			for _, tr := range states {
-				var v int64
-				switch tr.To.String() {
-				case "HALF_OPEN":
-					v = 1
-				case "OPEN":
-					v = 2
+				return metrics.ScannerStats{
+					Evaluations:   scn.Stats.Evaluations.Load(),
+					Qualified:     scn.Stats.Qualified.Load(),
+					Rejected:      scn.Stats.Rejected.Load(),
+					SkippedBooks:  scn.Stats.SkippedBooks.Load(),
+					DroppedEvents: scn.Stats.DroppedEvts.Load(),
 				}
-				out = append(out, metrics.BreakerStat{Name: tr.Name, Scope: tr.Scope, State: v})
-			}
-			return out
-		},
-	}
-	if paperEng != nil {
-		src.Paper = func() *metrics.PaperStats {
-			st := paperEng.Snapshot()
-			return &metrics.PaperStats{
-				Received: st.Received, Started: st.Started,
-				Completed: st.Completed, Failed: st.Failed, Skipped: st.Skipped,
-				Active: int64(paperEng.Active()),
-			}
+			},
+			Triangles: func() int64 {
+				topo := e.currentTopology()
+				if topo == nil {
+					return 0
+				}
+				return int64(len(topo.Triangles))
+			},
+			Feed: func() metrics.FeedStats {
+				feed := e.currentFeed()
+				if feed == nil {
+					return metrics.FeedStats{Exchange: string(binance.ID)}
+				}
+				return metrics.FeedStats{
+					Exchange:   string(binance.ID),
+					Frames:     feed.Stats.Frames.Load(),
+					Reconnects: feed.Stats.Reconnects.Load(),
+					APIErrors:  feed.Stats.APIErrors.Load(),
+					Resyncs:    feed.Stats.Resyncs.Load(),
+					SeqErrors:  feed.Stats.SeqGaps.Load(),
+				}
+			},
+			Books: func() []metrics.BookStat {
+				books := e.currentBooks()
+				if books == nil {
+					return nil
+				}
+				now := time.Now()
+				ids := books.All()
+				out := make([]metrics.BookStat, 0, len(ids))
+				for _, id := range ids {
+					view, ok := books.View(id, 1)
+					if !ok {
+						continue
+					}
+					out = append(out, metrics.BookStat{
+						Exchange: string(id.Exchange), Market: string(id.Symbol),
+						AgeMS: float64(view.Age(now).Nanoseconds()) / 1e6,
+						State: view.State.String(),
+					})
+				}
+				return out
+			},
+			Capital: func() []metrics.CapitalStat {
+				resv := e.currentReservation()
+				starts := e.currentStarts()
+				if resv == nil {
+					return nil
+				}
+				out := make([]metrics.CapitalStat, 0, len(starts))
+				for _, a := range starts {
+					avail, reserved := resv.Balance(a)
+					out = append(out, metrics.CapitalStat{
+						Asset:     string(a),
+						Available: avail.InexactFloat64(), Reserved: reserved.InexactFloat64(),
+					})
+				}
+				return out
+			},
+			Breakers: func() []metrics.BreakerStat {
+				breakers := e.currentBreakers()
+				if breakers == nil {
+					return nil
+				}
+				states := breakers.States()
+				out := make([]metrics.BreakerStat, 0, len(states))
+				for _, tr := range states {
+					var v int64
+					switch tr.To.String() {
+					case "HALF_OPEN":
+						v = 1
+					case "OPEN":
+						v = 2
+					}
+					out = append(out, metrics.BreakerStat{Name: tr.Name, Scope: tr.Scope, State: v})
+				}
+				return out
+			},
+			Paper: func() *metrics.PaperStats {
+				pap := e.Paper()
+				if pap == nil {
+					return nil
+				}
+				st := pap.Snapshot()
+				return &metrics.PaperStats{
+					Received: st.Received, Started: st.Started,
+					Completed: st.Completed, Failed: st.Failed, Skipped: st.Skipped,
+					Active: int64(pap.Active()),
+				}
+			},
+			PnL: func() []metrics.AssetPnL {
+				port := e.currentPortfolio()
+				starts := e.currentStarts()
+				if port == nil {
+					return nil
+				}
+				out := make([]metrics.AssetPnL, 0, len(starts))
+				for _, a := range starts {
+					out = append(out, metrics.AssetPnL{
+						Asset:    string(a),
+						Realized: port.Realized(a).InexactFloat64(),
+						Fees:     port.FeesPaid(a).InexactFloat64(),
+					})
+				}
+				return out
+			},
+			Recorder: func() (int64, int64) {
+				c := e.Recorder()
+				if c == nil {
+					return 0, 0
+				}
+				st := c.Status()
+				return st.Written, st.Dropped
+			},
 		}
-		src.PnL = func() []metrics.AssetPnL {
-			out := make([]metrics.AssetPnL, 0, len(starts))
-			for _, a := range starts {
-				out = append(out, metrics.AssetPnL{
-					Asset:    string(a),
-					Realized: port.Realized(a).InexactFloat64(),
-					Fees:     port.FeesPaid(a).InexactFloat64(),
-				})
-			}
-			return out
+		if err := m.RegisterEngine(src); err != nil {
+			e.log.Error("metrics registration failed", "error", err)
 		}
-	}
-	if rctl != nil {
-		src.Recorder = func() (int64, int64) {
-			st := rctl.Status()
-			return st.Written, st.Dropped
-		}
-	}
-	if err := m.RegisterEngine(src); err != nil {
-		e.log.Error("metrics registration failed", "error", err)
-	}
+	})
 }
 
 // defaultRiskLimits are the conservative fallback limits used only when
