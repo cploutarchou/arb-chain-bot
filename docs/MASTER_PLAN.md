@@ -187,7 +187,7 @@ data-flow,security,risk}.md`.
   behavior tested.
 
 ### T-023 Auth, sessions, RBAC
-- priority: P0 · component: auth · status: TODO
+- priority: P0 · component: auth · status: DONE (Argon2id/PHC, revocable sessions, throttle, CSRF, RBAC matrix pinned; HTTP-layer denial tests; pgx session/user stores follow with T-022)
 - description: Argon2id, server-side sessions, CSRF double-submit, login
   throttling, RBAC middleware + service-layer checks, audit events.
 - dependencies: T-003
@@ -195,7 +195,7 @@ data-flow,security,risk}.md`.
   expiry/revocation tests; no plaintext secrets.
 
 ### T-024 Core API v1 + realtime hub
-- priority: P0 · component: api/realtime · status: TODO
+- priority: P0 · component: api/realtime · status: IN_PROGRESS (auth endpoints + gated status routes + WS hub with seq/resync DONE and tested; remaining: opportunities/paper/portfolio/pnl/risk/audit/config route groups over the storage layer)
 - description: /api/v1 groups (auth, dashboard, scanner, opportunities,
   paper, portfolio, pnl, risk, system, audit, config) with envelope/
   pagination/correlation conventions; WS topic hub with seq + snapshot +
