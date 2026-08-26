@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
+	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 )
 
 // Profile selects which component set a cmd/ entry point runs. All
@@ -35,9 +37,29 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	var others []Component
 	var engine *Engine
 
+	// Persistence is optional in dev (empty DSN = in-memory only). A
+	// configured-but-unreachable database is a hard failure at boot:
+	// silently running without the persistence the operator asked for
+	// would be a lie.
+	var store *storage.Store
+	if cfg.DatabaseURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		s, err := storage.Open(ctx, cfg.DatabaseURL)
+		cancel()
+		if err != nil {
+			log.Error("database configured but unreachable; refusing to start without persistence", "error", err)
+			return []Component{ComponentFunc{ComponentName: "storage", Fn: func(context.Context) error { return err }}}
+		}
+		store = s
+		log.Info("persistence enabled")
+	} else {
+		log.Warn("ARB_DATABASE_URL unset; running without persistence (sessions and history are memory-only)")
+	}
+
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
 		engine = NewEngine(cfg, log)
+		engine.Store = store
 		others = append(others, engine)
 	}
 
@@ -48,7 +70,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		info := api.BuildInfo{Components: names}
 		apiServer := api.NewServer(cfg, log, info)
-		apiServer.Auth = buildAuth(cfg, log)
+		apiServer.Auth = buildAuth(cfg, log, store)
 		hub := realtime.NewHub(256)
 		apiServer.Hub = hub
 		if engine != nil {
@@ -87,28 +109,48 @@ func (p paperProxy) Running() bool {
 	return false
 }
 
-// buildAuth wires the in-memory auth stores with the dev bootstrap admin.
-// The storage layer (T-022) swaps in pgx-backed stores; until then a
-// process restart clears sessions, which matches the CSRF key lifetime.
-func buildAuth(cfg config.Bootstrap, log *slog.Logger) *auth.Manager {
-	store := auth.NewMemoryStore()
-	if cfg.AdminEmail != "" && cfg.AdminPassword != "" {
+// buildAuth wires auth stores: pgx-backed when persistence is enabled
+// (sessions survive restarts), in-memory otherwise. The bootstrap admin
+// from the environment is upserted either way (dev convenience;
+// production users are managed through the console).
+func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *auth.Manager {
+	var users auth.UserStore
+	var sessions auth.SessionStore
+
+	bootstrapAdmin := func(add func(auth.User) error) {
+		if cfg.AdminEmail == "" || cfg.AdminPassword == "" {
+			log.Warn("no bootstrap admin configured (ARB_ADMIN_EMAIL/ARB_ADMIN_PASSWORD); login unavailable until users exist")
+			return
+		}
 		hash, err := auth.HashPassword(cfg.AdminPassword)
 		if err != nil {
 			log.Error("bootstrap admin hash failed", "error", err)
-		} else {
-			store.AddUser(auth.User{
-				ID: "admin-bootstrap", Email: cfg.AdminEmail,
-				PasswordHash: hash, Role: auth.RoleAdmin,
-			})
-			log.Info("bootstrap admin configured", "email", cfg.AdminEmail)
+			return
 		}
+		u := auth.User{ID: "admin-bootstrap", Email: cfg.AdminEmail, PasswordHash: hash, Role: auth.RoleAdmin}
+		if err := add(u); err != nil {
+			log.Error("bootstrap admin store failed", "error", err)
+			return
+		}
+		log.Info("bootstrap admin configured", "email", cfg.AdminEmail)
+	}
+
+	if store != nil {
+		as := store.Auth()
+		users, sessions = as, as
+		bootstrapAdmin(func(u auth.User) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return as.UpsertUser(ctx, u)
+		})
 	} else {
-		log.Warn("no bootstrap admin configured (ARB_ADMIN_EMAIL/ARB_ADMIN_PASSWORD); login unavailable until users exist")
+		mem := auth.NewMemoryStore()
+		users, sessions = mem, mem
+		bootstrapAdmin(func(u auth.User) error { mem.AddUser(u); return nil })
 	}
 	return &auth.Manager{
-		Users:    store,
-		Sessions: store,
+		Users:    users,
+		Sessions: sessions,
 		Throttle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
 		TTL:      12 * time.Hour,
 		Now:      time.Now,

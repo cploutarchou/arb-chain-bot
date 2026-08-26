@@ -28,6 +28,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/risk"
 	"github.com/cploutarchou/arb-chain-bot/internal/scanner"
 	"github.com/cploutarchou/arb-chain-bot/internal/simulation"
+	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 )
 
 // Engine assembles the trading core for the first exchange: metadata →
@@ -45,6 +46,8 @@ type Engine struct {
 	// Hub, when set by the component wiring, receives scanner/health
 	// events for the console.
 	Hub *realtime.Hub
+	// Store, when set, enables persistence through the outbox.
+	Store *storage.Store
 
 	mu    sync.RWMutex
 	scn   *scanner.Scanner
@@ -155,6 +158,15 @@ func (e *Engine) Run(ctx context.Context) error {
 		"markets", len(scoped), "triangles", len(topo.Triangles),
 		"rejected_untradeable", topo.Rejected.Untradeable)
 
+	var outbox *storage.Outbox
+	sessionID := newULID()
+	if e.Store != nil {
+		if err := e.Store.UpsertMarkets(ctx, scoped); err != nil {
+			e.log.Warn("market metadata sync failed", "error", err)
+		}
+		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID}
+	}
+
 	// Base-tier taker fees; per-account refresh is a follow-up task
 	// (fees are re-pulled at runtime, never hardcoded for real accounts —
 	// docs/research/fees.md). 10 bps default per current verified schedule.
@@ -218,6 +230,15 @@ func (e *Engine) Run(ctx context.Context) error {
 	var paperIn chan scanner.Event
 	port := portfolio.New(resv, initial)
 	if e.cfg.Mode == config.ModePaper {
+		if e.Store != nil {
+			balances := map[string]string{}
+			for a, v := range initial {
+				balances[string(a)] = v.String()
+			}
+			if err := e.Store.EnsurePaperSession(ctx, sessionID, string(e.cfg.Mode), balances, 1, e.cfg.Seed); err != nil {
+				e.log.Warn("paper session registration failed", "error", err)
+			}
+		}
 		marker := portfolio.BookMarker{Books: books, Markets: scoped}
 		executor := simulation.NewPaper(
 			books, rulesLookup(rules), sched,
@@ -250,6 +271,10 @@ func (e *Engine) Run(ctx context.Context) error {
 				e.log.Info("paper cycle settled",
 					"cycle_id", res.CycleID, "outcome", string(res.Outcome),
 					"pnl", res.TotalPnL.String(), "consumed", res.InputConsumed.String())
+				if outbox != nil {
+					r := res
+					outbox.Enqueue(storage.Record{Kind: "cycle", Cycle: &r, SessionID: sessionID})
+				}
 				if e.Hub != nil {
 					_ = e.Hub.Publish("cycles", map[string]any{
 						"cycle_id": res.CycleID, "outcome": string(res.Outcome),
@@ -277,12 +302,15 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 5)
 	go func() { errCh <- feed.Run(ctx) }()
 	go func() { errCh <- scn.Run(ctx) }()
-	go func() { errCh <- e.consumeEvents(ctx, scn, paperIn) }()
+	go func() { errCh <- e.consumeEvents(ctx, scn, paperIn, outbox) }()
 	if paperEng != nil {
 		go func() { errCh <- paperEng.Run(ctx) }()
+	}
+	if outbox != nil {
+		go func() { errCh <- outbox.Run(ctx) }()
 	}
 
 	// Staleness sweep: books that stop ticking degrade to STALE.
@@ -309,12 +337,16 @@ func (e *Engine) Run(ctx context.Context) error {
 // consumeEvents fans scanner events out: qualified opportunities go to
 // the paper engine (PAPER mode) and the hub; persistence attaches here
 // when the storage layer (T-022) lands.
-func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperIn chan<- scanner.Event) error {
+func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperIn chan<- scanner.Event, outbox *storage.Outbox) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case ev := <-scn.Out:
+			if outbox != nil && ev.Opportunity.Status == opportunity.StatusQualified {
+				op, dec := ev.Opportunity, ev.Decision
+				outbox.Enqueue(storage.Record{Kind: "opportunity", Opportunity: &op, Decision: &dec})
+			}
 			if ev.Opportunity.Status == opportunity.StatusQualified {
 				if paperIn != nil {
 					select {
