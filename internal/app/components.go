@@ -2,9 +2,12 @@ package app
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/api"
+	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 )
 
 // Profile selects which component set a cmd/ entry point runs. All
@@ -45,10 +48,42 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		info := api.BuildInfo{Components: names}
 		apiServer := api.NewServer(cfg, log, info)
+		apiServer.Auth = buildAuth(cfg, log)
+		hub := realtime.NewHub(256)
+		apiServer.Hub = hub
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
+			engine.Hub = hub
 		}
 		return append([]Component{apiServer}, others...)
 	}
 	return others
+}
+
+// buildAuth wires the in-memory auth stores with the dev bootstrap admin.
+// The storage layer (T-022) swaps in pgx-backed stores; until then a
+// process restart clears sessions, which matches the CSRF key lifetime.
+func buildAuth(cfg config.Bootstrap, log *slog.Logger) *auth.Manager {
+	store := auth.NewMemoryStore()
+	if cfg.AdminEmail != "" && cfg.AdminPassword != "" {
+		hash, err := auth.HashPassword(cfg.AdminPassword)
+		if err != nil {
+			log.Error("bootstrap admin hash failed", "error", err)
+		} else {
+			store.AddUser(auth.User{
+				ID: "admin-bootstrap", Email: cfg.AdminEmail,
+				PasswordHash: hash, Role: auth.RoleAdmin,
+			})
+			log.Info("bootstrap admin configured", "email", cfg.AdminEmail)
+		}
+	} else {
+		log.Warn("no bootstrap admin configured (ARB_ADMIN_EMAIL/ARB_ADMIN_PASSWORD); login unavailable until users exist")
+	}
+	return &auth.Manager{
+		Users:    store,
+		Sessions: store,
+		Throttle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
+		TTL:      12 * time.Hour,
+		Now:      time.Now,
+	}
 }

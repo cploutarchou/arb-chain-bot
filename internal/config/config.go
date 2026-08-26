@@ -66,6 +66,12 @@ type Bootstrap struct {
 	// AI advisor (optional; empty key disables the advisor)
 	AnthropicAPIKey string
 	AIModel         string
+
+	// Console origin allowed for cross-origin WS in dev; auth bootstrap
+	// credentials (dev-only convenience — production users live in the DB).
+	AllowedOrigin string
+	AdminEmail    string
+	AdminPassword string
 }
 
 // Load reads Bootstrap from the environment. Missing optional values get
@@ -86,6 +92,9 @@ func Load() (Bootstrap, error) {
 		TelegramToken:   os.Getenv("ARB_TELEGRAM_TOKEN"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:         getenv("ARB_AI_MODEL", "claude-sonnet-5"),
+		AllowedOrigin:   getenv("ARB_ALLOWED_ORIGIN", "http://localhost:3000"),
+		AdminEmail:      os.Getenv("ARB_ADMIN_EMAIL"),
+		AdminPassword:   os.Getenv("ARB_ADMIN_PASSWORD"),
 	}
 	if !b.Mode.Valid() {
 		return Bootstrap{}, fmt.Errorf("config: invalid ARB_MODE %q", b.Mode)

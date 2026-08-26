@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 )
 
 // BuildInfo describes what this process build actually contains; the
@@ -24,11 +26,17 @@ type BuildInfo struct {
 
 // Server is the HTTP API component.
 type Server struct {
-	cfg   config.Bootstrap
-	log   *slog.Logger
-	info  BuildInfo
-	start time.Time
+	cfg     config.Bootstrap
+	log     *slog.Logger
+	info    BuildInfo
+	start   time.Time
+	csrfKey []byte
 
+	// Auth gates every route beyond health probes and login; nil means
+	// auth is unconfigured and gated routes answer 503.
+	Auth *auth.Manager
+	// Hub, when set, serves /api/v1/ws.
+	Hub *realtime.Hub
 	// ScannerStatus, when set, backs /api/v1/scanner/status.
 	ScannerStatus func() any
 }
@@ -37,7 +45,7 @@ func NewServer(cfg config.Bootstrap, log *slog.Logger, info BuildInfo) *Server {
 	if info.Version == "" {
 		info.Version = "dev"
 	}
-	return &Server{cfg: cfg, log: log, info: info, start: time.Now()}
+	return &Server{cfg: cfg, log: log, info: info, start: time.Now(), csrfKey: newCSRFKey()}
 }
 
 func (s *Server) Name() string { return "api" }
@@ -82,7 +90,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
-	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(s.handleLogout))
+	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
+
+	mux.HandleFunc("GET /api/v1/system/status", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
 		WriteData(w, http.StatusOK, map[string]any{
 			"mode":       string(s.cfg.Mode),
 			"version":    s.info.Version,
@@ -90,14 +102,20 @@ func (s *Server) routes(mux *http.ServeMux) {
 			"uptime_sec": int64(time.Since(s.start).Seconds()),
 			"components": s.info.Components,
 		})
-	})
-	mux.HandleFunc("GET /api/v1/scanner/status", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("GET /api/v1/scanner/status", s.requirePerm(auth.PermViewDashboard, func(w http.ResponseWriter, r *http.Request) {
 		if s.ScannerStatus == nil {
-			WriteError(w, http.StatusNotFound, "scanner_absent", "scanner not running in this profile", r.Header.Get("X-Correlation-ID"))
+			WriteError(w, http.StatusNotFound, "scanner_absent", "scanner not running in this profile", correlationID(r))
 			return
 		}
 		WriteData(w, http.StatusOK, s.ScannerStatus())
-	})
+	}))
+	// Paper controls: RBAC + CSRF pre-wired; the paper engine loop wires in
+	// behind them (T-018 app integration). 501 until then — never a fake OK.
+	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, http.StatusNotImplemented, "not_implemented", "paper engine wiring pending (T-018 app integration)", correlationID(r))
+	})))
+	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {

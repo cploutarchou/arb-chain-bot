@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/pricing"
+	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/reservation"
 	"github.com/cploutarchou/arb-chain-bot/internal/risk"
 	"github.com/cploutarchou/arb-chain-bot/internal/scanner"
@@ -35,6 +37,10 @@ import (
 type Engine struct {
 	cfg config.Bootstrap
 	log *slog.Logger
+
+	// Hub, when set by the component wiring, receives scanner/health
+	// events for the console.
+	Hub *realtime.Hub
 
 	mu    sync.RWMutex
 	scn   *scanner.Scanner
@@ -178,6 +184,15 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.scn, e.topo, e.ready = scn, topo, true
 	e.mu.Unlock()
 
+	if e.Hub != nil {
+		e.Hub.RegisterTopic("scanner", func() (json.RawMessage, error) {
+			return json.Marshal(e.Status())
+		})
+		e.Hub.RegisterTopic("health", func() (json.RawMessage, error) {
+			return json.Marshal(map[string]any{"engine": e.Status(), "mode": string(e.cfg.Mode)})
+		})
+	}
+
 	errCh := make(chan error, 3)
 	go func() { errCh <- feed.Run(ctx) }()
 	go func() { errCh <- scn.Run(ctx) }()
@@ -221,6 +236,17 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner) error 
 					"net_bps", ev.Opportunity.NetReturnBps.StringFixed(2),
 					"net_profit", ev.Opportunity.NetProfit.String(),
 				)
+				if e.Hub != nil {
+					_ = e.Hub.Publish("scanner", map[string]any{
+						"opportunity_id": ev.Opportunity.ID,
+						"triangle_id":    ev.Opportunity.TriangleID,
+						"status":         string(ev.Opportunity.Status),
+						"input":          ev.Opportunity.Quote.InputConsumed.String(),
+						"net_bps":        ev.Opportunity.NetReturnBps.StringFixed(4),
+						"net_profit":     ev.Opportunity.NetProfit.String(),
+						"detected_at":    ev.Opportunity.DetectedAt,
+					})
+				}
 			} else {
 				e.log.Debug("opportunity rejected",
 					"triangle_id", ev.Opportunity.TriangleID,
