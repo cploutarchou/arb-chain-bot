@@ -67,7 +67,10 @@ func VerifyPassword(password, encoded string) error {
 	if err != nil {
 		return errors.New("auth: malformed hash")
 	}
-	got := argon2.IDKey([]byte(password), salt, iters, mem, par, uint32(len(want)))
+	if len(want) == 0 || len(want) > 512 {
+		return errors.New("auth: malformed hash length")
+	}
+	got := argon2.IDKey([]byte(password), salt, iters, mem, par, uint32(len(want))) //nolint:gosec // bounded to (0,512] above
 	if subtle.ConstantTimeCompare(got, want) != 1 {
 		return ErrPasswordMismatch
 	}
