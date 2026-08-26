@@ -401,6 +401,12 @@ data-flow,security,risk}.md`.
 - status: BLOCKED (by SKILL.md §79 first-exchange definition of done)
 - description: strict prevSeqId chain validator, demo-env support,
   capability descriptor; re-verify docs first (T-047).
+- pre-work (2026-08-26): docs/research/okx-connector-checklist.md — the
+  complete verification protocol (checklists A–I mapped to the exact
+  code seams, design decisions §12, exit criteria §13) to execute from
+  a network-enabled host alongside T-047. OKX doc/API hosts are
+  egress-blocked from this dev environment, so nothing in it is newly
+  verified; the task's status is unchanged.
 
 ### T-051 Additional exchange (Bybit vs Bitget decision)
 - status: BLOCKED (Phase 21; fresh research required)
@@ -649,3 +655,15 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   docs/deployment.md is the runbook; `make record` /
   `make campaign RECORDING=…` are the two commands. T-046 now blocks
   ONLY on running the recorder from a network-enabled host.
+- 2026-08-26 (T-050 pre-work): OKX connector research checklist
+  prepared (docs/research/okx-connector-checklist.md). OKX hosts are
+  egress-blocked here (www.okx.com / my.okx.com unreachable, same as
+  the Binance doc sites in T-047), so the checklist is a runbook: nine
+  verification sections (endpoints, instrument mapping, the strict
+  prevSeqId/in-band book protocol, REST cross-checks, connection
+  lifecycle, fees, universe, maintenance signals, demo env), each item
+  carrying the expected answer from the 2026-08-26 research round and
+  the code seam it feeds; plus the design decisions the answers settle
+  (venue-parameterizing marketdata/replay.go and cmd/campaign, seq-reset
+  validator semantics, the OKX Capabilities literal) and exit criteria.
+  T-050 remains BLOCKED behind T-046/T-047.
