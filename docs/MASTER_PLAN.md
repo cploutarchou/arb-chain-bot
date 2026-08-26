@@ -424,3 +424,13 @@ data-flow,security,risk}.md`.
   against local PostgreSQL 16 (`ARB_TEST_DATABASE_URL`). Hosted CI runs
   still fail at runner provisioning (account-level Actions issue,
   documented on PR #1) — code-level checks pass locally.
+- 2026-08-26 (evening): every P1 DONE — T-034 config service, T-035
+  observability, T-033 Telegram + notification router, T-037 alert
+  center, T-036 AI advisor. T-024 read groups completed. P2: T-040
+  console inventory (with T-030 finishing), T-041 replay browser +
+  config compare, T-042 reports, T-043 quality score, T-044 bench
+  baselines, T-045 Playwright E2E (10/10 against real arbd). T-046 and
+  T-047 BLOCKED on this environment's egress (stated in-task). Suite:
+  `go test -race ./...` green across 26 packages; golangci-lint 0
+  issues; frontend lint/typecheck/build green. §88 audit pass running;
+  findings will be recorded below.
