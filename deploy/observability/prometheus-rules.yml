@@ -1,0 +1,85 @@
+# Alert rules for arbd (SKILL.md §65, docs/architecture.md §14).
+# Load via prometheus rule_files; thresholds assume the default 15s
+# scrape interval. Severity mirrors the platform's notification levels.
+groups:
+  - name: arbd-market-data
+    rules:
+      - alert: FeedSilent
+        expr: rate(market_messages_total[2m]) == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "No market data frames for 2m on {{ $labels.exchange }}"
+          description: "The WS feed is connected-but-silent or down; books go stale and qualification halts."
+      - alert: BookNotHealthy
+        expr: orderbook_state != 1
+        for: 3m
+        labels: {severity: warning}
+        annotations:
+          summary: "Book {{ $labels.market }} unhealthy for 3m"
+          description: "State {{ $value }} (0 SYNCING,2 STALE,3 CORRUPTED,4 DISCONNECTED). Sustained non-HEALTHY suppresses its triangles."
+      - alert: BookStaleAge
+        expr: orderbook_age_ms > 10000
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Book {{ $labels.market }} older than 10s"
+      - alert: SequenceGapStorm
+        expr: rate(orderbook_sequence_errors_total[5m]) > 0.2
+        labels: {severity: warning}
+        annotations:
+          summary: "Frequent sequence gaps on {{ $labels.exchange }}"
+          description: "More than ~1 gap/5s sustained; resyncs are burning REST budget."
+      - alert: ReconnectLoop
+        expr: increase(exchange_reconnects_total[10m]) > 5
+        labels: {severity: critical}
+        annotations:
+          summary: "Feed reconnect loop on {{ $labels.exchange }}"
+
+  - name: arbd-scanner
+    rules:
+      - alert: ScannerDroppingEvents
+        expr: rate(scanner_dropped_events_total[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Scanner event consumers too slow"
+          description: "Bounded fan-out is dropping events; persistence/console views are incomplete."
+      - alert: EvaluationSlow
+        expr: histogram_quantile(0.99, rate(triangle_evaluation_duration_bucket[5m])) > 25
+        labels: {severity: warning}
+        annotations:
+          summary: "p99 triangle evaluation above 25ms"
+
+  - name: arbd-risk-paper
+    rules:
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state == 2
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Breaker {{ $labels.name }} OPEN ({{ $labels.scope }})"
+      - alert: PaperCycleFailureRate
+        expr: >
+          increase(paper_cycles_failed_total[30m])
+            / clamp_min(increase(paper_cycles_total[30m]), 1) > 0.5
+        labels: {severity: warning}
+        annotations:
+          summary: "More than half of paper cycles failing (30m window)"
+      - alert: RecorderDroppingFrames
+        expr: rate(recorder_frames_dropped_total[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Recorder queue overflowing; recording has gaps"
+
+  - name: arbd-api
+    rules:
+      - alert: APIServerErrors
+        expr: sum(rate(api_request_duration_count{status=~"5.."}[5m])) > 0.1
+        labels: {severity: critical}
+        annotations:
+          summary: "API 5xx responses sustained over 5m"
+      - alert: APILatencyHigh
+        expr: histogram_quantile(0.99, sum by (le) (rate(api_request_duration_bucket[5m]))) > 0.5
+        labels: {severity: warning}
+        annotations:
+          summary: "API p99 latency above 500ms"

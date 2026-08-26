@@ -1,0 +1,69 @@
+"use client";
+
+import { useState } from "react";
+import { api } from "@/lib/api/client";
+import { usePoll } from "@/lib/usePoll";
+import { ConsoleShell } from "@/components/ConsoleShell";
+import { Await, Badge, PageTitle, Section, Table } from "@/components/ui";
+
+const WINDOWS = [24, 72, 168] as const;
+
+export default function TrianglesPage() {
+  const [hours, setHours] = useState<number>(24);
+  const quality = usePoll(() => api.triangles.quality(hours), 15000, [hours]);
+  const status = usePoll(() => api.scanner.status(), 10000);
+
+  return (
+    <ConsoleShell active="Triangles">
+      <PageTitle>Triangles</PageTitle>
+      <Section title="Active topology">
+        <Await state={status} what="topology">
+          {(s) => (
+            <p className="text-sm text-[var(--text-dim)]">
+              {s.triangles} triangles across {s.markets.length} markets: {s.markets.join(", ")}
+            </p>
+          )}
+        </Await>
+      </Section>
+      <Section title="Quality score (/100, SKILL §81 — never pure win rate)">
+        <div className="mb-3 flex gap-2">
+          {WINDOWS.map((w) => (
+            <button
+              key={w}
+              onClick={() => setHours(w)}
+              className={`rounded border px-2 py-0.5 text-[12px] ${
+                hours === w ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
+              }`}
+            >
+              {w}h
+            </button>
+          ))}
+        </div>
+        <Await state={quality} what="quality scores">
+          {(q) => (
+            <>
+              <Table
+                head={["Triangle", "Score", "Cycles", "Components", "Notes"]}
+                empty="scored triangles in this window (requires persisted history)"
+                rows={(q.scores ?? []).map((s) => [
+                  s.triangle_id,
+                  <Badge key="t" tone={s.total >= 70 ? "ok" : s.total >= 40 ? "warn" : "bad"}>
+                    {s.total}
+                  </Badge>,
+                  s.cycles,
+                  <span key="c" className="text-[12px] text-[var(--text-dim)]">
+                    {Object.entries(s.components)
+                      .map(([k, v]) => `${k} ${v}`)
+                      .join(" · ")}
+                  </span>,
+                  (s.notes ?? []).join("; ") || "—",
+                ])}
+              />
+              <p className="mt-2 text-[11px] text-[var(--text-dim)]">{q.notes.join(" · ")}</p>
+            </>
+          )}
+        </Await>
+      </Section>
+    </ConsoleShell>
+  );
+}

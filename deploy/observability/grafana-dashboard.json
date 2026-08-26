@@ -1,0 +1,59 @@
+{
+  "title": "arbd — triangular arbitrage platform",
+  "uid": "arbd-main",
+  "schemaVersion": 39,
+  "tags": ["arbd"],
+  "timezone": "utc",
+  "refresh": "15s",
+  "time": {"from": "now-3h", "to": "now"},
+  "panels": [
+    {"id": 1, "type": "timeseries", "title": "Market messages /s", "gridPos": {"x": 0, "y": 0, "w": 8, "h": 7},
+     "targets": [{"expr": "rate(market_messages_total[1m])", "legendFormat": "{{exchange}}"}]},
+    {"id": 2, "type": "timeseries", "title": "Message latency p50/p99 (ms)", "gridPos": {"x": 8, "y": 0, "w": 8, "h": 7},
+     "targets": [
+       {"expr": "histogram_quantile(0.5, rate(market_message_latency_ms_bucket[5m]))", "legendFormat": "p50"},
+       {"expr": "histogram_quantile(0.99, rate(market_message_latency_ms_bucket[5m]))", "legendFormat": "p99"}]},
+    {"id": 3, "type": "state-timeline", "title": "Book states (1=HEALTHY)", "gridPos": {"x": 16, "y": 0, "w": 8, "h": 7},
+     "targets": [{"expr": "orderbook_state", "legendFormat": "{{market}}"}]},
+    {"id": 4, "type": "timeseries", "title": "Book age (ms)", "gridPos": {"x": 0, "y": 7, "w": 8, "h": 7},
+     "targets": [{"expr": "orderbook_age_ms", "legendFormat": "{{market}}"}]},
+    {"id": 5, "type": "timeseries", "title": "Gaps + resyncs + reconnects /5m", "gridPos": {"x": 8, "y": 7, "w": 8, "h": 7},
+     "targets": [
+       {"expr": "increase(orderbook_sequence_errors_total[5m])", "legendFormat": "gaps"},
+       {"expr": "increase(orderbook_resync_total[5m])", "legendFormat": "resyncs"},
+       {"expr": "increase(exchange_reconnects_total[5m])", "legendFormat": "reconnects"}]},
+    {"id": 6, "type": "timeseries", "title": "Evaluations vs qualified /s", "gridPos": {"x": 16, "y": 7, "w": 8, "h": 7},
+     "targets": [
+       {"expr": "rate(triangles_evaluated_total[1m])", "legendFormat": "evaluated"},
+       {"expr": "rate(opportunities_qualified_total[1m])", "legendFormat": "qualified"},
+       {"expr": "rate(opportunities_rejected_total[1m])", "legendFormat": "rejected"}]},
+    {"id": 7, "type": "timeseries", "title": "Evaluation duration p99 (ms)", "gridPos": {"x": 0, "y": 14, "w": 8, "h": 7},
+     "targets": [{"expr": "histogram_quantile(0.99, rate(triangle_evaluation_duration_bucket[5m]))", "legendFormat": "p99"}]},
+    {"id": 8, "type": "heatmap", "title": "Qualified net edge (bps)", "gridPos": {"x": 8, "y": 14, "w": 8, "h": 7},
+     "targets": [{"expr": "rate(net_edge_bps_bucket[5m])", "format": "heatmap"}]},
+    {"id": 9, "type": "timeseries", "title": "Paper cycles /30m", "gridPos": {"x": 16, "y": 14, "w": 8, "h": 7},
+     "targets": [
+       {"expr": "increase(paper_cycles_success_total[30m])", "legendFormat": "success"},
+       {"expr": "increase(paper_cycles_failed_total[30m])", "legendFormat": "failed"}]},
+    {"id": 10, "type": "timeseries", "title": "Paper PnL / fees (display floats)", "gridPos": {"x": 0, "y": 21, "w": 8, "h": 7},
+     "targets": [
+       {"expr": "paper_pnl", "legendFormat": "pnl {{asset}}"},
+       {"expr": "fees_total", "legendFormat": "fees {{asset}}"}]},
+    {"id": 11, "type": "timeseries", "title": "Capital", "gridPos": {"x": 8, "y": 21, "w": 8, "h": 7},
+     "targets": [
+       {"expr": "capital_available", "legendFormat": "available {{asset}}"},
+       {"expr": "capital_reserved", "legendFormat": "reserved {{asset}}"}]},
+    {"id": 12, "type": "timeseries", "title": "API p99 latency (s) + 5xx /s", "gridPos": {"x": 16, "y": 21, "w": 8, "h": 7},
+     "targets": [
+       {"expr": "histogram_quantile(0.99, sum by (le) (rate(api_request_duration_bucket[5m])))", "legendFormat": "p99"},
+       {"expr": "sum(rate(api_request_duration_count{status=~\"5..\"}[5m]))", "legendFormat": "5xx/s"}]},
+    {"id": 13, "type": "stat", "title": "Breakers OPEN", "gridPos": {"x": 0, "y": 28, "w": 8, "h": 5},
+     "targets": [{"expr": "count(circuit_breaker_state == 2) or vector(0)"}]},
+    {"id": 14, "type": "stat", "title": "WS clients", "gridPos": {"x": 8, "y": 28, "w": 8, "h": 5},
+     "targets": [{"expr": "websocket_clients"}]},
+    {"id": 15, "type": "timeseries", "title": "Recorder written vs dropped /5m", "gridPos": {"x": 16, "y": 28, "w": 8, "h": 5},
+     "targets": [
+       {"expr": "increase(recorder_frames_written_total[5m])", "legendFormat": "written"},
+       {"expr": "increase(recorder_frames_dropped_total[5m])", "legendFormat": "dropped"}]}
+  ]
+}
