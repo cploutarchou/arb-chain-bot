@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: arb
-      POSTGRES_PASSWORD: arb-dev-password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arb-dev-password}
       POSTGRES_DB: arb
     ports:
       - "5432:5432"
@@ -25,9 +25,78 @@ services:
     command:
       [
         "-path", "/migrations",
-        "-database", "postgres://arb:arb-dev-password@db:5432/arb?sslmode=disable",
+        "-database", "postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable",
         "up",
       ]
 
+  # RECORD deployment: capture real Binance depth feeds into segment
+  # files + metadata rows — the input the §80 campaign replays. Needs
+  # outbound HTTPS/WSS to Binance. `docker compose --profile record up -d`
+  arbd-record:
+    build: .
+    profiles: ["record"]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ARB_MODE: RECORD
+      ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_RECORDING_DIR: /recordings
+      ARB_SYMBOLS: ${ARB_SYMBOLS:-BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT}
+      ARB_STARTING_ASSETS: ${ARB_STARTING_ASSETS:-USDT,USDC}
+      ARB_LOG_LEVEL: ${ARB_LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+    volumes:
+      - recordings:/recordings
+    restart: unless-stopped
+
+  # PAPER deployment: the full engine + API against live feeds. Set the
+  # admin credentials in .env. `docker compose --profile paper up -d`
+  arbd-paper:
+    build: .
+    profiles: ["paper"]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ARB_MODE: PAPER
+      ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_RECORDING_DIR: /recordings
+      ARB_SYMBOLS: ${ARB_SYMBOLS:-BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT}
+      ARB_STARTING_ASSETS: ${ARB_STARTING_ASSETS:-USDT,USDC}
+      ARB_PAPER_BALANCE: ${ARB_PAPER_BALANCE:-10000}
+      ARB_ADMIN_EMAIL: ${ARB_ADMIN_EMAIL:-}
+      ARB_ADMIN_PASSWORD: ${ARB_ADMIN_PASSWORD:-}
+      ARB_TELEGRAM_TOKEN: ${ARB_TELEGRAM_TOKEN:-}
+      ARB_TELEGRAM_ALLOWLIST: ${ARB_TELEGRAM_ALLOWLIST:-}
+      ARB_LOG_LEVEL: ${ARB_LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+    volumes:
+      - recordings:/recordings
+    restart: unless-stopped
+
+  # One-shot §80 campaign over a finished recording:
+  #   docker compose --profile campaign run --rm campaign \
+  #     -recording <session-id> -dir /recordings/<session-id> \
+  #     -assets USDT -balance USDT=10000 -seeds 1,2,3 -out /recordings/campaign
+  campaign:
+    build: .
+    profiles: ["campaign"]
+    entrypoint: ["campaign"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+    volumes:
+      - recordings:/recordings
+
 volumes:
   pgdata:
+  recordings:
