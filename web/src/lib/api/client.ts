@@ -25,9 +25,28 @@ export class ApiError extends Error {
 
 // CSRF token lives in module state; login and /auth/me both supply it
 // (the backend derives it from the session, nothing is persisted here).
+// After a full reload the token arrives asynchronously with the /auth/me
+// recovery, so mutating requests briefly await it — otherwise a control
+// clicked in the first moments after navigation fires tokenless and
+// fails (the CI E2E run caught exactly that race on the reports page).
+// The wait is bounded: an anonymous session never gets a token, and the
+// request then proceeds to its honest 401/403.
 let csrfToken = "";
+let resolveCsrfReady: (() => void) | null = null;
+let csrfReady: Promise<void> = new Promise((r) => {
+  resolveCsrfReady = r;
+});
 export function setCsrfToken(t: string) {
   csrfToken = t;
+  if (t) {
+    resolveCsrfReady?.();
+    resolveCsrfReady = null;
+  } else if (resolveCsrfReady === null) {
+    // Logout: future mutations wait for the next session's token.
+    csrfReady = new Promise((r) => {
+      resolveCsrfReady = r;
+    });
+  }
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -35,8 +54,14 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     "Content-Type": "application/json",
     ...(init?.headers as Record<string, string>),
   };
-  if (init?.method && init.method !== "GET" && csrfToken) {
-    headers["X-CSRF-Token"] = csrfToken;
+  if (init?.method && init.method !== "GET") {
+    // Login is the one mutation that legitimately runs tokenless.
+    if (!csrfToken && path !== "/api/v1/auth/login") {
+      await Promise.race([csrfReady, new Promise((r) => setTimeout(r, 5000))]);
+    }
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+    }
   }
   const res = await fetch(path, { ...init, headers, credentials: "same-origin" });
   let env: Envelope<T> | null = null;
