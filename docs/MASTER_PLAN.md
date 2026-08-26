@@ -54,7 +54,7 @@ data-flow,security,risk}.md`.
   checks block merge.
 
 ### T-010 Decimal domain core & normalized models
-- priority: P0 · component: exchange · status: TODO
+- priority: P0 · component: exchange · status: DONE (quantization/JSON tests; DivisionPrecision=28 pinned)
 - description: internal/exchange models per SKILL.md §10 (Exchange,
   Market, Asset, OrderBook types, FeeSchedule, InstrumentRules, Balance,
   Order, Fill, Triangle, Opportunity, RiskDecision, capability
@@ -68,7 +68,7 @@ data-flow,security,risk}.md`.
 - tests: table-driven quantization; serialization.
 
 ### T-011 Order-book engine + health state machine
-- priority: P0 · component: orderbook · status: TODO
+- priority: P0 · component: orderbook · status: DONE (-race clean; apply ~500ns, View(50) ~1.7us)
 - description: Book/Ladder (decimal, absolute-qty semantics, qty-0
   delete, depth truncation option), versioning, health machine
   (SYNCING/HEALTHY/STALE/CORRUPTED/DISCONNECTED), BookView snapshots,
@@ -79,7 +79,7 @@ data-flow,security,risk}.md`.
 - tests: unit + race + bench; chaos scenarios in T-031.
 
 ### T-012 Market graph & triangle enumeration
-- priority: P0 · component: graph · status: TODO
+- priority: P0 · component: graph · status: DONE (fixture IDs + sides pinned; property-validated)
 - description: directed conversion edges (side-aware), canonical
   3-cycle enumeration with configurable starting assets, rejection rules
   (self-loops, dup markets, disabled/untradeable), topology cache with
@@ -91,7 +91,7 @@ data-flow,security,risk}.md`.
   valid and starts/ends in configured asset.
 
 ### T-013 Depth-aware pricing & optimal size search
-- priority: P0 · component: pricing · status: TODO
+- priority: P0 · component: pricing · status: DONE (hand-computed §70 cases; sizer within 2% of brute force; cycle ~94us @50 lvls)
 - description: decimal depth-walk VWAP per leg (both directions), leg
   chaining with fee-in-kind + truncation, gross/net bps, breakpoint-
   aware optimal-size search, liquidity limits, price impact.
@@ -102,7 +102,7 @@ data-flow,security,risk}.md`.
   brute force on small fixtures.
 
 ### T-014 Fee engine
-- priority: P0 · component: fees · status: TODO
+- priority: P0 · component: fees · status: DONE (placement table, discounts incl. API exclusion, promo overrides)
 - description: fee schedules with per-pair overrides, account tier,
   fee-asset conventions (received-asset, quote-side, BNB-style token),
   conditional discounts, promo zero-fee pairs; assumptions exposed on
