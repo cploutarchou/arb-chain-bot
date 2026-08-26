@@ -7,14 +7,20 @@ import (
 )
 
 // readModel adapts engine state to the API's read groups. Every method
-// is nil-safe before readiness and answers honest emptiness.
+// is nil-safe before readiness and answers honest emptiness. rate is a
+// pointer so every copy of readModel handed out by NewReadModel (each
+// interface method call receives one, since Health has a value
+// receiver) shares the same delta-sampling state across polls.
 type readModel struct {
-	e *Engine
-	s *strategy.Service
+	e    *Engine
+	s    *strategy.Service
+	rate *rateSampler
 }
 
 // NewReadModel wires the adapter (exported for component assembly).
-func NewReadModel(e *Engine, s *strategy.Service) readModel { return readModel{e: e, s: s} }
+func NewReadModel(e *Engine, s *strategy.Service) readModel {
+	return readModel{e: e, s: s, rate: &rateSampler{}}
+}
 
 func (r readModel) RecentOpportunities(limit int) any {
 	return r.e.RecentOpportunities(limit)
@@ -116,12 +122,17 @@ func (r readModel) Health() any {
 	feed := r.e.feed
 	r.e.mu.RUnlock()
 	if feed != nil {
-		out["feed"] = map[string]int64{
-			"frames":     feed.Stats.Frames.Load(),
-			"reconnects": feed.Stats.Reconnects.Load(),
-			"api_errors": feed.Stats.APIErrors.Load(),
-			"resyncs":    feed.Stats.Resyncs.Load(),
-			"seq_gaps":   feed.Stats.SeqGaps.Load(),
+		frames := feed.Stats.Frames.Load()
+		out["feed"] = map[string]any{
+			"frames":       frames,
+			"reconnects":   feed.Stats.Reconnects.Load(),
+			"api_errors":   feed.Stats.APIErrors.Load(),
+			"resyncs":      feed.Stats.Resyncs.Load(),
+			"seq_gaps":     feed.Stats.SeqGaps.Load(),
+			"msgs_per_sec": r.rate.rate(time.Now(), frames),
+		}
+		if window := r.e.currentLatency(); window != nil {
+			out["feed"].(map[string]any)["latency_ms"] = window.Snapshot()
 		}
 		if feed.Books != nil {
 			now := time.Now()
@@ -140,6 +151,26 @@ func (r readModel) Health() any {
 	}
 	if st.Paper != nil {
 		out["paper"] = st.Paper
+	}
+	// BL-18: queue depths (outbox persistence, paper's inbound event
+	// channel) — the engine-derived half; recorder queue depth and
+	// process/DB stats are assembled at the API layer, which has no
+	// engine dependency to reach them.
+	queues := map[string]any{}
+	if ob := r.e.currentOutbox(); ob != nil {
+		queues["outbox"] = map[string]any{
+			"depth": ob.Depth(), "capacity": ob.Capacity(),
+			"dropped": ob.Dropped(), "written": ob.Written(),
+		}
+	}
+	r.e.mu.RLock()
+	pap := r.e.pap
+	r.e.mu.RUnlock()
+	if pap != nil {
+		queues["paper"] = map[string]any{"depth": pap.QueueDepth(), "capacity": pap.QueueCapacity()}
+	}
+	if len(queues) > 0 {
+		out["queues"] = queues
 	}
 	return out
 }

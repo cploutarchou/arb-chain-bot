@@ -90,6 +90,17 @@ type Server struct {
 	// only then (components.go:170: an empty boot allowlist never
 	// builds the bot, so the first entry needs a restart).
 	BotRunning func() bool
+	// Telegram, when set, backs GET /api/v1/telegram/status (BL-21).
+	// nil means the token was never configured; the route still answers
+	// 200 with enabled:false rather than 404 — "not configured" is a
+	// legitimate status, not an absent route.
+	Telegram func() TelegramStatusView
+	// Triangles, when set, backs the live half of GET
+	// /api/v1/triangles/{id} (BL-26); nil (no engine in this profile)
+	// leaves the route serving only store-backed history.
+	Triangles TriangleReader
+	// Replays, when set, backs the console-driven replay routes (BL-17).
+	Replays ReplayService
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -212,10 +223,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.alertRoutes(mux)
 	s.aiRoutes(mux)
 	s.readRoutes(mux)
+	s.pnlRoutes(mux)
+	s.triangleRoutes(mux)
 	s.reportRoutes(mux)
 	s.opsRoutes(mux)
+	s.replayRoutes(mux)
 	s.usersRoutes(mux)
 	s.platformRoutes(mux)
+	s.telegramRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):
 		// metric names and label values map the platform's internals.
@@ -303,6 +318,13 @@ func WriteData(w http.ResponseWriter, status int, data any) {
 
 func WriteError(w http.ResponseWriter, status int, code, msg, correlationID string) {
 	writeJSON(w, status, Envelope{Error: &APIError{Code: code, Message: msg, CorrelationID: correlationID}})
+}
+
+// WriteErrorData writes an error alongside a data payload (e.g.
+// stale_version's current_version) — the envelope keeps both fields so
+// the client never has to parse the message string for machine data.
+func WriteErrorData(w http.ResponseWriter, status int, code, msg, correlationID string, data any) {
+	writeJSON(w, status, Envelope{Data: data, Error: &APIError{Code: code, Message: msg, CorrelationID: correlationID}})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

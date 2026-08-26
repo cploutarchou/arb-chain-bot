@@ -108,14 +108,17 @@ type Engine struct {
 	catalog   []exchange.Market // full bootstrap metadata slice, retained for Catalog() (E2)
 	marker    portfolio.BookMarker
 	ready     bool
-	sessionID string // current paper/persistence session id; rotated by ResetPaper (BL-10)
+	sessionID string          // current paper/persistence session id; rotated by ResetPaper (BL-10)
+	outbox    *storage.Outbox // this run's outbox, nil without persistence (BL-18 queue depth)
+	latency   *latencyWindow  // this run's per-exchange latency samples (BL-18 percentiles)
 
 	metricsOnce   sync.Once // E4: RegisterEngine wired once across restarts
 	subscribeOnce sync.Once // E6: Strategy.Subscribe registered once across restarts
 
-	oppMu        sync.Mutex
-	recentOpps   []RecentOpportunity
-	rejectCounts map[string]int64 // risk reason code → count (AI input)
+	oppMu             sync.Mutex
+	recentOpps        []RecentOpportunity
+	rejectCounts      map[string]int64     // risk reason code → count (AI input)
+	rejectPersistedAt map[string]time.Time // "triangle|reason" → last persisted (BL-31 cooldown)
 }
 
 // RecentOpportunity is a compact ring entry for /opportunities and the
@@ -158,6 +161,41 @@ func (e *Engine) countReject(code string) {
 	if len(e.rejectCounts) < 64 || e.rejectCounts[code] > 0 {
 		e.rejectCounts[code]++
 	}
+}
+
+// riskRejectCooldown bounds how often the SAME (triangle, reason code)
+// rejection is persisted to risk_events (BL-31). Unlike rejectCounts
+// (an in-memory histogram, cheap to update on every rejection), a
+// persisted event is a DB write through the outbox's single writer
+// (Outbox.write does one INSERT per record, no batching): a busy
+// triangle can reject thousands of times a minute for the same reason,
+// and persisting every one would make the reject path the dominant
+// outbox load, saturate its bounded queue, and trip OnPersistError —
+// degrading persistence of opportunities/cycles too. First occurrence
+// per (triangle, reason) per window still lands, so the timeline shows
+// every DISTINCT thing that happened, not every repetition; the
+// unthrottled total stays visible via RejectCounts()/api/v1/risk.
+const riskRejectCooldown = 60 * time.Second
+
+// shouldPersistRiskReject reports whether this (triangle, reason)
+// rejection is due for a fresh risk_events row.
+func (e *Engine) shouldPersistRiskReject(triangleID, reasonCode string, now time.Time) bool {
+	key := triangleID + "|" + reasonCode
+	e.oppMu.Lock()
+	defer e.oppMu.Unlock()
+	if e.rejectPersistedAt == nil {
+		e.rejectPersistedAt = map[string]time.Time{}
+	}
+	if last, ok := e.rejectPersistedAt[key]; ok && now.Sub(last) < riskRejectCooldown {
+		return false
+	}
+	// Bounded like rejectCounts: a pathological number of distinct
+	// (triangle, reason) pairs must not grow this map unboundedly.
+	if len(e.rejectPersistedAt) >= 4096 {
+		return false
+	}
+	e.rejectPersistedAt[key] = now
+	return true
 }
 
 // RejectCounts snapshots the rejection-reason histogram.
@@ -358,6 +396,22 @@ func (e *Engine) currentPortfolio() *portfolio.Portfolio {
 	return e.port
 }
 
+// currentOutbox exposes this run's persistence queue (BL-18 queue
+// depth); nil without persistence or before Run reaches it.
+func (e *Engine) currentOutbox() *storage.Outbox {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.outbox
+}
+
+// currentLatency exposes this run's latency sample window (BL-18
+// percentiles); nil only before Run's reset block runs.
+func (e *Engine) currentLatency() *latencyWindow {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.latency
+}
+
 func (e *Engine) currentStarts() []exchange.Asset {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -466,9 +520,11 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.feed, e.resv, e.brk, e.books, e.starts, e.catalog = nil, nil, nil, nil, nil, nil
 	e.marker = portfolio.BookMarker{}
 	e.ready = false
+	e.outbox = nil
+	e.latency = &latencyWindow{}
 	e.mu.Unlock()
 	e.oppMu.Lock()
-	e.recentOpps, e.rejectCounts = nil, nil
+	e.recentOpps, e.rejectCounts, e.rejectPersistedAt = nil, nil, nil
 	e.oppMu.Unlock()
 
 	host := e.RESTHost
@@ -527,6 +583,9 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID}
 	}
+	e.mu.Lock()
+	e.outbox = outbox
+	e.mu.Unlock()
 
 	// Recording control: raw frames + splice snapshots for replay. The
 	// control is always wired so the console can start/stop sessions
@@ -617,6 +676,17 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 		e.notify(sev, "breaker:"+tr.Scope, "Circuit breaker "+tr.To.String(),
 			fmt.Sprintf("%s (%s): %s → %s (%s)", tr.Name, tr.Scope, tr.From.String(), tr.To.String(), tr.Reason))
+		// BL-31: persist every transition so the Risk Center's timeline
+		// survives a restart (breaker transitions are state changes, not
+		// per-frame hot-path traffic — enqueue is non-blocking regardless).
+		if outbox != nil {
+			outbox.Enqueue(storage.Record{Kind: "risk_event", RiskEvent: &storage.RiskEvent{
+				ID: newULID(), TS: tr.At, Kind: "breaker_transition",
+				Subject: tr.Scope, LimitName: tr.Name,
+				Observed: tr.From.String(), Threshold: tr.To.String(),
+				Action: tr.Reason, BreakerState: tr.To.String(),
+			}})
+		}
 	})
 
 	scn := &scanner.Scanner{
@@ -894,6 +964,31 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 			}
 			if ev.Opportunity.Status == opportunity.StatusRejected {
 				e.countReject(ev.Decision.ReasonCode)
+				// BL-31: persist the rejection so the Risk Center's
+				// timeline survives a restart (today only the in-memory
+				// reject_reason_counts histogram did) — but only the
+				// first occurrence per (triangle, reason) per cooldown
+				// window (shouldPersistRiskReject): unthrottled, a busy
+				// triangle rejecting thousands of times a minute for the
+				// same reason would make risk_events the dominant outbox
+				// write and risk saturating the queue that opportunities
+				// and cycles also depend on. The unthrottled total stays
+				// visible via RejectCounts()/GET /api/v1/risk.
+				if outbox != nil && e.shouldPersistRiskReject(ev.Opportunity.TriangleID, ev.Decision.ReasonCode, ev.Opportunity.DetectedAt) {
+					var observed, threshold string
+					for _, c := range ev.Decision.Checks {
+						if c.Name == ev.Decision.ReasonCode {
+							observed, threshold = c.Observed, c.Threshold
+							break
+						}
+					}
+					outbox.Enqueue(storage.Record{Kind: "risk_event", RiskEvent: &storage.RiskEvent{
+						ID: newULID(), TS: ev.Opportunity.DetectedAt, Kind: "risk_reject",
+						Subject: "triangle:" + ev.Opportunity.TriangleID, LimitName: ev.Decision.ReasonCode,
+						Observed: observed, Threshold: threshold,
+						Action: ev.Opportunity.Reason,
+					}})
+				}
 			}
 			if ev.Opportunity.Status == opportunity.StatusQualified {
 				if e.Metrics != nil {
@@ -977,6 +1072,16 @@ func (e *Engine) bootstrapMetadata(ctx context.Context, rest *binance.RESTClient
 // the first call (feed exists before the scanner does); the second call
 // with scn set fills it in.
 func (e *Engine) attachRunObservers(scn *scanner.Scanner, feed *binance.Feed) {
+	// The in-memory latency window (BL-18: system health's per-exchange
+	// percentiles) is independent of Metrics — it must keep sampling
+	// even when OTel registration failed or is unconfigured, since it is
+	// the only in-process-readable source of this data.
+	window := e.currentLatency()
+	if window != nil {
+		feed.LatencyObserver = func(d time.Duration) {
+			window.Record(float64(d.Nanoseconds()) / 1e6)
+		}
+	}
 	if e.Metrics == nil {
 		return
 	}
@@ -985,7 +1090,11 @@ func (e *Engine) attachRunObservers(scn *scanner.Scanner, feed *binance.Feed) {
 		m.ObserveEval(float64(d.Nanoseconds()) / 1e6)
 	}
 	recordLatency := m.MessageLatencyRecorder(string(binance.ID))
+	prior := feed.LatencyObserver
 	feed.LatencyObserver = func(d time.Duration) {
+		if prior != nil {
+			prior(d)
+		}
 		recordLatency(float64(d.Nanoseconds()) / 1e6)
 	}
 }

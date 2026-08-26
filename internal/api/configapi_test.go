@@ -164,3 +164,110 @@ func TestConfigVersionsListAndAbsentService(t *testing.T) {
 		t.Fatalf("absent service GET = %d", rec.Code)
 	}
 }
+
+// withParentVersion merges a "parent_version" key into a JSON-marshalable
+// body — the config-apply route pulls it out before strict-decoding the
+// rest into strategy.Params.
+func withParentVersion(t *testing.T, body any, parent int64) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["parent_version"] = parent
+	return m
+}
+
+func TestConfigApplyOptimisticConcurrency(t *testing.T) {
+	_, mux, svc := newConfigServer(t)
+	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	// Correct parent_version (matches the loaded version 1) succeeds and
+	// advances the version.
+	p := strategy.DefaultParams()
+	p.Scanner.Depth = 77
+	body := withParentVersion(t, p, 1)
+	if rec := postConfig(t, mux, aCookie, aCSRF, "/api/v1/config", body); rec.Code != http.StatusOK {
+		t.Fatalf("apply with correct parent_version = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := svc.Current().Version; got != 2 {
+		t.Fatalf("version after apply = %d, want 2", got)
+	}
+
+	// Stale parent_version (still says 1, but current is now 2) is
+	// refused with 409 stale_version and reports the current version —
+	// even when it is the SAME payload that would otherwise be a
+	// no-change 409 conflict; the concurrency error must win.
+	stale := withParentVersion(t, p, 1)
+	rec := postConfig(t, mux, aCookie, aCSRF, "/api/v1/config", stale)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale apply = %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data  map[string]int64 `json:"data"`
+		Error *APIError        `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error == nil || env.Error.Code != "stale_version" {
+		t.Fatalf("error = %+v, want code stale_version", env.Error)
+	}
+	if env.Data["current_version"] != 2 {
+		t.Fatalf("current_version = %d, want 2", env.Data["current_version"])
+	}
+	if got := svc.Current().Version; got != 2 {
+		t.Fatalf("version must not advance on a stale write, got %d", got)
+	}
+
+	// No parent_version at all (omitted) keeps today's unchecked behavior.
+	p2 := svc.Current().Params
+	p2.Scanner.Depth = 88
+	if rec := postConfig(t, mux, aCookie, aCSRF, "/api/v1/config", p2); rec.Code != http.StatusOK {
+		t.Fatalf("apply without parent_version = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := svc.Current().Version; got != 3 {
+		t.Fatalf("version after unchecked apply = %d, want 3", got)
+	}
+}
+
+func TestConfigRollbackOptimisticConcurrency(t *testing.T) {
+	_, mux, svc := newConfigServer(t)
+	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	p := strategy.DefaultParams()
+	p.Risk.MaxDailyLoss = decimal.NewFromInt(500)
+	if rec := postConfig(t, mux, aCookie, aCSRF, "/api/v1/config", p); rec.Code != http.StatusOK {
+		t.Fatalf("seed write = %d", rec.Code)
+	}
+	if got := svc.Current().Version; got != 2 {
+		t.Fatalf("version = %d, want 2", got)
+	}
+
+	// Stale rollback: caller thinks current is 1, it is actually 2.
+	rec := postConfig(t, mux, aCookie, aCSRF, "/api/v1/config/rollback",
+		map[string]any{"version": 1, "parent_version": 1})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale rollback = %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Error *APIError `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error == nil || env.Error.Code != "stale_version" {
+		t.Fatalf("error = %+v, want stale_version", env.Error)
+	}
+
+	// Correct parent_version rolls back fine.
+	rec = postConfig(t, mux, aCookie, aCSRF, "/api/v1/config/rollback",
+		map[string]any{"version": 1, "parent_version": 2})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback with correct parent_version = %d: %s", rec.Code, rec.Body.String())
+	}
+}

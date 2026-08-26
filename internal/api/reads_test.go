@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 )
 
 // fakeReads is a static ReadModel.
@@ -72,6 +74,10 @@ func TestReadRoutes(t *testing.T) {
 		"/api/v1/opportunities/history",
 		"/api/v1/paper/cycles",
 		"/api/v1/paper/cycles/c1/orders",
+		"/api/v1/risk/events",
+		"/api/v1/orders",
+		"/api/v1/fills",
+		"/api/v1/opportunities/op-1",
 	} {
 		rec := getWith(t, mux, cookie, path)
 		if rec.Code != http.StatusNotFound {
@@ -97,6 +103,26 @@ func TestReadRoutesEngineAbsent(t *testing.T) {
 	rec := getWith(t, mux, cookie, "/api/v1/opportunities")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("engine absent = %d", rec.Code)
+	}
+}
+
+// TestOrdersFillsBadFilterIs400 covers BL-20's query-param validation:
+// a malformed from/to timestamp is a 400 before any query runs, with a
+// Store present (a nil-pool Store never reaches the DB on this path —
+// parseListFilter fails first).
+func TestOrdersFillsBadFilterIs400(t *testing.T) {
+	s, mux := newTestServer(t)
+	s.Store = &storage.Store{}
+	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+
+	for _, path := range []string{
+		"/api/v1/orders?from=not-a-time",
+		"/api/v1/fills?to=not-a-time",
+	} {
+		rec := getWith(t, mux, cookie, path)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", path, rec.Code)
+		}
 	}
 }
 

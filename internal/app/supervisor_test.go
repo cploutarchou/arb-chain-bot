@@ -295,6 +295,23 @@ type busyCampaigns struct{ id string }
 
 func (b busyCampaigns) BusyRun() (string, bool) { return b.id, true }
 
+// TestSupervisorRefusalsReplayBusy is BusyCampaign's counterpart for
+// BL-17: a replay run doesn't touch the live *Engine, but the restart
+// guard still refuses so an operator gets an honest reason instead of
+// the restart and the replay silently fighting for the same core.
+func TestSupervisorRefusalsReplayBusy(t *testing.T) {
+	sup, _ := newTestSupervisor(t)
+	sup.Replays = busyReplays{id: "replay-1"}
+	err := sup.Request(RestartRequest{Actor: "alice"})
+	if !errors.Is(err, ErrReplayRunning) {
+		t.Fatalf("expected ErrReplayRunning, got %v", err)
+	}
+}
+
+type busyReplays struct{ id string }
+
+func (b busyReplays) BusyRun() (string, bool) { return b.id, true }
+
 func TestSupervisorRefusalsRecordingActive(t *testing.T) {
 	sup, _ := newTestSupervisor(t)
 	rc := &marketdata.RecorderControl{

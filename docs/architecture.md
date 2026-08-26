@@ -250,6 +250,13 @@ server → {"topic":"scanner","seq":123,"snapshot":true,"data":{...}}
 server → {"topic":"scanner","seq":124,"data":{...batched diff...}}
 ```
 
+Background job topics (`campaigns`, `replays`) follow the same
+subscribe/snapshot/diff shape but publish on job-state transitions
+(queued → running → done/failed) rather than a fixed tick: the topic's
+snapshot handler lists in-memory + persisted runs, and every
+`Runner.persist()` call re-publishes the changed run so a page reload
+never needs to poll (T-058 BL-17).
+
 - On subscribe: snapshot, then diffs; per-topic monotonically increasing
   `seq` lets clients detect loss; a gap triggers client-side resubscribe
   (server treats resubscribe as snapshot request).
@@ -321,6 +328,19 @@ events; only `internal/notification` talks to Telegram.
   `market_recording_metadata`.
 - Audit events are insert-only; application role has no UPDATE/DELETE on
   audit tables.
+- Background job runners (`internal/campaign.Runner`, `internal/replay.Runner`)
+  persist one row per run (`campaign_runs`, `replay_runs`) through their own
+  small `RunStore` interfaces, upserted on every state transition — not
+  the outbox: a job runner already owns a single background goroutine, so
+  there is no hot-path contention to decouple, and the row must be
+  visible synchronously enough that a restart's orphan-reconciliation
+  pass (mark any row still "running" as "failed: interrupted") sees it.
+  `risk_events` (breaker transitions and throttled risk rejections, T-058
+  BL-31) goes through the outbox instead, because it IS on the hot path
+  (`internal/risk`'s breaker callback and the scanner's reject branch).
+
+  `GET /api/v1/risk/events`, `GET /api/v1/replays[/{id}]`, and
+  `GET /api/v1/campaigns[/{id}]` are the read side of these three tables.
 
 ## 13. Configuration model
 

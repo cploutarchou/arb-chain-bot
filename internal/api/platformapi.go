@@ -153,25 +153,30 @@ func (s *Server) handlePlatformVersion(w http.ResponseWriter, r *http.Request) {
 	WriteData(w, http.StatusOK, snap)
 }
 
-// decodePlatformSettings reads {"settings": {...}}; on error it has
-// already written the response.
-func decodePlatformSettings(w http.ResponseWriter, r *http.Request) (platform.Settings, bool) {
+// decodePlatformSettings reads {"settings": {...}, "parent_version": n};
+// on error it has already written the response.
+func decodePlatformSettings(w http.ResponseWriter, r *http.Request) (platform.Settings, int64, bool) {
 	var body struct {
-		Settings platform.Settings `json:"settings"`
+		Settings      platform.Settings `json:"settings"`
+		ParentVersion *int64            `json:"parent_version,omitempty"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		WriteError(w, http.StatusBadRequest, "bad_payload", "invalid settings payload: "+err.Error(), correlationID(r))
-		return platform.Settings{}, false
+		return platform.Settings{}, 0, false
 	}
-	return body.Settings, true
+	var parentVersion int64
+	if body.ParentVersion != nil {
+		parentVersion = *body.ParentVersion
+	}
+	return body.Settings, parentVersion, true
 }
 
 // handlePlatformPreview computes the diff/plan WITHOUT writing a new
 // version — identical body to the apply route (design §3).
 func (s *Server) handlePlatformPreview(w http.ResponseWriter, r *http.Request) {
-	doc, ok := decodePlatformSettings(w, r)
+	doc, _, ok := decodePlatformSettings(w, r)
 	if !ok {
 		return
 	}
@@ -210,25 +215,30 @@ func (s *Server) handlePlatformPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePlatformApply(w http.ResponseWriter, r *http.Request) {
-	doc, ok := decodePlatformSettings(w, r)
+	doc, parentVersion, ok := decodePlatformSettings(w, r)
 	if !ok {
 		return
 	}
 	s.applyPlatform(w, r, func(actor string, authorize platform.Authorize) (platform.Snapshot, error) {
-		return s.Platform.ApplyAuthorized(r.Context(), actor, "web", doc, authorize)
+		return s.Platform.ApplyAuthorizedExpect(r.Context(), actor, "web", doc, authorize, parentVersion)
 	})
 }
 
 func (s *Server) handlePlatformRollback(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Version int64 `json:"version"`
+		Version       int64  `json:"version"`
+		ParentVersion *int64 `json:"parent_version,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || body.Version <= 0 {
 		WriteError(w, http.StatusBadRequest, "bad_payload", `body must be {"version": n}`, correlationID(r))
 		return
 	}
+	var parentVersion int64
+	if body.ParentVersion != nil {
+		parentVersion = *body.ParentVersion
+	}
 	s.applyPlatform(w, r, func(actor string, authorize platform.Authorize) (platform.Snapshot, error) {
-		return s.Platform.RollbackAuthorized(r.Context(), actor, "web", body.Version, authorize)
+		return s.Platform.RollbackAuthorizedExpect(r.Context(), actor, "web", body.Version, authorize, parentVersion)
 	})
 }
 
@@ -264,7 +274,12 @@ func platformSectionAuthorizer(role auth.Role) platform.Authorize {
 }
 
 func (s *Server) writePlatformError(w http.ResponseWriter, r *http.Request, err error) {
+	var stale *platform.StaleVersionError
 	switch {
+	case errors.As(err, &stale):
+		WriteErrorData(w, http.StatusConflict, "stale_version",
+			"settings changed since you loaded them; reload and retry", correlationID(r),
+			map[string]any{"current_version": stale.Current})
 	case errors.Is(err, platform.ErrNoChange):
 		WriteError(w, http.StatusBadRequest, "no_change", "payload equals the current version", correlationID(r))
 	case errors.Is(err, platform.ErrNotFound):
