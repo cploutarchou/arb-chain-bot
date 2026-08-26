@@ -1,20 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { api, type OrderRow } from "@/lib/api/client";
+import { api, ApiError, type OrderRow } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, Badge, Button, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
+import { Await, Badge, Button, ConfirmDialog, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
 
 export default function PaperPage() {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const status = usePoll(() => api.scanner.status(), 3000);
   const systemStatus = usePoll(() => api.system.status(), 10000);
-  const cycles = usePoll(() => api.paper.cycles(50), 8000);
+  const [cyclesRefresh, setCyclesRefresh] = useState(0);
+  const cycles = usePoll(() => api.paper.cycles(50), 8000, [cyclesRefresh]);
   const [orders, setOrders] = useState<{ cycle: string; rows: OrderRow[] } | null>(null);
   const [controlErr, setControlErr] = useState("");
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetTyped, setResetTyped] = useState("");
+  const [resetMsg, setResetMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
 
   const control = async (fn: () => Promise<{ running: boolean }>) => {
     setControlErr("");
@@ -22,6 +27,35 @@ export default function PaperPage() {
       await fn();
     } catch {
       setControlErr("Control action failed (role or mode).");
+    }
+  };
+
+  const mayReset = can(role, "paper:reset");
+
+  const openReset = () => {
+    setResetMsg(null);
+    setResetTyped("");
+    setResetOpen(true);
+  };
+
+  const confirmReset = async () => {
+    setResetBusy(true);
+    try {
+      await api.paper.reset();
+      setResetMsg({ ok: true, text: "Paper session reset." });
+      setResetOpen(false);
+      setCyclesRefresh((n) => n + 1);
+    } catch (err: unknown) {
+      const text =
+        err instanceof ApiError
+          ? err.apiError?.code === "paper_running"
+            ? "Reset requires the paper engine to be paused first. Pause it, then try again."
+            : err.message
+          : "Paper reset failed.";
+      setResetMsg({ ok: false, text });
+      setResetOpen(false);
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -35,6 +69,9 @@ export default function PaperPage() {
   };
 
   const mayControl = can(role, "paper:control");
+  const paperPresent = status.kind === "ready" && !!status.data.paper;
+  const paperRunning = status.kind === "ready" ? status.data.paper?.running : undefined;
+  const resetButtonDisabled = !mayReset || !paperPresent || paperRunning !== false;
 
   return (
     <ConsoleShell active="Paper Trading">
@@ -85,6 +122,34 @@ export default function PaperPage() {
           }
         </Await>
       </Section>
+      {mayReset && (
+        <Section title="Danger zone">
+          <div className="max-w-4xl rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-3">
+            <p className="mb-2 text-[13px] text-[var(--text-dim)]">
+              Reset clears the running paper session (active simulations and in-memory counters) and
+              starts a fresh one. Historical cycles already persisted are not deleted. ADMIN only, and
+              only while the engine is paused.
+            </p>
+            <Button onClick={openReset} disabled={resetButtonDisabled} danger>
+              Reset paper session…
+            </Button>
+            {!paperPresent ? (
+              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
+                paper engine not running in this profile
+              </span>
+            ) : paperRunning !== false ? (
+              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
+                pause the engine before resetting
+              </span>
+            ) : null}
+            {resetMsg && (
+              <p className={`mt-2 text-[12px] ${resetMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
+                {resetMsg.text}
+              </p>
+            )}
+          </div>
+        </Section>
+      )}
       <Section title="Cycles (persisted)">
         <Await state={cycles} what="paper cycles">
           {(c) => (
@@ -120,6 +185,36 @@ export default function PaperPage() {
             ])}
           />
         </Section>
+      )}
+      {resetOpen && (
+        <ConfirmDialog
+          title="Reset paper session?"
+          danger
+          confirmLabel={resetBusy ? "Resetting…" : "Reset session"}
+          confirmDisabled={resetTyped !== "RESET" || resetBusy}
+          onConfirm={confirmReset}
+          onCancel={() => setResetOpen(false)}
+          body={
+            <div>
+              <p className="mb-3">
+                This clears the running paper session — active simulations and in-memory counters
+                start over from zero. Historical cycles already persisted to the database are kept.
+                This cannot be undone.
+              </p>
+              <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="paper-reset-confirm">
+                Type <strong>RESET</strong> to confirm:
+              </label>
+              <input
+                id="paper-reset-confirm"
+                autoFocus
+                value={resetTyped}
+                onChange={(e) => setResetTyped(e.target.value)}
+                spellCheck={false}
+                className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--accent)]"
+              />
+            </div>
+          }
+        />
       )}
     </ConsoleShell>
   );

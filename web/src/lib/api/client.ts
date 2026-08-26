@@ -340,6 +340,14 @@ export interface CampaignRequest {
   grid?: "full" | "baseline";
 }
 
+export interface UserRow {
+  id: string;
+  email: string;
+  role: "ADMIN" | "OPERATOR" | "VIEWER";
+  disabled: boolean;
+  created_at: string;
+}
+
 export interface CampaignRun {
   id: string;
   recording: string;
@@ -371,6 +379,27 @@ export const api = {
       post<{ role: string; csrf_token: string }>("/api/v1/auth/login", { email, password }),
     logout: () => post<{ status: string }>("/api/v1/auth/logout"),
     me: () => get<Me>("/api/v1/auth/me"),
+    // Self-service password change (any authenticated role).
+    changePassword: (currentPassword: string, newPassword: string) =>
+      post<{ status: string }>("/api/v1/auth/password", {
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+  },
+  users: {
+    list: async () => (await request<{ users: UserRow[] | null }>("/api/v1/users")).users ?? [],
+    create: (email: string, role: string, password: string) =>
+      post<{ user: UserRow }>("/api/v1/users", { email, role, password }).then((r) => r.user),
+    setRole: (id: string, role: string) =>
+      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/role`, { role }).then((r) => r.user),
+    disable: (id: string) =>
+      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/disable`).then((r) => r.user),
+    enable: (id: string) =>
+      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/enable`).then((r) => r.user),
+    setPassword: (id: string, password: string) =>
+      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/password`, { password }).then(
+        (r) => r.user,
+      ),
   },
   system: {
     status: () => get<SystemStatus>("/api/v1/system/status"),
@@ -395,6 +424,8 @@ export const api = {
     cycles: (limit = 100) => get<{ cycles: CycleRow[] | null }>(`/api/v1/paper/cycles?limit=${limit}`),
     orders: (cycleID: string) =>
       get<{ orders: OrderRow[] | null }>(`/api/v1/paper/cycles/${encodeURIComponent(cycleID)}/orders`),
+    // Destructive; ADMIN-only, type-to-confirm RESET in the UI (BL-10).
+    reset: () => post<{ running: boolean }>("/api/v1/paper/reset", { confirm: "RESET" }),
   },
   portfolio: () => get<PortfolioView>("/api/v1/portfolio"),
   pnl: () => get<PnLView>("/api/v1/pnl"),
