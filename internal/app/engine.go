@@ -18,6 +18,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/execution"
 	"github.com/cploutarchou/arb-chain-bot/internal/fees"
 	"github.com/cploutarchou/arb-chain-bot/internal/graph"
+	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/paper"
@@ -167,6 +168,33 @@ func (e *Engine) Run(ctx context.Context) error {
 		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID}
 	}
 
+	// RECORD mode: capture raw frames + splice snapshots for replay.
+	var recorder *marketdata.Recorder
+	if e.cfg.Mode == config.ModeRecord {
+		streamTable := make(map[exchange.Symbol]uint16, len(feedSymbols))
+		for i, sym := range feedSymbols {
+			streamTable[sym] = uint16(i + 1) //nolint:gosec // bounded by symbol count
+		}
+		recorder = &marketdata.Recorder{
+			Dir:            e.cfg.RecordingDir,
+			SessionID:      sessionID,
+			Log:            e.log,
+			StreamOfSymbol: streamTable,
+		}
+		startedAt := time.Now()
+		if e.Store != nil {
+			streams := recorder.Streams()
+			recorder.OnSegment = func(meta marketdata.SegmentMeta) {
+				regCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := e.Store.UpsertRecordingSegment(regCtx, sessionID, binance.ID, streams, startedAt, meta); err != nil {
+					e.log.Warn("recording metadata registration failed", "error", err)
+				}
+			}
+		}
+		e.log.Info("recording enabled", "dir", e.cfg.RecordingDir, "session", sessionID)
+	}
+
 	// Base-tier taker fees; per-account refresh is a follow-up task
 	// (fees are re-pulled at runtime, never hardcoded for real accounts —
 	// docs/research/fees.md). 10 bps default per current verified schedule.
@@ -193,6 +221,10 @@ func (e *Engine) Run(ctx context.Context) error {
 		Books:   books,
 		Symbols: feedSymbols,
 		Log:     e.log,
+	}
+	if recorder != nil {
+		feed.RawTap = recorder.TapWS
+		feed.SnapTap = recorder.TapSnapshot
 	}
 
 	breakers := risk.NewRegistry(func(tr risk.Transition) {
@@ -302,7 +334,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
-	errCh := make(chan error, 5)
+	errCh := make(chan error, 6)
 	go func() { errCh <- feed.Run(ctx) }()
 	go func() { errCh <- scn.Run(ctx) }()
 	go func() { errCh <- e.consumeEvents(ctx, scn, paperIn, outbox) }()
@@ -311,6 +343,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	if outbox != nil {
 		go func() { errCh <- outbox.Run(ctx) }()
+	}
+	if recorder != nil {
+		go func() { errCh <- recorder.Run(ctx) }()
 	}
 
 	// Staleness sweep: books that stop ticking degrade to STALE.

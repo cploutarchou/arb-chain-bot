@@ -33,6 +33,12 @@ type Feed struct {
 	// PreemptAfter forces a clean reconnect before the venue's 24h cut.
 	PreemptAfter time.Duration
 
+	// RawTap and SnapTap, when set, receive every WS frame and every REST
+	// snapshot body used for splices (the recorder; SKILL.md §63). Taps
+	// must be non-blocking — recording never stalls the feed.
+	RawTap  func(frame []byte, recv time.Time)
+	SnapTap func(symbol exchange.Symbol, body []byte, recv time.Time)
+
 	syncers map[exchange.MarketID]*Syncer
 }
 
@@ -146,7 +152,11 @@ func (f *Feed) session(ctx context.Context) error {
 }
 
 func (f *Feed) handleFrame(ctx context.Context, frame []byte) {
-	ev, err := DecodeWSFrame(frame, time.Now())
+	recv := time.Now()
+	if f.RawTap != nil {
+		f.RawTap(frame, recv)
+	}
+	ev, err := DecodeWSFrame(frame, recv)
 	if err != nil {
 		if !errors.Is(err, ErrNotDepthEvent) {
 			f.Log.Warn("binance frame decode failed", "error", err)
@@ -201,7 +211,10 @@ func (f *Feed) resyncMarket(ctx context.Context, id exchange.MarketID) {
 		return
 	}
 	for attempt := 0; attempt < 5; attempt++ {
-		snap, err := f.REST.Depth(ctx, id.Symbol, SnapshotDepthLimit)
+		body, snap, err := f.REST.DepthRaw(ctx, id.Symbol, SnapshotDepthLimit)
+		if err == nil && f.SnapTap != nil {
+			f.SnapTap(id.Symbol, body, snap.ReceiveTime)
+		}
 		if err != nil {
 			f.Log.Warn("binance snapshot fetch failed", "market", id.String(), "attempt", attempt, "error", err)
 			select {

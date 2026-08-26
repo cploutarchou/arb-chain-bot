@@ -72,12 +72,20 @@ func truncate(b []byte, n int) string {
 // Depth fetches a snapshot for the syncer splice. Weight at limit 5000 is
 // 250 — callers pace within the 6000/min budget.
 func (c *RESTClient) Depth(ctx context.Context, symbol exchange.Symbol, limit int) (orderbook.DepthEvent, error) {
+	_, ev, err := c.DepthRaw(ctx, symbol, limit)
+	return ev, err
+}
+
+// DepthRaw also returns the raw body so the recorder can capture the
+// exact snapshot the splice used (deterministic replay, SKILL.md §64).
+func (c *RESTClient) DepthRaw(ctx context.Context, symbol exchange.Symbol, limit int) ([]byte, orderbook.DepthEvent, error) {
 	q := url.Values{"symbol": {string(symbol)}, "limit": {fmt.Sprint(limit)}}
 	body, err := c.get(ctx, "/api/v3/depth", q)
 	if err != nil {
-		return orderbook.DepthEvent{}, err
+		return nil, orderbook.DepthEvent{}, err
 	}
-	return DecodeRESTSnapshot(symbol, body, time.Now())
+	ev, err := DecodeRESTSnapshot(symbol, body, time.Now())
+	return body, ev, err
 }
 
 // ExchangeInfo fetches and maps instrument metadata.
