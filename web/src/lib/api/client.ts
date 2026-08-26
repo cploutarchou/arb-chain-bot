@@ -170,6 +170,83 @@ export interface OrderRow {
   fee_asset?: string;
 }
 
+// ---- global Orders/Fills (BL-20) ------------------------------------------
+// Distinct shapes from OrderRow/CycleRow above (those are per-cycle views);
+// these carry the full fill→order→cycle→triangle→opportunity cross-link
+// chain and cursor pagination. Field names mirror
+// internal/storage/orders_fills.go exactly (qty_requested/qty_filled, not
+// qty/filled_qty; fee_amount, not fee).
+
+export interface OrderListRow {
+  id: string;
+  cycle_id: string;
+  opportunity_id?: string;
+  triangle_id?: string;
+  symbol?: string;
+  leg_no: number;
+  side: string;
+  status: string;
+  qty_requested: string;
+  qty_filled: string;
+  avg_price?: string;
+  fee_amount?: string;
+  fee_asset?: string;
+  latency_ms?: string;
+  created_at: string;
+}
+
+export interface OrderPage {
+  orders: OrderListRow[] | null;
+  next_cursor?: string;
+}
+
+export interface FillListRow {
+  id: string;
+  order_id: string;
+  cycle_id: string;
+  opportunity_id?: string;
+  triangle_id?: string;
+  symbol?: string;
+  leg_no: number;
+  side: string;
+  order_status: string;
+  price: string;
+  qty: string;
+  fee_amount?: string;
+  fee_asset?: string;
+  book_version?: number;
+  ts: string;
+}
+
+export interface FillPage {
+  fills: FillListRow[] | null;
+  next_cursor?: string;
+}
+
+export interface ListFilter {
+  symbol?: string;
+  triangle?: string;
+  cycle?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+function listFilterQuery(f: ListFilter): string {
+  const q = new URLSearchParams();
+  if (f.symbol) q.set("symbol", f.symbol);
+  if (f.triangle) q.set("triangle", f.triangle);
+  if (f.cycle) q.set("cycle", f.cycle);
+  if (f.status) q.set("status", f.status);
+  if (f.from) q.set("from", f.from);
+  if (f.to) q.set("to", f.to);
+  if (f.limit) q.set("limit", String(f.limit));
+  if (f.cursor) q.set("cursor", f.cursor);
+  return q.toString();
+}
+
 export interface PortfolioView {
   balances: Record<string, { available: string; reserved: string }>;
   exposure: Record<string, string>;
@@ -183,6 +260,69 @@ export interface PortfolioView {
 
 export interface PnLView {
   assets: { asset: string; realized: string; fees: string; daily_loss: string; drawdown: string }[];
+}
+
+// ---- PnL & Analytics (BL-19) -----------------------------------------------
+// Every aggregate carries n (sample size); an empty/thin window says so
+// rather than showing zeros as fact. by=market has NO net_pnl (a cycle's
+// P&L cannot be split across its three legs' markets) and instead carries
+// avg_latency_ms — render distinct columns for that dimension.
+
+export interface PnLBreakdownRow {
+  key: string;
+  n: number;
+  net_pnl?: string;
+  avg_latency_ms?: string;
+}
+
+export type PnLBreakdownBy = "exchange" | "triangle" | "asset" | "market" | "hour" | "config_version";
+
+export interface PnLBreakdownResult {
+  by: string;
+  window_hours: number;
+  rows: PnLBreakdownRow[] | null;
+  n: number;
+  unattributed?: number;
+  notes?: string[];
+}
+
+export interface PnLPoint {
+  at: string;
+  cumulative_pnl: string;
+  drawdown: string;
+}
+
+export interface PnLSeriesResult {
+  window_hours: number;
+  points: PnLPoint[] | null;
+  n: number;
+}
+
+export interface HistogramBucket {
+  from: string;
+  to: string;
+  count: number;
+}
+
+// Distribution: only `n` is guaranteed; every other field is omitted
+// (not zero) when the sample set is empty — an honest empty distribution
+// renders as "n: 0", never a zeroed chart.
+export interface Distribution {
+  n: number;
+  min?: string;
+  max?: string;
+  avg?: string;
+  p50?: string;
+  p95?: string;
+  p99?: string;
+  buckets?: HistogramBucket[];
+}
+
+export interface DistributionsResult {
+  window_hours: number;
+  edge_bps: Distribution;
+  slippage_bps: Distribution;
+  latency_ms: Distribution;
 }
 
 export interface RiskView {
@@ -260,6 +400,88 @@ export interface AIRecommendation {
   decided_by?: string;
 }
 
+// Report's named sections mirror internal/reporting.Report exactly (BL-32:
+// a formatted view renders these fields, not a raw JSON dump). The index
+// signature keeps the type forward-compatible with any section the
+// backend adds later — an unrecognized key still renders generically.
+export interface ReportSystemSection {
+  mode: string;
+  ready: boolean;
+  config_version: number;
+  active_alerts: number;
+}
+export interface ReportExchangeSection {
+  exchange: string;
+  frames: number;
+  reconnects: number;
+  api_errors: number;
+  resyncs: number;
+  sequence_gaps: number;
+  books_healthy: number;
+  books_total: number;
+}
+export interface ReportScannerSection {
+  evaluations: number;
+  qualified: number;
+  rejected: number;
+  skipped: number;
+  dropped: number;
+  qualification_rate: string;
+}
+export interface ReportOppSection {
+  qualified_persisted: number;
+  best_net_bps?: string;
+  avg_net_bps?: string;
+  from_memory: boolean;
+}
+export interface ReportCycleSection {
+  total: number;
+  success: number;
+  failed: number;
+  success_rate: string;
+}
+export interface ReportAssetSection {
+  asset: string;
+  realized: string;
+  fees: string;
+  drawdown: string;
+}
+export interface ReportSlippageSection {
+  avg_bps?: string;
+  worst_bps?: string;
+  samples: number;
+}
+export interface ReportFailedCycle {
+  id: string;
+  outcome: string;
+}
+export interface ReportCapitalSection {
+  asset: string;
+  available: string;
+  reserved: string;
+  utilization: string;
+}
+export interface ReportTriangleStat {
+  triangle_id: string;
+  cycles: number;
+  net_pnl: string;
+}
+export interface ReportRiskSection {
+  breakers_open: number;
+  reject_reasons?: Record<string, number>;
+}
+export interface ReportAISection {
+  available: boolean;
+  latest_summary?: string;
+  proposed_recommendations: number;
+}
+export interface ReportIncident {
+  severity: string;
+  title: string;
+  count: number;
+  last_at: string;
+}
+
 export interface Report {
   id: string;
   kind: string;
@@ -267,6 +489,20 @@ export interface Report {
   period_end: string;
   generated_at: string;
   executive_summary: string;
+  system_health?: ReportSystemSection;
+  exchange_health?: ReportExchangeSection;
+  scanner?: ReportScannerSection;
+  opportunities?: ReportOppSection;
+  paper_cycles?: ReportCycleSection;
+  pnl?: ReportAssetSection[];
+  slippage?: ReportSlippageSection;
+  failed_cycles?: ReportFailedCycle[];
+  capital_utilization?: ReportCapitalSection[];
+  top_triangles?: ReportTriangleStat[];
+  worst_triangles?: ReportTriangleStat[];
+  risk_events?: ReportRiskSection;
+  ai_findings?: ReportAISection;
+  incidents?: ReportIncident[];
   recommended_actions: string[];
   notes?: string[];
   [section: string]: unknown;
@@ -305,6 +541,237 @@ export interface HealthView {
   feed?: FeedHealth;
   books?: { market: string; state: string; age_ms: number }[];
   paper?: PaperStatus;
+}
+
+// ---- System Health (BL-18) -------------------------------------------------
+// Every section is independently optional — process stats are always
+// present; the rest appear only when their backing component exists in
+// this profile (engine, store, recorder, supervisor). Render "not running
+// in this profile", never a faked zero, for an absent section.
+
+export interface ProcessStats {
+  uptime_sec: number;
+  goroutines: number;
+  heap_alloc_bytes: number;
+  heap_sys_bytes: number;
+  sys_bytes: number;
+  gc_pause_total_ns: number;
+  num_gc: number;
+}
+
+export interface LatencySnapshot {
+  n: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+export interface FeedHealthFull {
+  frames: number;
+  reconnects: number;
+  api_errors: number;
+  resyncs: number;
+  seq_gaps: number;
+  msgs_per_sec: number;
+  latency_ms?: LatencySnapshot;
+}
+
+export interface QueueDepth {
+  depth: number;
+  capacity: number;
+  dropped?: number;
+  written?: number;
+}
+
+export interface PoolStat {
+  acquired_conns: number;
+  idle_conns: number;
+  constructing_conns: number;
+  total_conns: number;
+  max_conns: number;
+  acquire_count: number;
+  empty_acquire_count: number;
+  canceled_acquire_count: number;
+}
+
+export interface SystemHealthView {
+  process: ProcessStats;
+  ready?: boolean;
+  triangles?: number;
+  scanner?: Record<string, number>;
+  feed?: FeedHealthFull;
+  books?: { market: string; state: string; age_ms: number }[];
+  paper?: PaperStatus;
+  queues?: { outbox?: QueueDepth; paper?: QueueDepth; recorder?: QueueDepth };
+  database?: PoolStat;
+  restart?: RestartStatus;
+}
+
+// ---- Triangle detail (BL-26) ------------------------------------------------
+
+export interface TriangleLegView {
+  leg_no: number;
+  market: string;
+  side: string;
+  from: string;
+  to: string;
+  book_state?: string;
+  book_age_ms?: number;
+  top_bid?: string;
+  top_ask?: string;
+  vwap_price?: string;
+  price_impact_bps?: string;
+  levels_consumed?: number;
+  depth_exhausted?: boolean;
+  fee_rate?: string;
+  fee_source?: string;
+}
+
+export interface TriangleView {
+  id: string;
+  exchange: string;
+  starting_asset: string;
+  legs: TriangleLegView[] | null;
+}
+
+export interface QualityBreakdown {
+  triangle_id: string;
+  total: number;
+  total_exact: string;
+  components: Record<string, string>;
+  notes?: string[];
+  cycles: number;
+}
+
+export interface TriangleDetail {
+  triangle?: TriangleView;
+  recent_cycles?: CycleRow[];
+  quality?: QualityBreakdown;
+  notes?: string[];
+}
+
+// ---- Opportunity detail (BL-27) --------------------------------------------
+
+export interface OpportunityDecisionView {
+  allowed: boolean;
+  reason_code?: string;
+  checks?: unknown;
+  config_version?: number;
+  legacy?: boolean;
+}
+
+export interface SimulationResultView {
+  cycle_id: string;
+  outcome: string;
+  pnl_amount?: string;
+  pnl_asset?: string;
+  fees?: unknown;
+  slippage_bps?: string;
+  exposure?: unknown;
+  started_at: string;
+  settled_at?: string;
+}
+
+export interface OpportunityDetail {
+  id: string;
+  exchange_id: string;
+  triangle_id: string;
+  status: string;
+  reason_code?: string;
+  starting_asset: string;
+  starting_amount: string;
+  legs: unknown;
+  gross_final_amount?: string;
+  estimated_final_amount?: string;
+  gross_profit?: string;
+  net_profit?: string;
+  gross_return_bps?: string;
+  net_return_bps?: string;
+  data_quality?: string;
+  config_version?: number;
+  detected_at: string;
+  expires_at?: string;
+  decided_at?: string;
+  decision?: OpportunityDecisionView;
+  book_versions?: number[];
+  simulation?: SimulationResultView;
+  notes?: string[];
+}
+
+// ---- Replay (BL-17) ---------------------------------------------------------
+// Request.speed is accepted and persisted for the audit trail and forward
+// compatibility, but has NO effect on execution today: the replay runner
+// steps a deterministic, single-threaded discrete-event backtest to the
+// next recorded frame or latency deadline, not to wall-clock time, so
+// there is no "pace" to scale (internal/replay/execute.go). Surface that
+// verbatim in the form, don't imply speed does anything yet.
+export interface ReplayRequest {
+  recording: string;
+  config_version?: number;
+  speed?: number;
+}
+
+export interface TopOpportunity {
+  opportunity_id: string;
+  triangle_id: string;
+  outcome: string;
+  net_bps: string;
+  at: string;
+}
+
+export interface ReplayRun {
+  id: string;
+  recording: string;
+  request: ReplayRequest;
+  status: "queued" | "running" | "done" | "failed";
+  done: number;
+  total: number;
+  step?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  error?: string;
+  opportunities: number;
+  qualified: number;
+  cycles: number;
+  top?: TopOpportunity[];
+  actor?: string;
+}
+
+// ---- Risk events (BL-31) ---------------------------------------------------
+
+export interface RiskEventRow {
+  id: string;
+  ts: string;
+  kind: string;
+  subject?: string;
+  limit_name?: string;
+  observed?: string;
+  threshold?: string;
+  action?: string;
+  breaker_state?: string;
+  correlation_id?: string;
+}
+
+// ---- Telegram status (BL-21) -----------------------------------------------
+// Never carries the bot token — only connectivity/delivery counters and
+// chat ids. Answers 200 {enabled:false} when unconfigured, not a 404.
+
+export interface TelegramStatusView {
+  enabled: boolean;
+  allowlist: number[] | null;
+  bot_username?: string;
+  messages: number;
+  errors: number;
+  last_poll_at?: string;
+  last_poll_ok: boolean;
+  last_poll_error?: string;
+  last_getme_at?: string;
+  last_getme_ok: boolean;
+  last_getme_error?: string;
+  pushes_sent: number;
+  push_errors: number;
+  last_pushed_at?: string;
 }
 
 export interface RecordingRow {
@@ -515,6 +982,11 @@ export const api = {
   system: {
     status: () => get<SystemStatus>("/api/v1/system/status"),
     health: () => get<HealthView>("/api/v1/system/health"),
+    // BL-18: the same endpoint, typed for the full payload (process, DB
+    // pool, queue depths, per-exchange feed stats, restart state) that
+    // the System Health page renders — health() above stays the
+    // Exchanges page's narrower view so it is not disturbed.
+    healthFull: () => get<SystemHealthView>("/api/v1/system/health"),
   },
   scanner: {
     status: () => get<ScannerStatus>("/api/v1/scanner/status"),
@@ -528,6 +1000,8 @@ export const api = {
       get<{ opportunities: OpportunityRow[] | null }>(
         `/api/v1/opportunities/history?status=${status}&limit=${limit}`,
       ),
+    // BL-27: why detected/qualified/rejected, book versions, simulation.
+    get: (id: string) => get<OpportunityDetail>(`/api/v1/opportunities/${encodeURIComponent(id)}`),
   },
   paper: {
     pause: () => post<{ running: boolean }>("/api/v1/paper/pause"),
@@ -538,9 +1012,36 @@ export const api = {
     // Destructive; ADMIN-only, type-to-confirm RESET in the UI (BL-10).
     reset: () => post<{ running: boolean }>("/api/v1/paper/reset", { confirm: "RESET" }),
   },
+  // BL-20: global, filterable, cursor-paginated orders/fills — distinct
+  // from paper.orders(cycleID) above, which is scoped to one cycle.
+  orders: {
+    list: (f: ListFilter) => get<OrderPage>(`/api/v1/orders?${listFilterQuery(f)}`),
+  },
+  fills: {
+    list: (f: ListFilter) => get<FillPage>(`/api/v1/fills?${listFilterQuery(f)}`),
+  },
   portfolio: () => get<PortfolioView>("/api/v1/portfolio"),
   pnl: () => get<PnLView>("/api/v1/pnl"),
+  // BL-19: breakdowns, cumulative series, and edge/slippage/latency
+  // distributions — distinct from the live pnl() above.
+  pnlAnalytics: {
+    breakdown: (by: PnLBreakdownBy, hours = 24) =>
+      get<PnLBreakdownResult>(`/api/v1/pnl/breakdown?by=${by}&hours=${hours}`),
+    series: (hours = 24) => get<PnLSeriesResult>(`/api/v1/pnl/series?hours=${hours}`),
+  },
+  analytics: {
+    distributions: (hours = 24) =>
+      get<DistributionsResult>(`/api/v1/analytics/distributions?hours=${hours}`),
+  },
   risk: () => get<RiskView>("/api/v1/risk"),
+  riskEvents: {
+    // BL-31: persisted risk-event timeline (breaker transitions +
+    // rejections), unlike risk()'s in-memory reject_reason_counts.
+    list: (hours = 24, limit = 200) =>
+      get<{ window_hours: number; events: RiskEventRow[] | null; n: number }>(
+        `/api/v1/risk/events?hours=${hours}&limit=${limit}`,
+      ),
+  },
   config: {
     current: () => get<ConfigSnapshot>("/api/v1/config"),
     version: (version: number) => get<ConfigSnapshot>(`/api/v1/config/version/${version}`),
@@ -567,12 +1068,31 @@ export const api = {
     list: (kind = "", limit = 20) =>
       get<{ reports: Report[] | null }>(`/api/v1/reports?kind=${kind}&limit=${limit}`),
     generate: (kind: "daily" | "weekly") => post<Report>("/api/v1/reports/generate", { kind }),
+    // BL-32: formatted detail + CSV export. The CSV route is a cookie-
+    // authenticated GET with Content-Disposition: attachment — a plain
+    // anchor href downloads it, no fetch/Blob needed.
+    get: (id: string) => get<Report>(`/api/v1/reports/${encodeURIComponent(id)}`),
+    csvUrl: (id: string) => `/api/v1/reports/${encodeURIComponent(id)}/csv`,
   },
   triangles: {
     quality: (hours = 24) =>
       get<{ window_hours: number; scores: QualityScore[] | null; notes: string[] }>(
         `/api/v1/triangles/quality?hours=${hours}`,
       ),
+    // BL-26: per-leg book/VWAP/fee, recent cycles, quality.
+    get: (id: string) => get<TriangleDetail>(`/api/v1/triangles/${encodeURIComponent(id)}`),
+  },
+  replays: {
+    // BL-17: console-driven replay runs. 404 replays_absent when no
+    // store is configured (the runner needs persisted recordings).
+    list: (limit = 25) => get<{ runs: ReplayRun[] | null }>(`/api/v1/replays?limit=${limit}`),
+    get: (id: string) => get<{ run: ReplayRun }>(`/api/v1/replays/${encodeURIComponent(id)}`),
+    start: (req: ReplayRequest) => post<{ run: ReplayRun }>("/api/v1/replays", req),
+  },
+  telegram: {
+    // BL-21: never returns the token; 200 {enabled:false} when
+    // unconfigured, not a 404.
+    status: () => get<TelegramStatusView>("/api/v1/telegram/status"),
   },
   audit: (entity = "", limit = 100) =>
     get<{ events: AuditEvent[] | null }>(`/api/v1/audit?entity=${entity}&limit=${limit}`),

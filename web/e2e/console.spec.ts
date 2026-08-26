@@ -38,9 +38,10 @@ test("login reaches overview with live system status", async ({ page }) => {
 });
 
 test("every nav page renders content or an honest state", async ({ page }) => {
-  // Sixteen page visits; dev-server first compiles push past the
-  // default budget.
-  test.setTimeout(120_000);
+  // Package D adds PnL & Analytics, Orders, Fills, Telegram, and the
+  // rebuilt Replay/System Health/Risk Center pages; dev-server first
+  // compiles push past the default budget.
+  test.setTimeout(180_000);
   await login(page);
   const pages: [string, RegExp][] = [
     ["/scanner", /Scanner|Loading/],
@@ -59,6 +60,13 @@ test("every nav page renders content or an honest state", async ({ page }) => {
     ["/system", /System/],
     ["/audit", /Audit Log/],
     ["/settings", /Settings/],
+    // Package D (BL-17..BL-32): the e2e arbd runs PAPER with no DB, so
+    // every store-backed endpoint here answers 404 storage_absent — the
+    // pages must render that honestly (Unavailable copy), not crash.
+    ["/pnl", /PnL|Persistence isn't configured|No settled paper cycles/i],
+    ["/orders", /Orders|Persistence isn't configured/i],
+    ["/fills", /Fills|Persistence isn't configured/i],
+    ["/telegram", /Telegram/i],
   ];
   for (const [path, marker] of pages) {
     await page.goto(path);
@@ -108,12 +116,94 @@ test("strategy config advanced JSON toggle still works", async ({ page }) => {
   await expect(page.getByText(/Version \d+ active\./)).toBeVisible({ timeout: 10_000 });
 });
 
-test("risk center shows deterministic limits", async ({ page }) => {
+test("risk center shows deterministic limits and the persisted event timeline", async ({ page }) => {
   await login(page);
   await page.goto("/risk");
   await expect(page.locator("main")).toContainText(/min_net_edge_bps|MinNetEdgeBps/i, {
     timeout: 10_000,
   });
+  // BL-31: the timeline is store-backed; no DB in this harness means an
+  // honest Unavailable state, not a crash.
+  await expect(page.getByText(/Risk event timeline/)).toBeVisible();
+  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+});
+
+test("system health renders the full payload on usePoll", async ({ page }) => {
+  await login(page);
+  await page.goto("/system");
+  // Process stats are always present regardless of profile (BL-18).
+  await expect(page.getByText("Goroutines", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Heap alloc", { exact: true })).toBeVisible();
+  // Engine section: the e2e arbd runs an engine (PAPER profile).
+  await expect(page.getByRole("heading", { name: "Engine / scanner" })).toBeVisible();
+  // No DB configured — honest absence, not a faked pool.
+  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+});
+
+test("PnL & Analytics renders breakdown/series/distributions honestly with no DB", async ({ page }) => {
+  await login(page);
+  await page.goto("/pnl");
+  await expect(page.getByRole("heading", { name: "Breakdown" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cumulative P&L and drawdown" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Edge / slippage / latency distributions" })).toBeVisible();
+  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+});
+
+test("Orders and Fills render filters and an honest empty/unavailable state", async ({ page }) => {
+  await login(page);
+  await page.goto("/orders");
+  await expect(page.getByRole("heading", { name: "Orders" })).toBeVisible();
+  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+
+  await page.goto("/fills");
+  await expect(page.getByRole("heading", { name: "Fills" })).toBeVisible();
+  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+});
+
+test("Telegram status renders without ever showing a token", async ({ page }) => {
+  await login(page);
+  await page.goto("/telegram");
+  await expect(page.getByRole("heading", { name: "Telegram", exact: true })).toBeVisible();
+  // Unconfigured in this harness: 200 {enabled:false}, not a 404.
+  await expect(page.locator("main")).toContainText(/not configured for this deployment/i, { timeout: 10_000 });
+  await expect(page.locator("main")).not.toContainText(/bot_token|ARB_TELEGRAM_TOKEN/i);
+});
+
+test("Replay page has no shell-command column and cross-links Campaigns instead of a duplicate table", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/replay");
+  await expect(page.getByRole("heading", { name: "Replay & Backtesting" })).toBeVisible();
+  await expect(page.locator("main")).not.toContainText("ARB_MODE=REPLAY");
+  await expect(page.locator("main")).not.toContainText("./arbd");
+  await expect(page.getByRole("link", { name: /Campaigns → Recorder/ }).first()).toBeVisible();
+  // No store in this harness: the replay runner needs persistence, so
+  // this is an honest 404 replays_absent, not a crash.
+  await expect(page.locator("main")).toContainText(/replay runner isn't available|Persistence isn't configured/i, {
+    timeout: 10_000,
+  });
+});
+
+test("Triangle and Opportunity detail pages render an honest not-found/unavailable state for an unknown id", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/triangles/does-not-exist");
+  await expect(page.locator("main")).toContainText(/Triangle does-not-exist/);
+  await expect(page.locator("main")).toContainText(/not found|Unavailable/i, { timeout: 10_000 });
+
+  await page.goto("/opportunities/does-not-exist");
+  await expect(page.locator("main")).toContainText(/Opportunity does-not-exist/);
+  await expect(page.locator("main")).toContainText(/Persistence isn't configured|Unavailable/i, { timeout: 10_000 });
+});
+
+test("Scanner pin/pause/export controls render and pin persists across reload", async ({ page }) => {
+  await login(page);
+  await page.goto("/scanner");
+  await expect(page.getByRole("button", { name: "Pause display" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Export CSV" }).first()).toBeVisible();
+  await expect(page.getByLabel(/Pinned only/)).toBeVisible();
 });
 
 test("alerts page renders the shared center", async ({ page }) => {

@@ -35,9 +35,9 @@ const GROUPS: NavGroup[] = [
     title: "Portfolio",
     items: [
       { label: "Portfolio & Balances", href: "/portfolio" },
-      { label: "PnL & Analytics" },
-      { label: "Orders" },
-      { label: "Fills" },
+      { label: "PnL & Analytics", href: "/pnl" },
+      { label: "Orders", href: "/orders" },
+      { label: "Fills", href: "/fills" },
     ],
   },
   {
@@ -64,7 +64,7 @@ const GROUPS: NavGroup[] = [
       { label: "Markets", href: "/settings#markets" },
       { label: "System Health", href: "/system" },
       { label: "Audit Log", href: "/audit" },
-      { label: "Telegram" },
+      { label: "Telegram", href: "/telegram" },
       { label: "Users & Security", href: "/settings#users" },
     ],
   },
@@ -280,70 +280,112 @@ function RestartBanner() {
   );
 }
 
+// NavContent is the sidebar's inner nav — shared between the always-
+// visible desktop sidebar and the mobile overlay (§4.7/BL-24: below md
+// the sidebar collapses to a top bar with a hamburger revealing this
+// same nav as a full-height overlay, closing on nav or outside-tap).
+function NavContent({ active, role, onNavigate }: { active: string; role?: string; onNavigate?: () => void }) {
+  return (
+    <>
+      <nav className="flex-1 space-y-3 overflow-y-auto text-[13px]">
+        {GROUPS.map((group) => (
+          <div key={group.title}>
+            <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+              {group.title}
+            </div>
+            <div className="space-y-0.5">
+              {group.items.map((item) => {
+                // Audit Log is visible to OPERATOR/ADMIN only (backend
+                // PermViewAudit); annotate rather than silently 403 a
+                // VIEWER who clicks through.
+                const restrictedForViewer = item.label === "Audit Log" && role === "VIEWER";
+                if (item.href && !restrictedForViewer) {
+                  return (
+                    <Link
+                      key={item.label}
+                      href={item.href}
+                      onClick={onNavigate}
+                      className={`block rounded px-2 py-1 ${
+                        active === item.label
+                          ? "bg-[var(--bg-raised)] text-[var(--text)]"
+                          : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
+                      }`}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                }
+                return (
+                  <span
+                    key={item.label}
+                    title={restrictedForViewer ? "Requires OPERATOR or ADMIN" : item.note ?? "Not implemented yet"}
+                    className="block cursor-not-allowed rounded px-2 py-1 text-[var(--text-dim)] opacity-40"
+                  >
+                    {item.label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </nav>
+      <Link
+        href="/settings"
+        onClick={onNavigate}
+        className={`mt-3 block rounded px-2 py-1 text-[13px] ${
+          active === "Settings"
+            ? "bg-[var(--bg-raised)] text-[var(--text)]"
+            : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
+        }`}
+      >
+        Settings
+      </Link>
+    </>
+  );
+}
+
 export function ConsoleShell({ children, active }: { children: ReactNode; active: string }) {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      {/* Mobile top bar (< md): hamburger reveals the full nav as an
+          overlay; the desktop sidebar below is hidden at this width. */}
+      <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 md:hidden">
+        <span className="text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</span>
+        <button
+          type="button"
+          aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={mobileOpen}
+          onClick={() => setMobileOpen((v) => !v)}
+          className="rounded border border-[var(--border)] px-2 py-1 text-[13px] text-[var(--text)]"
+        >
+          {mobileOpen ? "Close ✕" : "Menu ☰"}
+        </button>
+      </div>
+      {mobileOpen && (
+        <div className="fixed inset-0 z-40 flex md:hidden">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setMobileOpen(false)} aria-hidden />
+          <aside className="relative z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4">
+            <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</div>
+            <div className="px-2">
+              <ModeBanner />
+            </div>
+            <NavContent active={active} role={role} onNavigate={() => setMobileOpen(false)} />
+          </aside>
+        </div>
+      )}
+
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 md:flex">
         <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</div>
         <div className="px-2">
           <ModeBanner />
         </div>
-        <nav className="flex-1 space-y-3 overflow-y-auto text-[13px]">
-          {GROUPS.map((group) => (
-            <div key={group.title}>
-              <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
-                {group.title}
-              </div>
-              <div className="space-y-0.5">
-                {group.items.map((item) => {
-                  // Audit Log is visible to OPERATOR/ADMIN only (backend
-                  // PermViewAudit); annotate rather than silently 403 a
-                  // VIEWER who clicks through.
-                  const restrictedForViewer = item.label === "Audit Log" && role === "VIEWER";
-                  if (item.href && !restrictedForViewer) {
-                    return (
-                      <Link
-                        key={item.label}
-                        href={item.href}
-                        className={`block rounded px-2 py-1 ${
-                          active === item.label
-                            ? "bg-[var(--bg-raised)] text-[var(--text)]"
-                            : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-                        }`}
-                      >
-                        {item.label}
-                      </Link>
-                    );
-                  }
-                  return (
-                    <span
-                      key={item.label}
-                      title={restrictedForViewer ? "Requires OPERATOR or ADMIN" : item.note ?? "Not implemented yet"}
-                      className="block cursor-not-allowed rounded px-2 py-1 text-[var(--text-dim)] opacity-40"
-                    >
-                      {item.label}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </nav>
-        <Link
-          href="/settings"
-          className={`mt-3 block rounded px-2 py-1 text-[13px] ${
-            active === "Settings"
-              ? "bg-[var(--bg-raised)] text-[var(--text)]"
-              : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-          }`}
-        >
-          Settings
-        </Link>
+        <NavContent active={active} role={role} />
       </aside>
-      <main className="min-w-0 flex-1 p-6">
+      <main className="min-w-0 flex-1 p-4 md:p-6">
         <RestartBanner />
         {children}
       </main>
