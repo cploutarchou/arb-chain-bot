@@ -333,6 +333,20 @@ consistent config snapshot per evaluation (config version cited in every
 opportunity and risk decision). Rollback = re-activating a prior version
 (itself a new version + audit event).
 
+**Platform settings (T-057, `docs/design/platform-settings-and-restart.md`).**
+A second versioned document — symbols, starting assets, per-asset paper
+balances, venue enabled/paper-enabled, per-venue fee tier and per-symbol fee
+overrides, Telegram allowlist — lives in `internal/platform` and
+`platform_settings`, deliberately **not** in `strategy.Params`: the
+section→permission mapping (`auth.PermissionForConfigSection`) fails open to
+OPERATOR for any new section, strategy versions are cited as provenance by
+every opportunity, and symbol validation is impure (needs `exchangeInfo` plus
+a `graph.Build` dry-run). Env vars are first-boot seeds only. Every field is
+restart-scoped except the Telegram allowlist; restart-scoped changes are
+applied by `app.Supervisor`, which re-enters one stable `Engine.Run` (so all
+existing engine seams keep working) after draining the recorder, pausing
+paper and waiting for the outbox — persisted history is never lost.
+
 ## 14. Observability
 
 OTel SDK with Prometheus exporter at `/metrics`; metric set per SKILL.md
