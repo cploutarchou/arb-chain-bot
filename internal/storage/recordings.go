@@ -9,6 +9,40 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 )
 
+// RecordingRow is the list view of one recording session.
+type RecordingRow struct {
+	ID        string          `json:"id"`
+	Exchange  string          `json:"exchange_id"`
+	StartedAt time.Time       `json:"started_at"`
+	EndedAt   *time.Time      `json:"ended_at,omitempty"`
+	Streams   json.RawMessage `json:"streams"`
+	Segments  json.RawMessage `json:"segment_files"`
+}
+
+// ListRecordings returns recording sessions newest-first.
+func (s *Store) ListRecordings(ctx context.Context, limit int) ([]RecordingRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT id, exchange_id, started_at, ended_at, streams, segment_files
+		FROM market_recording_metadata
+		ORDER BY started_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RecordingRow
+	for rows.Next() {
+		var r RecordingRow
+		if err := rows.Scan(&r.ID, &r.Exchange, &r.StartedAt, &r.EndedAt, &r.Streams, &r.Segments); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // UpsertRecordingSegment registers a closed segment under its recording
 // session row (market_recording_metadata): first segment inserts the row,
 // later ones append to segment_files and advance ended_at.

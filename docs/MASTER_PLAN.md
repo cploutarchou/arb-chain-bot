@@ -331,7 +331,12 @@ data-flow,security,risk}.md`.
 - dependencies: T-030, T-034..T-037
 
 ### T-041 Replay & backtest UI + config comparison
-- status: TODO · dependencies: T-032, T-040
+- status: DONE for current runner (recordings browser over
+  market_recording_metadata with per-segment integrity data and the
+  exact CLI replay invocation; any-two-versions config comparison via
+  GET /api/v1/config/version/{n}). In-console backtest RUNS need a job
+  worker — future scope, stated on the page
+- dependencies: T-032, T-040
 
 ### T-042 Reports (daily/weekly) + Telegram digests
 - status: DONE (full §82 section layout with honest data-source notes;
@@ -360,16 +365,31 @@ data-flow,security,risk}.md`.
   quote-to-quote crosses so no triangle could close)
 
 ### T-045 E2E Playwright suite (SKILL.md §72)
-- status: TODO · dependencies: T-040
+- status: DONE (scripts/e2e.sh boots real arbd + Next proxy; 10 tests:
+  auth redirect, no-oracle login failure, overview, all pages render
+  real or honest states, config edit → new version round trip, risk
+  limits, alert center, on-demand report, sign-out; CI e2e job added;
+  10/10 locally)
+- dependencies: T-040
 
 ### T-046 Profitability validation campaign
-- status: TODO — recorded-feed replays + stress profiles (fees+X,
-  latency+X, depth haircuts) per SKILL.md §80; honest report.
+- status: BLOCKED on real recorded feeds — this dev environment cannot
+  reach exchange endpoints, so no genuine market recordings exist to
+  replay. Ready today: recorder + deterministic replayer (T-032),
+  seed-deterministic simulation, reports (T-042), latency knobs in
+  simulation.Config. Still needed for the campaign: real RECORD-mode
+  captures in a network-enabled deployment, fee+X / depth-haircut
+  stress transforms on the replay path, and the §80 honest report over
+  those runs. No profitability claim is made without this.
 - dependencies: T-032, T-042
 
 ### T-047 Research-debt re-verification
-- status: TODO — UNVERIFIED items from docs/research/
-  final-platform-selection.md §7 before the affected phases start.
+- status: BLOCKED in this dev environment — exchange documentation
+  sites are unreachable through the sandbox proxy (verified 2026-08-26:
+  developers.binance.com and binance.com both blocked), so the
+  UNVERIFIED items from docs/research/final-platform-selection.md §7
+  cannot be re-checked against primary sources here. Re-run in a
+  network-enabled environment before live-adjacent phases (T-050+).
 
 ## P3 — OPTIONAL / LATER
 
