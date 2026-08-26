@@ -385,3 +385,35 @@ func BenchmarkQuoteCycle50Levels(b *testing.B) {
 		}
 	}
 }
+
+// Optimal-size search (§73): grid + ternary refinement, each point one
+// full QuoteCycle over 50-level books.
+func BenchmarkSizeSearch50Levels(b *testing.B) {
+	mkLevels := func(start string, step string, n int, qty string) []orderbook.Level {
+		out := make([]orderbook.Level, n)
+		p := d(start)
+		for i := 0; i < n; i++ {
+			out[i] = orderbook.Level{Price: p, Qty: d(qty)}
+			p = p.Add(d(step))
+		}
+		return out
+	}
+	data := [3]MarketData{
+		mdWith(nil, mkLevels("100", "0.01", 50, "2"), "0.001"),
+		mdWith(nil, mkLevels("0.1", "0.00001", 50, "50"), "0.001"),
+		mdWith(mkLevels("10.2", "-0.001", 50, "100"), nil, "0.001"),
+	}
+	sched, _ := fees.NewSchedule("binance", exchange.FeeInReceived,
+		fees.Rate{Maker: d("0.001"), Taker: d("0.001")})
+	tri := triUSDT()
+	quote := func(in decimal.Decimal) (CycleQuote, error) {
+		return QuoteCycle(tri, data, sched, in)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, ok := DefaultSizeSearch.Find(quote, d("10"), d("10000")); !ok {
+			b.Fatal("no viable size")
+		}
+	}
+}

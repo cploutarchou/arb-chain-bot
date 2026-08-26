@@ -183,7 +183,12 @@ func keys[V any](m map[string]V) []string {
 func BenchmarkBuildTopology(b *testing.B) {
 	// Synthetic universe: 40 assets fully crossed against 3 quotes.
 	quotes := []exchange.Asset{"USDT", "USDC", "BTC"}
-	var ms []exchange.Market
+	// Quote-to-quote crosses close the cycles (base/X + base/Y + Y/X).
+	ms := []exchange.Market{
+		mkt("BTCUSDT", "BTC", "USDT"),
+		mkt("BTCUSDC", "BTC", "USDC"),
+		mkt("USDCUSDT", "USDC", "USDT"),
+	}
 	for i := 0; i < 40; i++ {
 		base := exchange.Asset(string(rune('A'+i%26)) + string(rune('A'+(i/26)%26)) + "X")
 		for _, q := range quotes {
