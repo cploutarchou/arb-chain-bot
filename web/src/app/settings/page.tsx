@@ -686,7 +686,9 @@ export default function SettingsPage() {
         <UsersSection />
       </div>
       <StrategyRiskSection />
-      <NotificationsSection />
+      <div id="notifications">
+        <NotificationsSection />
+      </div>
       <Section title="Security posture">
         <ul className="max-w-2xl list-inside list-disc space-y-1 text-[13px] text-[var(--text-dim)]">
           <li>Live trading is permanently disabled by design (LiveExecutor returns ErrLiveTradingDisabled).</li>
