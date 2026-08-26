@@ -10,24 +10,46 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
-// Client is a minimal Bot API client. BaseURL includes the token path
-// ("https://api.telegram.org/bot<token>"); tests point it at a fake
-// server, so no real token or egress is ever needed.
+// Client is a minimal Bot API client. The token never appears in
+// Client state that could reach logs: request URLs are built per call
+// and every returned error is redacted (transport errors embed the URL,
+// and Go's net/http redacts only userinfo, not the path — audit S-001
+// showed the token leaking into "telegram poll failed" log lines).
 type Client struct {
-	BaseURL string
+	baseURL string // scheme://host, no token
+	token   string
 	HTTP    *http.Client
 }
 
+// NewClient takes "https://api.telegram.org/bot<token>" (tests point it
+// at a fake server); the token segment is split off and kept private.
 func NewClient(baseURL string) *Client {
-	return &Client{BaseURL: baseURL, HTTP: &http.Client{Timeout: 65 * time.Second}}
+	c := &Client{baseURL: baseURL, HTTP: &http.Client{Timeout: 65 * time.Second}}
+	if i := strings.Index(baseURL, "/bot"); i >= 0 {
+		c.baseURL = baseURL[:i]
+		c.token = baseURL[i+len("/bot"):]
+	}
+	return c
+}
+
+// redact strips the bot token from any error text before it can reach
+// a logger or a chat.
+func (c *Client) redact(err error) error {
+	if err == nil || c.token == "" {
+		return nil
+	}
+	msg := strings.ReplaceAll(err.Error(), c.token, "***")
+	return errors.New(msg)
 }
 
 // Update is one long-poll result entry.
@@ -88,15 +110,16 @@ type apiEnvelope struct {
 }
 
 func (c *Client) call(ctx context.Context, method string, params url.Values, out any) error {
+	endpoint := c.baseURL + "/bot" + c.token + "/" + method
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/"+method, bytes.NewBufferString(params.Encode()))
+		endpoint, bytes.NewBufferString(params.Encode()))
 	if err != nil {
-		return err
+		return c.redact(err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return c.redact(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))

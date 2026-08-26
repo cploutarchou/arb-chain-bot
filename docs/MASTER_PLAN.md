@@ -434,3 +434,188 @@ data-flow,security,risk}.md`.
   `go test -race ./...` green across 26 packages; golangci-lint 0
   issues; frontend lint/typecheck/build green. §88 audit pass running;
   findings will be recorded below.
+
+---
+
+## §88 Audit findings (2026-08-26)
+
+Three independent audit passes (quant, security, code review) over the
+P0–P2 implementation. Rule applied: a task is DONE only when acceptance
+criteria pass AND P0/P1 findings are fixed. Every FIXED entry below is
+covered by a test that fails on the pre-fix code, and the full suite
+(`go test -race ./...`, 26 packages, storage against PostgreSQL 16) is
+green after the batch, with golangci-lint at 0 issues and Playwright
+10/10.
+
+### Quant audit
+
+- **Q-P1-1 · quality score rewarded reliable losers.** Evidence: old
+  formula paid success/persistence/sample points independent of PnL — a
+  triangle losing money on every cycle could outrank a profitable one.
+  Fix: profitability component gates on positive per-cycle PnL (0 at
+  break-even), non-positive PnL caps the total at 40 with an explicit
+  note. Acceptance: `TestReliableLoserNeverOutranksEarner`,
+  `TestUnprofitableCapProperty` (internal/quality). FIXED.
+- **Q-P1-2 · thin samples outranked real evidence.** Evidence: 3 lucky
+  cycles could beat 500 modest ones. Fix: whole-score confidence
+  scaling below MinCredibleCycles=20; absent evidence earns nothing
+  (slippage needs ≥2 samples, unknown drawdown scores 0). Acceptance:
+  `TestThinSampleCannotOutrankRealEvidence`,
+  `TestAbsentEvidenceEarnsNothing`. FIXED.
+- **Q-P1-3 · report "scanner" section printed cumulative counters as
+  period stats.** Fix: per-kind baseline in the generator; second and
+  later reports show period deltas, the first discloses "since process
+  start". Acceptance: `TestScannerSectionIsPerPeriodDelta`
+  (internal/reporting). FIXED.
+- **Q-P2 · slippage persisted for outcomes where it is meaningless**
+  (mid-cycle failures produced ~+10000 bps artifacts that poisoned
+  averages) and worst-slippage used min() under the positive=worse
+  convention. Fix: NULL storage unless the cycle reached leg 3
+  (ALL_FILLED / LEG1_PARTIAL / PARTIAL_CYCLE), aggregates take
+  `max(slippage_bps)` as worst and `count(slippage_bps)` as sample
+  size. Acceptance: `TestQualitySamples` (NULL row excluded),
+  storage suite. FIXED.
+- **Q-P2 · TriangleLeaders "worst" could duplicate a top earner and
+  scanned unbounded rows.** Fix: two bounded SQL queries (top by sum
+  DESC; worst restricted to negative PnL, ASC) with in-Go disjointness.
+  FIXED.
+- **Q-P2 · window-hours arithmetic undercounted touched hour buckets**
+  (persistence could read 26/24). Fix: bucket count =
+  truncated-boundary difference + 1; pinned in `TestQualitySamples`
+  (25 buckets for a 24h window). FIXED.
+- **Q-P3 · fake advisor could ratchet TTL upward forever.** Fix:
+  proposal only below a 10s cap; `TestFakeAdvisorTTLCapTable`. FIXED.
+- **Q-P3 · AI input presented cumulative counters unlabeled.** Fix:
+  `counters_scope` field ("cumulative since process start") marshaled
+  into every prompt. FIXED.
+
+### Security audit
+
+- **S-001/S-002 (P0/P1) · AI-recommendation approval bypassed the
+  risk→ADMIN config mapping, and the config API's permission check ran
+  outside the writer lock (TOCTOU).** Fix: `strategy.Authorize`
+  evaluated INSIDE the writer lock against the diff actually written;
+  one shared `api.SectionAuthorizer` used by the config API, AI
+  approvals (web) and Telegram approvals (OPERATOR). Acceptance:
+  `TestApproveRespectsAuthorizeGate` (internal/ai),
+  config API 403 tests. FIXED.
+- **S-003 · same-mux /metrics was unauthenticated.** Fix: gated behind
+  `PermViewSystem`. Acceptance: `TestMetricsEndpointRequiresPermission`.
+  FIXED.
+- **S-004 · Telegram dispatch executed the command before checking the
+  permission** (denial only suppressed the reply). Fix: dispatch
+  returns descriptors; the permission gate runs before `run()`.
+  Acceptance: telegram suite (side-effect-free denial by
+  construction). FIXED.
+- **S-005 · sessions stored raw bearer tokens; disabled users kept
+  working sessions; unused IdleTTL implied idle expiry that did not
+  exist.** Fix: stores index sessions by SHA-256 digest only
+  (`auth.HashToken`, hashing centralized in Manager), pgx
+  `SessionByToken` rejects disabled users at lookup, IdleTTL removed
+  and docs/security.md §4 corrected. Acceptance:
+  `TestSessionStoreHoldsOnlyTokenDigests`, storage round-trip. FIXED.
+- **S-006 · login throttle keyed only (email,ip); Argon2 verifications
+  unbounded (memory DoS).** Fix: additional per-IP throttle (20/min)
+  and a process-wide 4-slot semaphore around Argon2id derivations.
+  Acceptance: `TestIPThrottleCatchesEmailRotation`. FIXED.
+- **S-007 · POST /reports/generate ran real aggregate queries under the
+  viewer-held reports:view.** Fix: new `reports:generate` permission
+  (OPERATOR+). Acceptance: RBAC matrix test + denial matrix. FIXED.
+- **S-008 · web audit trail missed paper controls and login/logout, and
+  dropped IP/correlation ID.** Fix: AuditAction carries
+  (ip, correlation_id) into audit_events; paper pause/resume,
+  auth.login, auth.logout audited. FIXED.
+- **S-009 · Redacted() forgot ARB_ADMIN_PASSWORD.** Fix: masked; a
+  reflective tripwire fails on any future secret-looking field left
+  unmasked. Acceptance: `TestRedactedMasksSecretLookingFieldsReflectively`.
+  FIXED.
+- **S-010 · AI recommendation fields flowed onward unbounded.** Fix:
+  parameter ≤128 bytes, recommended_value ≤256 (individually
+  discarded). FIXED.
+- **S-011 · no browser hardening headers.** Fix: CSP
+  (default-src 'self', frame-ancestors 'none', ws connect), nosniff,
+  X-Frame-Options DENY, Referrer-Policy, Permissions-Policy in
+  next.config.ts; nosniff on every API JSON response. E2E 10/10 with
+  headers active (dev server adds 'unsafe-eval' for webpack only).
+  FIXED.
+- **S-012 · Telegram client errors could echo the bot token** (URL in
+  transport errors). Fix: token held apart from base URL; `redact()`
+  masks it in every error path. Acceptance:
+  `TestClientErrorsNeverContainToken`. FIXED.
+- **S-013 · logout lacked CSRF.** Fix: wrapped; test pins 403-without /
+  200-with. FIXED.
+- **S-015 · a forged callback consumed another user's nonce**
+  (delete-before-verify → button DoS). Fix: peek-before-delete — only
+  the entitled tap or expiry retires a nonce, still single-use.
+  Acceptance: extended `TestInlineButtonRoundTripAndTamperRejection`.
+  FIXED.
+- **S-017 · client correlation IDs echoed/logged raw; Telegram report
+  errors echoed raw internals.** Fix: `^[A-Za-z0-9._-]{1,64}$` or a
+  fixed marker; Telegram returns a generic failure line and logs the
+  detail. Acceptance: `TestCorrelationIDSanitized`. FIXED.
+
+### Code review audit
+
+- **CR-P1-1/2 · Binance depth Syncer raced OnDelta/OnSnapshot/Synced,
+  and concurrent resyncs of one market stampeded REST.** Fix: mutex on
+  the syncer state machine + per-market single-flight
+  (`resyncing` CAS); feed's syncer map behind its own lock.
+  Acceptance: `TestSyncerConcurrentDeltaAndSnapshotIsRaceFree`,
+  `TestResyncSingleFlightPerMarket`. FIXED.
+- **CR-P1-3 · cycle→opportunity linkage depended on callers re-attaching
+  the opportunity; the engine's outbox path didn't, so persisted cycles
+  lost their opportunity_id.** Fix: `CycleResult.OpportunityID` set by
+  the simulator from the plan; `InsertCycle` reads it; outbox needs no
+  side channel. Acceptance: simulator assertion + outbox end-to-end
+  linkage check. FIXED.
+- **CR-P1-4 · lazy init raced on first concurrent use** (Outbox,
+  notification.Center, telegram.PushSink, ai.Service — plus Recorder
+  and Bot, same defect class): double-created channels silently lost
+  records/deliveries. Fix: `sync.Once` in every `init()`. Acceptance:
+  new concurrent-first-use race tests; `-race` suite green. FIXED.
+- **CR-P2-7 · staleness sweep read the boot-time MaxBookAge, ignoring
+  hot-swapped config.** Fix: `Scanner.CurrentConfig()` read per tick.
+  FIXED.
+- **CR-P2-8 · cooldown_seconds:0 validated but silently became 60s.**
+  Fix: Validate rejects 0 ([1,3600]) so config never lies. FIXED.
+- **CR-P2-9 · recording stream ids rendered via rune('0'+id)** (breaks
+  at id≥10). Fix: strconv. FIXED.
+- **CR-P2-10 · alert center forgot persisted active alerts on
+  restart.** Fix: `Alerts.LoadActive` + `Center.LoadActive` hydration
+  at boot. FIXED.
+- **CR-P2-11 · merged with S-004.** FIXED.
+- **CR-P2-14 · no handler-level RBAC/CSRF denial tests for the AI and
+  reports mutation routes.** Fix: `TestAIAndReportsDenialMatrix`
+  (401 → 403 RBAC → 403 CSRF → 404 absent, in order). FIXED.
+- **P3 batch.** Rune-safe truncation (telegram + ai), expired-nonce
+  sweep in newCallback, metrics instrument errors joined instead of
+  discarded, seed config version audited as actor "system",
+  `Params.Clone()` so Current() hands out no shared Routes map, AI
+  alerts.active from Center.ActiveCount instead of the recent ring.
+  All FIXED.
+
+### Deliberately open
+
+- **CSP still allows 'unsafe-inline' scripts/styles** — Next.js inline
+  runtime chunks require it until a nonce pipeline exists (tracked as
+  console hardening follow-up; risk accepted for an authenticated
+  internal console). P3.
+- **auth.MemoryStore does not re-check Disabled at session lookup** —
+  the memory store exists for tests and DB-less bootstrap where no
+  runtime user-disable path exists; the pgx store (production) rejects
+  at lookup. P3, documented here.
+- **T-046 (testnet keys) / T-047 (govulncheck refresh) remain BLOCKED**
+  on this environment's egress policy, stated honestly in their tasks.
+
+## Status log (continued)
+
+- 2026-08-26 (night): §88 audit complete — three parallel audit passes
+  (quant, security, code review) produced the findings above; every
+  P0/P1/P2 finding fixed in this batch with regression tests, P3s
+  fixed or explicitly accepted. Validation: gofmt clean,
+  golangci-lint 0 issues, `go vet` clean, `go test -race ./...` green
+  across 26 packages (storage against PostgreSQL 16 with migration
+  000003 applied up/down/up), frontend lint/typecheck/build green,
+  Playwright E2E 10/10 against real arbd with the new security headers
+  active. T-004 stays IN_PROGRESS until the PR's hosted CI run is
+  green on runners.

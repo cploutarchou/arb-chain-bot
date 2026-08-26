@@ -25,7 +25,7 @@ func newAlertServer(t *testing.T) (*Server, *http.ServeMux, *notification.Center
 	}})
 	s.Alerts = center
 	var audits []string
-	s.AuditAction = func(actor, action, entity string) {
+	s.AuditAction = func(actor, action, entity, _, _ string) {
 		audits = append(audits, actor+"|"+action+"|"+entity)
 	}
 	return s, mux, center, &audits
@@ -86,8 +86,9 @@ func TestAlertsListAndAck(t *testing.T) {
 	if got, _ := center.Get(id); got.State != notification.AlertAcked || got.AckedBy != "u-operator" {
 		t.Fatalf("center after ack = %+v", got)
 	}
-	if len(*audits) != 1 || (*audits)[0] != "u-operator|alert.ack|alert:"+id {
-		t.Fatalf("audits = %v", *audits)
+	// Logins are audited too (S-008); assert the ack event specifically.
+	if want := "u-operator|alert.ack|alert:" + id; (*audits)[len(*audits)-1] != want {
+		t.Fatalf("audits = %v (want last %q)", *audits, want)
 	}
 
 	// Double ack → 409; resolve works from acked; unknown id → 404.

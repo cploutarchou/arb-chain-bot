@@ -61,6 +61,8 @@ type Engine struct {
 	// Notifier, when set, receives platform alerts (never called on the
 	// hot path; keys per SKILL §58 with cooldown/dedup in the service).
 	Notifier *notification.Service
+	// Center, when set, supplies the live active-alert count (AI input).
+	Center *notification.Center
 
 	mu     sync.RWMutex
 	scn    *scanner.Scanner
@@ -497,9 +499,12 @@ func (e *Engine) Run(ctx context.Context) error {
 				return err
 			}
 		case now := <-ticker.C:
+			// Live config, not the boot literal: a hot-swapped
+			// max_book_age_ms applies to the sweep too (audit CR-P2-7).
+			maxAge := scn.CurrentConfig().MaxBookAge
 			for _, id := range books.All() {
 				if b, ok := books.Get(id); ok {
-					b.EvaluateStaleness(now, scn.Cfg.MaxBookAge)
+					b.EvaluateStaleness(now, maxAge)
 				}
 			}
 		}

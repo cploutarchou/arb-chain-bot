@@ -13,12 +13,13 @@ const (
 	PermViewAudit       Permission = "view:audit"
 	PermViewSystem      Permission = "view:system"
 
-	PermPaperControl  Permission = "paper:control"  // start/pause/resume
-	PermPaperReset    Permission = "paper:reset"    // destructive, ADMIN only
-	PermScannerConfig Permission = "scanner:config" // strategy config within bounds
-	PermAIApprove     Permission = "ai:approve"     // approve/reject recommendations
-	PermAlertAck      Permission = "alerts:ack"
-	PermReportView    Permission = "reports:view"
+	PermPaperControl   Permission = "paper:control"  // start/pause/resume
+	PermPaperReset     Permission = "paper:reset"    // destructive, ADMIN only
+	PermScannerConfig  Permission = "scanner:config" // strategy config within bounds
+	PermAIApprove      Permission = "ai:approve"     // approve/reject recommendations
+	PermAlertAck       Permission = "alerts:ack"
+	PermReportView     Permission = "reports:view"
+	PermReportGenerate Permission = "reports:generate" // on-demand generation (costs queries)
 
 	PermRiskConfig     Permission = "risk:config"     // limits/breaker policy
 	PermExchangeConfig Permission = "exchange:config" // keys/markets/fees
@@ -38,13 +39,14 @@ var matrix = map[Role]map[Permission]bool{
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
 		PermViewRisk, PermViewSystem, PermReportView, PermViewAudit,
 		PermPaperControl, PermScannerConfig, PermAIApprove, PermAlertAck,
+		PermReportGenerate,
 	),
 	RoleAdmin: setOf(
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
 		PermViewRisk, PermViewSystem, PermReportView, PermViewAudit,
 		PermPaperControl, PermScannerConfig, PermAIApprove, PermAlertAck,
-		PermPaperReset, PermRiskConfig, PermExchangeConfig,
-		PermUserManage, PermSystemConfig,
+		PermReportGenerate, PermPaperReset, PermRiskConfig,
+		PermExchangeConfig, PermUserManage, PermSystemConfig,
 	),
 }
 
@@ -59,3 +61,14 @@ func setOf(ps ...Permission) map[Permission]bool {
 // Can reports whether a role holds a permission. Unknown roles hold
 // nothing (fail closed).
 func Can(r Role, p Permission) bool { return matrix[r][p] }
+
+// PermissionForConfigSection maps a strategy-config top-level section to
+// the permission required to change it. Every path that mutates config
+// — the config API, rollbacks, AND AI-recommendation approvals — must
+// use this one mapping so risk limits stay ADMIN-only everywhere.
+func PermissionForConfigSection(section string) Permission {
+	if section == "risk" {
+		return PermRiskConfig
+	}
+	return PermScannerConfig
+}

@@ -38,6 +38,11 @@ type Input struct {
 	ConfigVersion int64           `json:"config_version"`
 	Params        strategy.Params `json:"params"`
 
+	// CountersScope tells the model what window the scanner/feed/paper
+	// counters cover (they are cumulative since process start, not the
+	// analysis period) so hourly analyses do not misread totals as rates.
+	CountersScope string `json:"counters_scope,omitempty"`
+
 	Scanner ScannerSummary   `json:"scanner"`
 	Feed    FeedSummary      `json:"feed"`
 	Paper   *PaperSummary    `json:"paper,omitempty"`
@@ -90,6 +95,11 @@ type Recommendation struct {
 	Status           string    `json:"status"` // proposed|approved|rejected|deferred|expired
 	DecidedBy        string    `json:"decided_by,omitempty"`
 	DecidedAt        time.Time `json:"decided_at,omitempty"`
+
+	// deciding reserves the recommendation while an approval is in
+	// flight (guards the double-approve window across the unlocked
+	// strategy apply).
+	deciding bool
 }
 
 // AnalysisResult is the validated outcome of one advisor run.
@@ -150,10 +160,13 @@ const (
 )
 
 // parseResponse strictly decodes and bounds-checks the provider text.
-// currentParams anchors parameter validation: a recommendation must
-// name a known path and produce a payload that passes strategy
-// validation when applied.
-func parseResponse(raw string, currentParams strategy.Params) (response, error) {
+// Response-level violations (malformed JSON, unknown fields, missing or
+// oversized summary, too many items) reject the whole output. An
+// individually invalid RECOMMENDATION is dropped with a reason instead
+// of discarding the entire analysis (audit P2-3): the advisor is off
+// the hot path and all-or-nothing turned one bad suggestion into a
+// standing WARNING loop. Discarded reasons surface in the result.
+func parseResponse(raw string, currentParams strategy.Params) (response, []string, error) {
 	// Providers sometimes wrap JSON in markdown fences; strip exactly that.
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "```json")
@@ -164,31 +177,36 @@ func parseResponse(raw string, currentParams strategy.Params) (response, error) 
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&resp); err != nil {
-		return response{}, fmt.Errorf("%w: %s", ErrInvalidOutput, err)
+		return response{}, nil, fmt.Errorf("%w: %s", ErrInvalidOutput, err)
 	}
 	if dec.More() {
-		return response{}, fmt.Errorf("%w: trailing content", ErrInvalidOutput)
+		return response{}, nil, fmt.Errorf("%w: trailing content", ErrInvalidOutput)
 	}
 	if resp.Summary == "" || len(resp.Summary) > maxFieldLen {
-		return response{}, fmt.Errorf("%w: summary empty or oversized", ErrInvalidOutput)
+		return response{}, nil, fmt.Errorf("%w: summary empty or oversized", ErrInvalidOutput)
 	}
 	if len(resp.Findings) > maxFindings {
-		return response{}, fmt.Errorf("%w: too many findings", ErrInvalidOutput)
+		return response{}, nil, fmt.Errorf("%w: too many findings", ErrInvalidOutput)
 	}
 	for _, f := range resp.Findings {
 		if len(f) > maxFieldLen {
-			return response{}, fmt.Errorf("%w: finding oversized", ErrInvalidOutput)
+			return response{}, nil, fmt.Errorf("%w: finding oversized", ErrInvalidOutput)
 		}
 	}
 	if len(resp.Recommendations) > maxRecs {
-		return response{}, fmt.Errorf("%w: too many recommendations", ErrInvalidOutput)
+		return response{}, nil, fmt.Errorf("%w: too many recommendations", ErrInvalidOutput)
 	}
+	var kept []recommendation
+	var discarded []string
 	for i, r := range resp.Recommendations {
 		if err := validateRecommendation(r, currentParams); err != nil {
-			return response{}, fmt.Errorf("%w: recommendation %d: %s", ErrInvalidOutput, i, err)
+			discarded = append(discarded, fmt.Sprintf("recommendation %d discarded: %s", i, err))
+			continue
 		}
+		kept = append(kept, r)
 	}
-	return resp, nil
+	resp.Recommendations = kept
+	return resp, discarded, nil
 }
 
 func validateRecommendation(r recommendation, current strategy.Params) error {
@@ -199,6 +217,15 @@ func validateRecommendation(r recommendation, current strategy.Params) error {
 		if v == "" {
 			return fmt.Errorf("missing %s", name)
 		}
+	}
+	// Tight caps on the two fields that flow onward into config paths
+	// and UI labels (audit S-010): no legitimate parameter path or value
+	// comes close, so oversize means a malformed or adversarial output.
+	if len(r.Parameter) > 128 {
+		return fmt.Errorf("parameter oversized")
+	}
+	if len(r.RecommendedValue) > 256 {
+		return fmt.Errorf("recommended_value oversized")
 	}
 	for name, v := range map[string]string{
 		"evidence": r.Evidence, "reason": r.Reason,

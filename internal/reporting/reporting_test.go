@@ -87,7 +87,7 @@ func TestGenerateFullReport(t *testing.T) {
 	if r.Scanner.QualRate != "0.24%" {
 		t.Fatalf("qual rate = %q", r.Scanner.QualRate)
 	}
-	if r.Opportunities.Persisted != 12 || r.Opportunities.BestBps != "42.5" {
+	if r.Opportunities.QualifiedPersisted != 12 || r.Opportunities.BestBps != "42.5" {
 		t.Fatalf("opps = %+v", r.Opportunities)
 	}
 	if r.PaperCycles.SuccessRate != "70.00%" {
@@ -166,5 +166,54 @@ func TestSchedulerEmitsReports(t *testing.T) {
 	_ = s.Run(ctx)
 	if len(h.inserted) < 2 {
 		t.Fatalf("scheduler produced %d reports", len(h.inserted))
+	}
+}
+
+// Acceptance (audit P1-3): scanner counters are cumulative at the
+// source, so the second report of a kind must show the PERIOD delta,
+// while a different kind keeps its own independent baseline.
+func TestScannerSectionIsPerPeriodDelta(t *testing.T) {
+	h := &fakeHistory{}
+	var events []notification.Event
+	g := testGenerator(h, &events)
+	cum := ScannerSection{Evaluations: 5000, Qualified: 12, Rejected: 4988}
+	g.Sources.Scanner = func() ScannerSection { return cum }
+
+	first, err := g.Generate(context.Background(), KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Scanner.Evaluations != 5000 || first.Scanner.Qualified != 12 {
+		t.Fatalf("first report should be cumulative: %+v", first.Scanner)
+	}
+	noted := false
+	for _, n := range first.Notes {
+		if strings.Contains(n, "since process start") {
+			noted = true
+		}
+	}
+	if !noted {
+		t.Fatalf("first report must disclose missing baseline: %+v", first.Notes)
+	}
+
+	cum = ScannerSection{Evaluations: 8000, Qualified: 20, Rejected: 7980}
+	second, err := g.Generate(context.Background(), KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Scanner.Evaluations != 3000 || second.Scanner.Qualified != 8 || second.Scanner.Rejected != 2992 {
+		t.Fatalf("second report should be the period delta: %+v", second.Scanner)
+	}
+	if second.Scanner.QualRate != "0.27%" { // 8/3000
+		t.Fatalf("delta qual rate = %q", second.Scanner.QualRate)
+	}
+
+	// A different kind has no baseline yet — cumulative again.
+	weekly, err := g.Generate(context.Background(), KindWeekly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if weekly.Scanner.Evaluations != 8000 {
+		t.Fatalf("weekly baseline must be independent: %+v", weekly.Scanner)
 	}
 }

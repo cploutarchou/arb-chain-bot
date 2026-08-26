@@ -35,12 +35,21 @@ func (Fake) Analyze(_ context.Context, prompt string) (string, error) {
 		},
 	}
 	// Deterministic rule: zero qualifications over a busy window ⇒
-	// suggest widening the evaluation TTL within bounds.
-	if in.Scanner.Evaluations >= 100 && in.Scanner.Qualified == 0 {
+	// suggest widening the evaluation TTL, clamped to the validation
+	// bound; at the cap no recommendation is made (a no-op change is
+	// noise, and an out-of-bounds one would fail validation — audit
+	// P2-2 found the unclamped rule poisoned every analysis once the
+	// operator had approved its way to the cap).
+	const ttlCapMs = 10_000 // strategy validation bound for scanner.ttl_ms
+	if in.Scanner.Evaluations >= 100 && in.Scanner.Qualified == 0 && in.Params.Scanner.TTLMs < ttlCapMs {
+		next := in.Params.Scanner.TTLMs + 100
+		if next > ttlCapMs {
+			next = ttlCapMs
+		}
 		resp.Findings = append(resp.Findings, "no opportunities qualified despite active evaluation")
 		resp.Recommendations = append(resp.Recommendations, recommendation{
 			Parameter:        "scanner.ttl_ms",
-			RecommendedValue: fmt.Sprintf("%d", in.Params.Scanner.TTLMs+100),
+			RecommendedValue: fmt.Sprintf("%d", next),
 			Evidence: fmt.Sprintf("%d evaluations produced 0 qualified opportunities",
 				in.Scanner.Evaluations),
 			Reason:         "a longer opportunity TTL tolerates current latency between detection and simulation",

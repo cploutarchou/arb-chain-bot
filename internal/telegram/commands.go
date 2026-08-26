@@ -3,59 +3,74 @@ package telegram
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 )
 
-// dispatch maps a command to (reply text, optional keyboard, required
-// permission). Empty permission means any allowlisted role; empty text
-// means unknown command. Every reply is plain text, and no reply ever
-// contains secrets or full config payloads.
-func (b *Bot) dispatch(cmd, actor string) (string, *InlineKeyboard, string) {
+// command is one dispatchable bot command: the permission is checked by
+// the caller BEFORE run executes (audit S-004 — the previous shape ran
+// the handler first and only suppressed the reply, so a side-effecting
+// command executed even for a role that lacked the permission). Empty
+// perm means any allowlisted role.
+type command struct {
+	perm auth.Permission
+	run  func() (string, *InlineKeyboard)
+}
+
+// dispatch maps a command name to its descriptor without executing
+// anything. Every reply is plain text, and no reply ever contains
+// secrets or full config payloads.
+func (b *Bot) dispatch(cmd, actor string) (command, bool) {
+	text := func(perm auth.Permission, f func() string) (command, bool) {
+		return command{perm: perm, run: func() (string, *InlineKeyboard) { return f(), nil }}, true
+	}
+	withKB := func(perm auth.Permission, f func() (string, *InlineKeyboard)) (command, bool) {
+		return command{perm: perm, run: f}, true
+	}
 	switch cmd {
 	case "/start", "/help":
-		return helpText, nil, ""
+		return text("", func() string { return helpText })
 	case "/status", "/health":
-		return b.statusText(), nil, string(auth.PermViewSystem)
+		return text(auth.PermViewSystem, b.statusText)
 	case "/scanner":
-		return b.scannerText(), nil, string(auth.PermViewDashboard)
+		return text(auth.PermViewDashboard, b.scannerText)
 	case "/triangles":
-		return b.trianglesText(), nil, string(auth.PermViewDashboard)
+		return text(auth.PermViewDashboard, b.trianglesText)
 	case "/opportunities":
-		return b.opportunitiesText(), nil, string(auth.PermViewOpportunity)
+		return text(auth.PermViewOpportunity, b.opportunitiesText)
 	case "/paper", "/paper_status":
-		text, kb := b.paperText(actor)
-		return text, kb, string(auth.PermViewDashboard)
+		return withKB(auth.PermViewDashboard, func() (string, *InlineKeyboard) { return b.paperText(actor) })
 	case "/paper_pause":
-		return b.runPaperControl("paper_pause", actor), nil, string(auth.PermPaperControl)
+		return text(auth.PermPaperControl, func() string { return b.runPaperControl("paper_pause", actor) })
 	case "/paper_resume":
-		return b.runPaperControl("paper_resume", actor), nil, string(auth.PermPaperControl)
+		return text(auth.PermPaperControl, func() string { return b.runPaperControl("paper_resume", actor) })
 	case "/orders", "/fills":
-		return "Order and fill history lives in the console (persisted per cycle); a Telegram summary lands with the reports task (T-042).", nil, string(auth.PermViewPortfolio)
+		return text(auth.PermViewPortfolio, func() string {
+			return "Order and fill history lives in the console (persisted per cycle); a Telegram summary lands with the reports task (T-042)."
+		})
 	case "/balances":
-		return b.balancesText(), nil, string(auth.PermViewPortfolio)
+		return text(auth.PermViewPortfolio, b.balancesText)
 	case "/pnl", "/stats":
-		return b.pnlText(), nil, string(auth.PermViewPortfolio)
+		return text(auth.PermViewPortfolio, b.pnlText)
 	case "/exchanges", "/latency":
-		return b.feedText(), nil, string(auth.PermViewSystem)
+		return text(auth.PermViewSystem, b.feedText)
 	case "/risk":
-		return b.riskText(), nil, string(auth.PermViewRisk)
+		return text(auth.PermViewRisk, b.riskText)
 	case "/alerts":
-		text, kb := b.alertsText(actor)
-		return text, kb, string(auth.PermViewDashboard)
+		return withKB(auth.PermViewDashboard, func() (string, *InlineKeyboard) { return b.alertsText(actor) })
 	case "/ai":
-		return b.aiText(), nil, string(auth.PermViewDashboard)
+		return text(auth.PermViewDashboard, b.aiText)
 	case "/ai_recommendations":
-		text, kb := b.aiRecommendationsText(actor)
-		return text, kb, string(auth.PermViewDashboard)
+		return withKB(auth.PermViewDashboard, func() (string, *InlineKeyboard) { return b.aiRecommendationsText(actor) })
 	case "/report":
-		return b.reportText("weekly"), nil, string(auth.PermReportView)
+		return text(auth.PermReportView, func() string { return b.reportText("weekly") })
 	case "/daily":
-		return b.reportText("daily"), nil, string(auth.PermReportView)
+		return text(auth.PermReportView, func() string { return b.reportText("daily") })
 	case "/config":
-		return b.configText(), nil, string(auth.PermViewSystem)
+		return text(auth.PermViewSystem, b.configText)
 	}
-	return "", nil, ""
+	return command{}, false
 }
 
 const helpText = `arbd — triangular arbitrage platform (paper trading only; live execution is permanently disabled by design).
@@ -232,11 +247,14 @@ func (b *Bot) alertsText(actor string) (string, *InlineKeyboard) {
 	return sb.String(), kb
 }
 
+// truncate shortens to at most n runes without splitting a UTF-8
+// sequence mid-character.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	runes := []rune(s)
+	return string(runes[:n-1]) + "…"
 }
 
 func (b *Bot) reportText(kind string) string {
