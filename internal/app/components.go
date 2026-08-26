@@ -54,10 +54,37 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
 			engine.Hub = hub
+			if cfg.Mode == config.ModePaper {
+				apiServer.Paper = paperProxy{engine}
+			}
 		}
 		return append([]Component{apiServer}, others...)
 	}
 	return others
+}
+
+// paperProxy defers to the engine's paper controller, which exists only
+// after metadata bootstrap; calls before readiness are safe no-ops with
+// Running()=false.
+type paperProxy struct{ e *Engine }
+
+func (p paperProxy) Pause() {
+	if pe := p.e.Paper(); pe != nil {
+		pe.Pause()
+	}
+}
+
+func (p paperProxy) Resume() {
+	if pe := p.e.Paper(); pe != nil {
+		pe.Resume()
+	}
+}
+
+func (p paperProxy) Running() bool {
+	if pe := p.e.Paper(); pe != nil {
+		return pe.Running()
+	}
+	return false
 }
 
 // buildAuth wires the in-memory auth stores with the dev bootstrap admin.

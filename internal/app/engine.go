@@ -15,15 +15,19 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange/binance"
+	"github.com/cploutarchou/arb-chain-bot/internal/execution"
 	"github.com/cploutarchou/arb-chain-bot/internal/fees"
 	"github.com/cploutarchou/arb-chain-bot/internal/graph"
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
+	"github.com/cploutarchou/arb-chain-bot/internal/paper"
+	"github.com/cploutarchou/arb-chain-bot/internal/portfolio"
 	"github.com/cploutarchou/arb-chain-bot/internal/pricing"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/reservation"
 	"github.com/cploutarchou/arb-chain-bot/internal/risk"
 	"github.com/cploutarchou/arb-chain-bot/internal/scanner"
+	"github.com/cploutarchou/arb-chain-bot/internal/simulation"
 )
 
 // Engine assembles the trading core for the first exchange: metadata →
@@ -45,6 +49,8 @@ type Engine struct {
 	mu    sync.RWMutex
 	scn   *scanner.Scanner
 	topo  *graph.Topology
+	pap   *paper.Engine
+	port  *portfolio.Portfolio
 	ready bool
 }
 
@@ -64,6 +70,18 @@ type EngineStatus struct {
 	Rejected    int64    `json:"rejected"`
 	Skipped     int64    `json:"skipped_unhealthy"`
 	Dropped     int64    `json:"dropped_events"`
+
+	Paper *PaperStatus `json:"paper,omitempty"`
+}
+
+// PaperStatus reports the paper engine when PAPER mode is active.
+type PaperStatus struct {
+	Running   bool  `json:"running"`
+	Active    int   `json:"active_simulations"`
+	Received  int64 `json:"received"`
+	Completed int64 `json:"completed"`
+	Failed    int64 `json:"failed"`
+	Skipped   int64 `json:"skipped"`
 }
 
 func (e *Engine) Status() EngineStatus {
@@ -83,7 +101,22 @@ func (e *Engine) Status() EngineStatus {
 		st.Skipped = e.scn.Stats.SkippedBooks.Load()
 		st.Dropped = e.scn.Stats.DroppedEvts.Load()
 	}
+	if e.pap != nil {
+		ps := e.pap.Snapshot()
+		st.Paper = &PaperStatus{
+			Running: e.pap.Running(), Active: e.pap.Active(),
+			Received: ps.Received, Completed: ps.Completed,
+			Failed: ps.Failed, Skipped: ps.Skipped,
+		}
+	}
 	return st
+}
+
+// Paper exposes the paper engine control surface (nil outside PAPER mode).
+func (e *Engine) Paper() *paper.Engine {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.pap
 }
 
 func (e *Engine) Run(ctx context.Context) error {
@@ -180,8 +213,59 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	scn.ClockHealthy.Store(true)
 
+	// PAPER mode: assemble the full simulation loop behind the scanner.
+	var paperEng *paper.Engine
+	var paperIn chan scanner.Event
+	port := portfolio.New(resv, initial)
+	if e.cfg.Mode == config.ModePaper {
+		marker := portfolio.BookMarker{Books: books, Markets: scoped}
+		executor := simulation.NewPaper(
+			books, rulesLookup(rules), sched,
+			simulation.WallClock{}, simulation.RealWaiter{}, marker,
+			simulation.Config{
+				Latency: simulation.LatencyModel{
+					SubmitBase: 20 * time.Millisecond, SubmitJitter: 30 * time.Millisecond,
+					FillBase: 30 * time.Millisecond, FillJitter: 50 * time.Millisecond,
+				},
+				LimitToleranceBps: decimal.NewFromInt(20),
+				Depth:             50,
+				Seed:              e.cfg.Seed,
+			},
+			newULID,
+		)
+		byID := make(map[string]graph.Triangle, len(topo.Triangles))
+		for _, tri := range topo.Triangles {
+			byID[tri.ID] = tri
+		}
+		paperIn = make(chan scanner.Event, 128)
+		paperEng = &paper.Engine{
+			Executor:  executor,
+			Resv:      resv,
+			Portfolio: port,
+			Triangles: byID,
+			In:        paperIn,
+			Clock:     time.Now,
+			IDGen:     newULID,
+			OnResult: func(res execution.CycleResult) {
+				e.log.Info("paper cycle settled",
+					"cycle_id", res.CycleID, "outcome", string(res.Outcome),
+					"pnl", res.TotalPnL.String(), "consumed", res.InputConsumed.String())
+				if e.Hub != nil {
+					_ = e.Hub.Publish("cycles", map[string]any{
+						"cycle_id": res.CycleID, "outcome": string(res.Outcome),
+						"realized_pnl": res.RealizedPnL.String(),
+						"total_pnl":    res.TotalPnL.String(),
+						"settled_at":   res.SettledAt,
+					})
+				}
+			},
+		}
+		paperEng.Resume()
+		scn.Sims = paperEng.Active
+	}
+
 	e.mu.Lock()
-	e.scn, e.topo, e.ready = scn, topo, true
+	e.scn, e.topo, e.pap, e.port, e.ready = scn, topo, paperEng, port, true
 	e.mu.Unlock()
 
 	if e.Hub != nil {
@@ -193,10 +277,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	go func() { errCh <- feed.Run(ctx) }()
 	go func() { errCh <- scn.Run(ctx) }()
-	go func() { errCh <- e.consumeEvents(ctx, scn) }()
+	go func() { errCh <- e.consumeEvents(ctx, scn, paperIn) }()
+	if paperEng != nil {
+		go func() { errCh <- paperEng.Run(ctx) }()
+	}
 
 	// Staleness sweep: books that stop ticking degrade to STALE.
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -219,16 +306,24 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 }
 
-// consumeEvents is the interim event sink: qualified opportunities are
-// logged (paper engine + persistence + realtime hub attach here as
-// T-018-wiring/T-022/T-024 land in the app layer).
-func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner) error {
+// consumeEvents fans scanner events out: qualified opportunities go to
+// the paper engine (PAPER mode) and the hub; persistence attaches here
+// when the storage layer (T-022) lands.
+func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperIn chan<- scanner.Event) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case ev := <-scn.Out:
 			if ev.Opportunity.Status == opportunity.StatusQualified {
+				if paperIn != nil {
+					select {
+					case paperIn <- ev:
+					default:
+						e.log.Warn("paper queue full; opportunity dropped",
+							"opportunity_id", ev.Opportunity.ID)
+					}
+				}
 				e.log.Info("opportunity qualified",
 					"opportunity_id", ev.Opportunity.ID,
 					"triangle_id", ev.Opportunity.TriangleID,
@@ -299,4 +394,12 @@ func defaultRiskLimits() risk.Resolver {
 
 func newULID() string {
 	return ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
+}
+
+// rulesLookup adapts the instrument-rules map to simulation.RulesSource.
+type rulesLookup map[exchange.MarketID]exchange.InstrumentRules
+
+func (r rulesLookup) Rules(id exchange.MarketID) (exchange.InstrumentRules, bool) {
+	v, ok := r[id]
+	return v, ok
 }

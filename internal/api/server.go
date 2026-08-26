@@ -39,6 +39,16 @@ type Server struct {
 	Hub *realtime.Hub
 	// ScannerStatus, when set, backs /api/v1/scanner/status.
 	ScannerStatus func() any
+	// Paper, when set, backs the paper control routes (PAPER mode only).
+	Paper PaperController
+}
+
+// PaperController is the paper engine's control surface (shared with
+// Telegram; single backend state).
+type PaperController interface {
+	Pause()
+	Resume()
+	Running() bool
 }
 
 func NewServer(cfg config.Bootstrap, log *slog.Logger, info BuildInfo) *Server {
@@ -110,11 +120,23 @@ func (s *Server) routes(mux *http.ServeMux) {
 		}
 		WriteData(w, http.StatusOK, s.ScannerStatus())
 	}))
-	// Paper controls: RBAC + CSRF pre-wired; the paper engine loop wires in
-	// behind them (T-018 app integration). 501 until then — never a fake OK.
-	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(func(w http.ResponseWriter, r *http.Request) {
-		WriteError(w, http.StatusNotImplemented, "not_implemented", "paper engine wiring pending (T-018 app integration)", correlationID(r))
-	})))
+	// Paper controls (RBAC + CSRF). Outside PAPER mode the engine is absent
+	// and the routes answer 404 honestly.
+	paperGate := func(fn func(PaperController)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if s.Paper == nil {
+				WriteError(w, http.StatusNotFound, "paper_absent", "paper engine not running (mode is not PAPER)", correlationID(r))
+				return
+			}
+			p, _ := PrincipalFrom(r.Context())
+			fn(s.Paper)
+			s.log.Info("paper engine control",
+				"actor", p.UserID, "path", r.URL.Path, "running", s.Paper.Running())
+			WriteData(w, http.StatusOK, map[string]any{"running": s.Paper.Running()})
+		}
+	}
+	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Pause() }))))
+	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate(func(p PaperController) { p.Resume() }))))
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 }
 

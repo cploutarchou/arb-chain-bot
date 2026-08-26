@@ -158,14 +158,42 @@ func TestRBACAndCSRFOnPaperPause(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("operator without csrf = %d", rec.Code)
 	}
-	// With CSRF: passes both gates and reaches the honest 501.
+	// With CSRF but no paper engine wired: honest 404.
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/paper/pause", nil)
 	req.AddCookie(opCookie)
 	req.Header.Set("X-CSRF-Token", opCSRF)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("operator pause = %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("operator pause without engine = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+type fakePaper struct{ running bool }
+
+func (f *fakePaper) Pause()        { f.running = false }
+func (f *fakePaper) Resume()       { f.running = true }
+func (f *fakePaper) Running() bool { return f.running }
+
+func TestPaperPauseResumeWiring(t *testing.T) {
+	s, mux := newTestServer(t)
+	fp := &fakePaper{running: true}
+	s.Paper = fp
+	cookie, csrf := login(t, mux, "op@example.test", "op-pw")
+
+	call := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.AddCookie(cookie)
+		req.Header.Set("X-CSRF-Token", csrf)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := call("/api/v1/paper/pause"); rec.Code != http.StatusOK || fp.running {
+		t.Fatalf("pause = %d running=%v", rec.Code, fp.running)
+	}
+	if rec := call("/api/v1/paper/resume"); rec.Code != http.StatusOK || !fp.running {
+		t.Fatalf("resume = %d running=%v", rec.Code, fp.running)
 	}
 }
 
