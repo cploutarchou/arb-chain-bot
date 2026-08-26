@@ -476,19 +476,36 @@ data-flow,security,risk}.md`.
   WS ping/connection caps, fee asset convention).
 
 ### T-057 Platform settings + supervised engine restart
-- status: DESIGNED (2026-08-26) — `docs/design/platform-settings-and-restart.md`.
+- status: IMPLEMENTED (backend) (2026-08-27) — `docs/design/platform-settings-and-restart.md`.
   Closes console-ux-audit BL-13b (editable symbols/starting assets) and
-  BL-15 (venues & fees). New versioned `platform_settings` document
-  (separate from `strategy.Params`: the section→permission mapping in
-  rbac.go:72-77 fails open to OPERATOR, and symbol validation needs
-  exchangeInfo), migration 000006, and an `app.Supervisor` that re-enters
-  one stable `Engine.Run` on `POST /api/v1/engine/restart`. Env vars
-  become first-boot seeds only.
+  BL-15 (venues & fees) on the backend. New versioned `platform_settings`
+  document (separate from `strategy.Params`: the section→permission
+  mapping in rbac.go:72-77 fails open to OPERATOR, and symbol validation
+  needs exchangeInfo) in `internal/platform`, migration 000006, and an
+  `app.Supervisor` that re-enters one stable `Engine.Run` on
+  `POST /api/v1/engine/restart`. Engine re-entrancy fixed (E1-E10: reset
+  before bootstrap, retained catalog, bounded child-goroutine drain via
+  WaitGroup, accessor-based metrics/Hub registration done once,
+  Strategy.Subscribe registered once, paper pause state carried across
+  restarts, `paper_sessions.ended_at` now written). Env vars are
+  first-boot seeds only; a settings version that cannot build a topology
+  is rejected at apply/rollback time (`ValidateAgainstCatalog`, D8), never
+  discovered for the first time at restart. `LiveExecutor` untouched; no
+  exchange API keys anywhere in this feature.
+  Frontend (design §4, BL-12) is NOT built — routes/permissions/response
+  shapes are frozen and ready for it.
 - dependencies: T-034 (config service pattern), T-040
-- acceptance: settings validation + supervisor unit tests (fake engine);
-  API tests for RBAC/CSRF/confirm/409 guard rails; one integration path
-  rebuilding the topology across a restart with persisted rows intact;
-  `LiveExecutor` untouched.
+- acceptance: `internal/platform` validate/catalog/service unit tests;
+  `internal/app` engine re-entrancy test (`Engine.Run` twice, no
+  goroutine leak, no double strategy subscription) and supervisor unit
+  tests (fake `EngineRunner`: re-entry-after-return-only, stop-recording
+  ordering, paper pause preserved, guard-rail refusals, second-run
+  failure survives, restart timeout with no re-entry, pending-reasons for
+  both documents); `internal/api` handler tests (RBAC, CSRF, confirm
+  token, 409 guard rails, `field_timing`); `internal/storage` integration
+  tests for `platform_settings`/`EndPaperSession`/`ListMarkets` run
+  against a disposable Postgres (never the dev compose DB on :5432). All
+  green with `-race`; `golangci-lint run ./...` clean.
 
 ---
 
@@ -762,3 +779,27 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   legs live, 0/5 bps base with a zero-fee USDC zone whose API
   eligibility is unverified; scored 65/100; queued for the T-051 scoring
   round with named burn-ins.
+- 2026-08-27 (T-057 backend): platform settings + supervised restart
+  implemented per the design doc. New `internal/platform` package
+  (versioned settings document, pure `Validate`/`ValidatePaperMode`,
+  catalog-backed `ValidateAgainstCatalog` dry-run wired into
+  `Service.applyLocked` for D8, `Seed`/`FieldTiming`/`PermissionForSection`)
+  and `internal/storage/platformsettings.go` over new migration 000006.
+  `internal/app/engine.go` re-entrancy fixed (E1-E10) with a passing
+  two-Run test asserting no goroutine leak and no double strategy
+  subscription. New `internal/app/supervisor.go` re-enters one stable
+  `*Engine` across a restart with 13 unit tests (fake `EngineRunner`)
+  covering every §2.5 guard rail, E9 (paper pause survives), and both
+  §2.3 pending-reason sources. New `internal/api/platformapi.go`:
+  `/api/v1/platform/settings{,/preview,/rollback,/versions,/version/{n}}`
+  and `/api/v1/engine/{status,restart}`, interface-typed
+  (`RestartController`) so `internal/api` never imports `internal/app`,
+  with 12 handler tests. `components.go` wires `buildPlatform`, the
+  supervisor (replacing the engine as the appended `app.Component` —
+  D4), the shared Telegram allowlist (`Bot.Allowed`/`PushSink.Targets`),
+  and the `health` topic (moved out of `Engine.Run` per §2.6). All new
+  and existing tests green with `-race` (storage integration tests run
+  against a disposable Postgres, never the dev compose DB); `gofmt`,
+  `go vet`, and `golangci-lint run ./...` clean repo-wide. Frontend
+  (design §4, BL-12) is explicitly NOT built this round — T-057 is
+  IMPLEMENTED (backend); the console UI is a follow-up.

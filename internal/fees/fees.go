@@ -161,3 +161,28 @@ func NetOutput(p Placement, gross, rate decimal.Decimal) (net, fee decimal.Decim
 func Bps(rate decimal.Decimal) decimal.Decimal {
 	return rate.Mul(decimal.NewFromInt(10_000))
 }
+
+// venueDiscounts is the compiled-in per-venue token-discount constant
+// table (docs/research/fees.md): rate, pay asset and API eligibility are
+// never operator input (T-057 design §1.2) — an operator can only toggle
+// Enabled. Zero value (not present) means the venue offers no token
+// discount at all.
+var venueDiscounts = map[exchange.ExchangeID]Discount{
+	// Binance: 25% off when paid in BNB, verified to apply to
+	// API-executed trades (re-verified 2026-08-26, docs/research/fees.md).
+	"binance": {Rate: decimal.RequireFromString("0.25"), PayAsset: "BNB", AppliesToAPI: true},
+	// Bybit: MNT fee-payment discount excludes API-executed trades
+	// (re-verified 2026-08-26, docs/research/fees.md). Data only — Bybit
+	// has no compiled-in connector yet (T-050); the entry exists so a
+	// venue whose discount excludes API trades validates as an error
+	// (design §1.2) rather than a silent no-op the day one lands.
+	"bybit": {Rate: decimal.RequireFromString("0.25"), PayAsset: "MNT", AppliesToAPI: false},
+}
+
+// VenueDiscount returns the compiled-in discount profile for a venue
+// (Enabled always false in the returned value — the caller/operator
+// toggle decides that) and whether the venue has one at all.
+func VenueDiscount(ex exchange.ExchangeID) (Discount, bool) {
+	d, ok := venueDiscounts[ex]
+	return d, ok
+}

@@ -20,6 +20,10 @@ type PushSink struct {
 	// OnDrop is called when the queue is full (notification.Service's
 	// CountDrop in the wiring).
 	OnDrop func()
+	// Targets, when set, takes precedence over ChatIDs (T-057: the
+	// wiring points it at the same live allow-set as Bot.Allowed, so a
+	// revoked user stops receiving pushes immediately, not just commands).
+	Targets func() []int64
 
 	once sync.Once
 	ch   chan notification.Delivery
@@ -64,7 +68,11 @@ func (p *PushSink) Run(ctx context.Context) error {
 			if d.Suppressed > 0 {
 				text += fmt.Sprintf("\n(+%d duplicates suppressed)", d.Suppressed)
 			}
-			for _, chat := range p.ChatIDs {
+			chatIDs := p.ChatIDs
+			if p.Targets != nil {
+				chatIDs = p.Targets()
+			}
+			for _, chat := range chatIDs {
 				sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				err := p.Client.SendMessage(sendCtx, chat, text, nil)
 				cancel()

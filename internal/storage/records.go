@@ -185,6 +185,17 @@ func (s *Store) EnsurePaperSession(ctx context.Context, id, mode string, startin
 	return err
 }
 
+// EndPaperSession stamps ended_at on a paper session row (T-057 E10):
+// restart makes many sessions per process normal, and an unbounded set
+// of NULL-ended sessions would make "the current session" ambiguous for
+// the Paper and PnL views. Idempotent: only the first call sets it.
+func (s *Store) EndPaperSession(ctx context.Context, id string, at time.Time) error {
+	_, err := s.Pool.Exec(ctx, `
+		UPDATE paper_sessions SET ended_at = $2
+		WHERE id = $1 AND ended_at IS NULL`, id, at)
+	return err
+}
+
 func nullStr(v string) any {
 	if v == "" {
 		return nil

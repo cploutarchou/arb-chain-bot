@@ -147,6 +147,38 @@ Sign in and open **Campaigns**:
 Every start/stop/run is audited (`audit_events`, source=web). Recording
 still needs no API keys and the engine still cannot place orders.
 
+## 3c. Settings & restart from the console
+
+Symbols, starting assets, per-asset paper balances, venue enablement and
+fees, and the Telegram allowlist live in a second versioned document
+(`internal/platform`, table `platform_settings`) — separate from the
+strategy config in §80's campaign grid, and separate from
+`ARB_SYMBOLS`/`ARB_STARTING_ASSETS`/`ARB_PAPER_BALANCE`/
+`ARB_TELEGRAM_ALLOWLIST`, which only seed **version 1** on a fresh
+install and are ignored afterward. Open **Settings** in the console:
+
+- **Markets & assets** and **Venues & fees** edit the document (ADMIN
+  only: `exchange:config` for venues/symbols/fees, `system:config` for
+  paper balances and the allowlist); every field there is tagged
+  **On restart**. A **Preview** call (`POST
+  /api/v1/platform/settings/preview`) dry-runs the topology
+  (`graph.Build`) against the live `exchangeInfo` before you can apply,
+  so a bad symbol list is rejected on save, never discovered when the
+  engine restarts.
+- **Notifications** carries the Telegram allowlist, tagged **Immediate**
+  once the bot is running — revoking a user takes effect without a
+  restart. If the process booted with an empty allowlist the bot was
+  never constructed; adding the first entry still needs a restart.
+- **Restart engine…** (`POST /api/v1/engine/restart`, `system:config`,
+  type `RESTART` to confirm) applies every pending restart-scoped
+  change: it stops an active recording first only if you check that
+  box, pauses paper trading while legs settle, waits for the current run
+  to drain (persisted opportunities/cycles/reports are never touched),
+  then reconnects the feed and rebuilds the triangles under one stable
+  engine process — never a process restart. It refuses (409) while a
+  campaign run is in progress or a recording is active without
+  `stop_recording`, and while a restart is already under way.
+
 ## 4. Optional: full paper deployment
 
 ```sh
