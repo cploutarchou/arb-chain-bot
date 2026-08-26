@@ -337,8 +337,12 @@ data-flow,security,risk}.md`.
 - status: TODO (SKILL.md §81) · dependencies: T-019 history
 
 ### T-044 Performance benchmark suite + budgets
-- status: TODO — formalize §73 benches with recorded baselines;
-  dependencies: T-021
+- status: DONE — §73 set complete (book apply/view, WS decode,
+  topology, cycle math, size search, triangle recalculation,
+  opportunity build + JSON, depth simulation, WS fan-out, metrics hot
+  path); baselines + budgets in docs/benchmarks.md; scripts/bench.sh;
+  fixed the pre-existing BuildTopology bench (universe lacked
+  quote-to-quote crosses so no triangle could close)
 
 ### T-045 E2E Playwright suite (SKILL.md §72)
 - status: TODO · dependencies: T-040

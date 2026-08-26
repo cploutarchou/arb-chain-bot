@@ -1,6 +1,7 @@
 package opportunity
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -125,5 +126,30 @@ func TestRevalidationContract(t *testing.T) {
 	}
 	if !o.NeedsRecalc([3]uint64{11, 23, 33}) {
 		t.Fatal("any moved leg version must trigger recalc")
+	}
+}
+
+// Opportunity creation + serialization (§73): Build allocates the
+// buffered economics; Marshal is the outbox/hub write path.
+func BenchmarkBuild(b *testing.B) {
+	q := quoteFixture()
+	buf := Buffers{LatencyBps: d("2"), RiskBps: d("3")}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		op := Build("op-1", "binance", q, buf, 400*time.Millisecond, time.Unix(1_700_000_000, 0), 1)
+		_ = op
+	}
+}
+
+func BenchmarkOpportunityJSON(b *testing.B) {
+	q := quoteFixture()
+	op := Build("op-1", "binance", q, Buffers{LatencyBps: d("2"), RiskBps: d("3")}, 400*time.Millisecond, time.Unix(1_700_000_000, 0), 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := json.Marshal(op); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

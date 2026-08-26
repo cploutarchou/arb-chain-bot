@@ -49,7 +49,7 @@ func mkt(sym string, base, quote exchange.Asset) exchange.Market {
 
 // harness builds the full pipeline over the profitable pricing fixture:
 // BTCUSDT asks 100x10, ETHBTC asks 0.1x100, ETHUSDT bids 10.2x1000.
-func harness(t *testing.T) (*Scanner, *orderbook.Set) {
+func harness(t testing.TB) (*Scanner, *orderbook.Set) {
 	t.Helper()
 	markets := []exchange.Market{
 		mkt("BTCUSDT", "BTC", "USDT"),

@@ -95,7 +95,7 @@ func rules() fakeRules {
 	return fakeRules{mBTCUSDT: stepRules(), mETHBTC: stepRules(), mETHUSDT: stepRules()}
 }
 
-func sched(t *testing.T) *fees.Schedule {
+func sched(t testing.TB) *fees.Schedule {
 	t.Helper()
 	s, err := fees.NewSchedule("binance", exchange.FeeInReceived,
 		fees.Rate{Maker: d("0.001"), Taker: d("0.001")})
@@ -105,7 +105,7 @@ func sched(t *testing.T) *fees.Schedule {
 	return s
 }
 
-func plan(t *testing.T, books fakeBooks, ttl time.Duration) execution.CyclePlan {
+func plan(t testing.TB, books fakeBooks, ttl time.Duration) execution.CyclePlan {
 	t.Helper()
 	tri := triangle()
 	data := [3]pricing.MarketData{}
@@ -122,7 +122,7 @@ func plan(t *testing.T, books fakeBooks, ttl time.Duration) execution.CyclePlan 
 	return execution.CyclePlan{CycleID: "cycle-1", SessionID: "sess-1", Opportunity: &op, Triangle: tri}
 }
 
-func engine(t *testing.T, books fakeBooks, clock *VirtualClock, cfg Config) *Engine {
+func engine(t testing.TB, books fakeBooks, clock *VirtualClock, cfg Config) *Engine {
 	t.Helper()
 	var seq atomic.Int64
 	if cfg.LimitToleranceBps.IsZero() {
@@ -389,5 +389,24 @@ func TestLiveExecutorDisabled(t *testing.T) {
 	_, err := live.ExecuteCycle(context.Background(), execution.CyclePlan{})
 	if !errors.Is(err, execution.ErrLiveTradingDisabled) {
 		t.Fatalf("live executor returned %v", err)
+	}
+}
+
+// Depth simulation (§73): one full three-leg cycle under the virtual
+// clock (latency waits advance instantly; the cost measured is fill
+// construction, filtering, re-pricing, and settlement math).
+func BenchmarkExecuteCycle(b *testing.B) {
+	books := planBooks()
+	p := plan(b, books, time.Minute)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		clock := NewVirtualClock(t0)
+		e := engine(b, books, clock, Config{Seed: 42})
+		p2 := p
+		p2.CycleID = fmt.Sprintf("cycle-%d", i)
+		if _, err := e.ExecuteCycle(context.Background(), p2); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

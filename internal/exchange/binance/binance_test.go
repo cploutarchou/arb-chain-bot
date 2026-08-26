@@ -260,3 +260,17 @@ func TestParseExchangeInfo(t *testing.T) {
 		t.Fatal("BREAK market must not be tradeable")
 	}
 }
+
+// Order-book application feed path (§73): decode one combined-stream
+// depth frame (JSON envelope + decimal level parsing).
+func BenchmarkDecodeWSFrame(b *testing.B) {
+	frame := []byte(combinedFrame)
+	recv := time.Unix(1_700_000_000, 0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := DecodeWSFrame(frame, recv); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
