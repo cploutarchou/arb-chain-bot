@@ -373,14 +373,18 @@ data-flow,security,risk}.md`.
 - dependencies: T-040
 
 ### T-046 Profitability validation campaign
-- status: BLOCKED on real recorded feeds — this dev environment cannot
-  reach exchange endpoints, so no genuine market recordings exist to
-  replay. Ready today: recorder + deterministic replayer (T-032),
-  seed-deterministic simulation, reports (T-042), latency knobs in
-  simulation.Config. Still needed for the campaign: real RECORD-mode
-  captures in a network-enabled deployment, fee+X / depth-haircut
-  stress transforms on the replay path, and the §80 honest report over
-  those runs. No profitability claim is made without this.
+- status: BLOCKED only on real recorded feeds — the campaign machinery
+  itself is BUILT and tested: `internal/backtest` replays a recording
+  through the complete pipeline (books → real scanner → deterministic
+  risk engine → simulated executor with mid-wait book drift →
+  portfolio) under the §80 stress grid (fee+X bps, latency ×N, fill
+  and world depth haircuts); `cmd/campaign` runs grid × seeds and
+  writes the honest report with the mandatory "profitable only under
+  perfect conditions" flag; `Dockerfile` + compose `record`/`campaign`
+  profiles + docs/deployment.md make the capture a one-command deploy.
+  Remaining: run `make record` on a network-enabled host for real
+  Binance sessions across regimes, then `make campaign RECORDING=…`.
+  No profitability claim is made without those runs.
 - dependencies: T-032, T-042
 
 ### T-047 Research-debt re-verification
@@ -628,3 +632,20 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   full page reload fired before /auth/me restored the token) was
   reproduced locally by delaying /auth/me and fixed by making mutating
   requests await token recovery. T-004 flips to DONE.
+- 2026-08-26 (deployment + campaign tooling): T-046's in-repo half is
+  complete. New `internal/backtest` package: a deterministic
+  discrete-event harness that replays recorded segments through the
+  real scanner, risk engine, and simulation executor — simulated
+  latency pumps recorded frames, so fills price against books that
+  moved during the wait — under §80 stress scenarios (higher fees,
+  higher latency, worse fills via fill-depth haircut, lower liquidity
+  via world-depth haircut); §80 report with fail-rate, slippage,
+  latency, drawdown, turnover, and the mandatory perfect-conditions
+  flag; 7 acceptance tests including byte-identical determinism.
+  `cmd/campaign` orchestrates grid × seeds from disk + PostgreSQL
+  metadata (new storage loaders: RecordingStreams, LoadMarkets). New
+  Dockerfile (multi-stage, non-root, healthcheck) and compose
+  profiles `record` / `paper` / `campaign` with a recordings volume;
+  docs/deployment.md is the runbook; `make record` /
+  `make campaign RECORDING=…` are the two commands. T-046 now blocks
+  ONLY on running the recorder from a network-enabled host.
