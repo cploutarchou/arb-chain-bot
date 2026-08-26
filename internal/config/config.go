@@ -54,6 +54,11 @@ type Bootstrap struct {
 	ReplaySession string // recording session id for REPLAY/BACKTEST
 	Seed          int64  // RNG seed for stochastic simulation (0 = derive and log)
 
+	// Market scope (first exchange: Binance per research)
+	Symbols        []string // spot symbols to subscribe (e.g. BTCUSDT,ETHUSDT,ETHBTC)
+	StartingAssets []string // triangle starting assets
+	PaperBalance   string   // starting virtual balance per starting asset (decimal string)
+
 	// Telegram (optional; empty token disables the bot)
 	TelegramToken     string
 	TelegramAllowlist []int64 // Telegram user IDs
@@ -75,6 +80,9 @@ func Load() (Bootstrap, error) {
 		ShutdownGrace:   15 * time.Second,
 		RecordingDir:    getenv("ARB_RECORDING_DIR", "recordings"),
 		ReplaySession:   os.Getenv("ARB_REPLAY_SESSION"),
+		Symbols:         splitList(getenv("ARB_SYMBOLS", "BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT")),
+		StartingAssets:  splitList(getenv("ARB_STARTING_ASSETS", "USDT,USDC")),
+		PaperBalance:    getenv("ARB_PAPER_BALANCE", "10000"),
 		TelegramToken:   os.Getenv("ARB_TELEGRAM_TOKEN"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:         getenv("ARB_AI_MODEL", "claude-sonnet-5"),
@@ -148,4 +156,15 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func splitList(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, strings.ToUpper(p))
+		}
+	}
+	return out
 }

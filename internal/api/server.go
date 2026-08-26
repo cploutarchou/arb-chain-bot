@@ -28,6 +28,9 @@ type Server struct {
 	log   *slog.Logger
 	info  BuildInfo
 	start time.Time
+
+	// ScannerStatus, when set, backs /api/v1/scanner/status.
+	ScannerStatus func() any
 }
 
 func NewServer(cfg config.Bootstrap, log *slog.Logger, info BuildInfo) *Server {
@@ -87,6 +90,13 @@ func (s *Server) routes(mux *http.ServeMux) {
 			"uptime_sec": int64(time.Since(s.start).Seconds()),
 			"components": s.info.Components,
 		})
+	})
+	mux.HandleFunc("GET /api/v1/scanner/status", func(w http.ResponseWriter, r *http.Request) {
+		if s.ScannerStatus == nil {
+			WriteError(w, http.StatusNotFound, "scanner_absent", "scanner not running in this profile", r.Header.Get("X-Correlation-ID"))
+			return
+		}
+		WriteData(w, http.StatusOK, s.ScannerStatus())
 	})
 }
 
