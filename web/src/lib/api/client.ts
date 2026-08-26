@@ -348,6 +348,117 @@ export interface UserRow {
   created_at: string;
 }
 
+// ---- platform settings (T-057) --------------------------------------------
+// Mirrors internal/platform/settings.go exactly. bps and paper balances are
+// decimal strings (shopspring/decimal marshals quoted by default); the
+// Telegram allowlist is int64 chat ids, i.e. JSON numbers, not strings.
+
+export interface PlatformFeeOverride {
+  maker_bps: string;
+  taker_bps: string;
+}
+
+export interface PlatformFeeSettings {
+  maker_bps: string;
+  taker_bps: string;
+  overrides?: Record<string, PlatformFeeOverride>;
+  token_discount: boolean;
+}
+
+export interface PlatformVenueSettings {
+  enabled: boolean;
+  paper_enabled: boolean;
+  symbols: string[];
+  starting_assets: string[];
+  fees: PlatformFeeSettings;
+}
+
+export interface PlatformPaperSettings {
+  balances: Record<string, string>;
+}
+
+export interface PlatformTelegramSettings {
+  // Go's []int64(nil) — the state before any allowlist entry is ever
+  // added — marshals as JSON null, not []; always read this through
+  // lib/platformFields.ts's allowlistOf(), never directly.
+  allowlist: number[] | null;
+}
+
+export interface PlatformSettingsDoc {
+  venues: Record<string, PlatformVenueSettings>;
+  paper: PlatformPaperSettings;
+  telegram: PlatformTelegramSettings;
+}
+
+// PlatformPlan is the topology one venue's settings would produce
+// (internal/platform/catalog.go); computed with the real graph builder, so
+// the frontend never guesses a triangle count.
+export interface PlatformPlan {
+  venue: string;
+  markets: number;
+  triangles: number;
+  rejected_untradeable: number;
+  starting_assets: string[];
+}
+
+// RestartStatus mirrors internal/app.RestartStatus's wire shape exactly —
+// state/pending_reasons/error are rendered verbatim, never re-derived.
+export interface RestartStatus {
+  state: "ready" | "pending" | "restarting" | "failed";
+  settings_version: number;
+  pending_version?: number;
+  requested_by?: string;
+  requested_at?: string;
+  ready_at?: string;
+  restarts: number;
+  pending_reasons?: string[];
+  error?: string;
+}
+
+// PlatformSnapshotView is the GET/apply/rollback response shape
+// (Server.platformView): the settings document plus the backend-computed
+// field_timing map (never hardcoded client-side) and, when a catalog is
+// wired, the per-venue topology plan.
+export interface PlatformSnapshotView {
+  version: number;
+  created_by?: string;
+  created_at: string;
+  settings: PlatformSettingsDoc;
+  field_timing: Record<string, string>;
+  plan?: Record<string, PlatformPlan>;
+  restart?: RestartStatus;
+}
+
+// PlatformSnapshot is the raw stored version (GET .../version/{n}) — no
+// field_timing/plan, those are only computed against the CURRENT snapshot.
+export interface PlatformSnapshot {
+  version: number;
+  settings: PlatformSettingsDoc;
+  created_by?: string;
+  created_at: string;
+  parent_version?: number;
+}
+
+export interface PlatformVersionInfo {
+  version: number;
+  created_by?: string;
+  created_at: string;
+  active: boolean;
+  parent_version?: number;
+  diff?: Record<string, { old: unknown; new: unknown }>;
+}
+
+export interface PlatformPreviewResponse {
+  diff: Record<string, { old: unknown; new: unknown }>;
+  sections: string[];
+  requires_restart: boolean;
+  plan?: Record<string, PlatformPlan>;
+}
+
+export interface EngineStatusResponse {
+  restart: RestartStatus;
+}
+
 export interface CampaignRun {
   id: string;
   recording: string;
@@ -477,5 +588,22 @@ export const api = {
     list: (limit = 25) => get<{ runs: CampaignRun[] | null }>(`/api/v1/campaigns?limit=${limit}`),
     get: (id: string) => get<{ run: CampaignRun }>(`/api/v1/campaigns/${encodeURIComponent(id)}`),
     run: (req: CampaignRequest) => post<{ run: CampaignRun }>("/api/v1/campaigns", req),
+  },
+  platform: {
+    current: () => get<PlatformSnapshotView>("/api/v1/platform/settings"),
+    versions: (limit = 25) =>
+      get<PlatformVersionInfo[]>(`/api/v1/platform/settings/versions?limit=${limit}`),
+    version: (version: number) => get<PlatformSnapshot>(`/api/v1/platform/settings/version/${version}`),
+    preview: (settings: PlatformSettingsDoc) =>
+      post<PlatformPreviewResponse>("/api/v1/platform/settings/preview", { settings }),
+    apply: (settings: PlatformSettingsDoc) =>
+      post<PlatformSnapshotView>("/api/v1/platform/settings", { settings }),
+    rollback: (version: number) =>
+      post<PlatformSnapshotView>("/api/v1/platform/settings/rollback", { version }),
+  },
+  engine: {
+    status: () => get<EngineStatusResponse>("/api/v1/engine/status"),
+    restart: (body: { confirm: string; reason?: string; stop_recording?: boolean }) =>
+      post<EngineStatusResponse>("/api/v1/engine/restart", body),
   },
 };

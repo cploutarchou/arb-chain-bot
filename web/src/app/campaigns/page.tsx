@@ -77,6 +77,12 @@ export default function CampaignsPage() {
   const [refresh, setRefresh] = useState(0);
   const recordingsState = usePoll(() => api.recordings.list(), 5000, [refresh]);
   const runsState = usePoll(() => api.campaigns.list(50), 5000, [refresh]);
+  // Restart status is shown on the Recorder card (T-057 design §4: "the
+  // /campaigns Recorder card should show when a restart is pending/in
+  // progress") since a pending/in-progress restart is exactly the state
+  // where recorder start/stop can behave surprisingly (a restart may stop
+  // the active recording itself).
+  const engineStatus = usePoll(() => api.engine.status(), 10000);
 
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed">("connecting");
   const [wsRecorder, setWsRecorder] = useState<RecorderStatus | null>(null);
@@ -217,6 +223,14 @@ export default function CampaignsPage() {
       </p>
 
       <Section title="Recorder">
+        {engineStatus.kind === "ready" &&
+          (engineStatus.data.restart.state === "pending" || engineStatus.data.restart.state === "restarting") && (
+            <p className="mb-2 rounded border border-[var(--warn)] px-2 py-1.5 text-[12px] text-[var(--warn)]">
+              {engineStatus.data.restart.state === "restarting"
+                ? "Engine restart in progress — recorder state may change once it completes."
+                : `Engine restart pending: ${engineStatus.data.restart.pending_reasons?.join("; ") ?? "settings changed"}.`}
+            </p>
+          )}
         <Await state={recordingsState} what="recorder status">
           {(r) => {
             const recorder = wsRecorder ?? r.recorder;

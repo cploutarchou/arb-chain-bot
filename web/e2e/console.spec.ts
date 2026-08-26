@@ -153,6 +153,70 @@ test("paper reset is disabled with a hint while the engine is running", async ({
   await expect(page.getByText(/pause the engine before resetting/)).toBeVisible();
 });
 
+test("settings Markets & assets renders the real platform-settings document", async ({ page }) => {
+  await login(page);
+  await page.goto("/settings#markets");
+  await expect(page.getByRole("heading", { name: "Markets & assets" })).toBeVisible();
+  // The default bootstrap seed (config.go: ARB_SYMBOLS/ARB_STARTING_ASSETS
+  // defaults) is what the e2e arbd boots with — this is the real T-057
+  // platform document, not the deleted read-only scanner-status panel.
+  await expect(page.getByText("BTCUSDT", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("v1", { exact: false }).first()).toBeVisible();
+  // ADMIN gets the real editor, not a "not yet editable" placeholder.
+  await expect(page.getByRole("button", { name: "Edit markets & assets" })).toBeVisible();
+  await expect(page.getByText(/not yet editable/i)).toHaveCount(0);
+
+  // Venues & fees is the other half of the same document, no longer a
+  // read-only placeholder either.
+  await expect(page.getByRole("heading", { name: "Venues & fees" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit venues & fees" })).toBeVisible();
+
+  // Version history table for the platform-settings document (rollback
+  // affordance, mirrors /strategies).
+  await expect(page.getByRole("heading", { name: "Platform settings — version history" })).toBeVisible();
+  await expect(page.getByText(/v1 active/)).toBeVisible({ timeout: 10_000 });
+});
+
+test("engine status and the restart banner render the backend's real state, never a placeholder", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/overview");
+
+  // Confirm the wiring the design promises: ProfileFull always builds an
+  // engine + supervisor, so this must answer 200 with a real RestartStatus
+  // even with no database configured (platform.Service falls back to
+  // platform.NewMemoryStore() — components.go:buildPlatform). Fetched from
+  // the page itself (same credentials/cookie path api/client.ts uses) —
+  // Playwright's separate page.request context does not share the
+  // session cookie with the browser's own fetches.
+  const body = await page.evaluate(async () => {
+    const r = await fetch("/api/v1/engine/status", { credentials: "same-origin" });
+    return { status: r.status, json: (await r.json()) as { data: { restart: { state: string; pending_reasons?: string[]; error?: string } } } };
+  });
+  expect(body.status).toBe(200);
+  const restart = body.json.data.restart;
+  expect(["ready", "pending", "restarting", "failed"]).toContain(restart.state);
+
+  const main = page.locator("main");
+  if (restart.state === "pending") {
+    await expect(main).toContainText("Saved but not running:");
+    await expect(main).toContainText((restart.pending_reasons ?? []).join("; "));
+    await expect(page.getByRole("button", { name: "Restart engine…" })).toBeVisible();
+  } else if (restart.state === "restarting") {
+    await expect(main).toContainText(
+      "Restarting — waiting for the last recording segment to close and the feed to drain…",
+    );
+  } else if (restart.state === "failed") {
+    await expect(main).toContainText("Restart failed:");
+    await expect(main).toContainText(restart.error || "unknown error");
+  } else {
+    // "ready" with no pending reasons renders nothing — never a neutral
+    // placeholder banner for a healthy engine.
+    await expect(page.getByRole("button", { name: "Restart engine…" })).toHaveCount(0);
+  }
+});
+
 test("sign out returns to login", async ({ page }) => {
   await login(page);
   await page.goto("/settings");
