@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
@@ -68,6 +69,7 @@ type fakeServices struct {
 	paperRunning bool
 	paperPresent bool
 	center       *notification.Center
+	aiRecs       map[string]*ai.Recommendation
 }
 
 func (s *fakeServices) Status() StatusView {
@@ -145,6 +147,52 @@ func (s *fakeServices) running() bool {
 	return s.paperRunning
 }
 
+func (s *fakeServices) AIPresent() bool { return s.aiRecs != nil }
+
+func (s *fakeServices) AIAnalyses(int) []ai.AnalysisResult {
+	if s.aiRecs == nil {
+		return nil
+	}
+	return []ai.AnalysisResult{{
+		ID: "an-1", Kind: ai.KindHourlyHealth, At: time.Unix(1_700_000_000, 0),
+		Summary: "all healthy", Findings: []string{"f1"},
+	}}
+}
+
+func (s *fakeServices) AIRecommendations(status string) []ai.Recommendation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ai.Recommendation
+	for _, r := range s.aiRecs {
+		if status == "" || r.Status == status {
+			out = append(out, *r)
+		}
+	}
+	return out
+}
+
+func (s *fakeServices) AIApprove(id, _ string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.aiRecs[id]
+	if !ok || r.Status != "proposed" {
+		return 0, ai.ErrRecommendationDecided
+	}
+	r.Status = "approved"
+	return 2, nil
+}
+
+func (s *fakeServices) AIReject(id, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.aiRecs[id]
+	if !ok || r.Status != "proposed" {
+		return ai.ErrRecommendationDecided
+	}
+	r.Status = "rejected"
+	return nil
+}
+
 func newTestBot(t *testing.T) (*Bot, *fakeAPI, *fakeServices, func(actor, action, entity string) []string) {
 	t.Helper()
 	fake := &fakeAPI{}
@@ -161,7 +209,14 @@ func newTestBot(t *testing.T) (*Bot, *fakeAPI, *fakeServices, func(actor, action
 		Severity: notification.SeverityWarning, Key: "gap:BTCUSDT",
 		Title: "Gap storm", Body: "many gaps", At: time.Unix(1_700_000_000, 0),
 	}, Suppressed: 3})
-	svcs := &fakeServices{paperRunning: true, paperPresent: true, center: center}
+	svcs := &fakeServices{
+		paperRunning: true, paperPresent: true, center: center,
+		aiRecs: map[string]*ai.Recommendation{
+			"rec-1": {ID: "rec-1", Parameter: "scanner.ttl_ms",
+				CurrentValue: "400", RecommendedValue: "500",
+				Confidence: "0.6", Reason: "latency headroom", Status: "proposed"},
+		},
+	}
 	bot := &Bot{
 		Client:    NewClient(srv.URL + "/botTEST"),
 		Allowlist: map[int64]bool{100: true},
@@ -364,6 +419,50 @@ func TestInlineButtonRoundTripAndTamperRejection(t *testing.T) {
 	}})
 	if svcs.running() {
 		t.Fatal("cross-user callback must not execute")
+	}
+}
+
+func TestAIRecommendationButtonsApproveAndReject(t *testing.T) {
+	bot, fake, svcs, audits := newTestBot(t)
+	ctx := context.Background()
+
+	bot.HandleUpdate(ctx, msgUpdate(100, 100, "/ai"))
+	if got := fake.messages(); !strings.Contains(got[0].Text, "all healthy") {
+		t.Fatalf("/ai = %+v", got)
+	}
+	bot.HandleUpdate(ctx, msgUpdate(100, 100, "/ai_recommendations"))
+	msgs := fake.messages()
+	last := msgs[len(msgs)-1]
+	if !strings.Contains(last.Text, "scanner.ttl_ms: 400 → 500") || last.Markup == "" {
+		t.Fatalf("/ai_recommendations = %+v", last)
+	}
+	var kb struct {
+		InlineKeyboard [][]InlineButton `json:"inline_keyboard"`
+	}
+	if err := json.Unmarshal([]byte(last.Markup), &kb); err != nil {
+		t.Fatal(err)
+	}
+	// Approve via button: status flips in the shared services; audited.
+	bot.HandleUpdate(ctx, Update{UpdateID: 9, Callback: &CallbackQuery{
+		ID: "cb-ai", From: &User{ID: 100},
+		Message: &Message{Chat: Chat{ID: 100}}, Data: kb.InlineKeyboard[0][0].Data,
+	}})
+	if ans := fake.answers(); !strings.Contains(ans[len(ans)-1], "config version 2") {
+		t.Fatalf("approve answer = %v", ans)
+	}
+	if svcs.AIRecommendations("approved") == nil {
+		t.Fatal("approval not visible in shared services")
+	}
+	got := audits("", "", "")
+	if len(got) == 0 || !strings.Contains(got[len(got)-1], "ai_recommendation.approve") {
+		t.Fatalf("audits = %v", got)
+	}
+	// Reject button on an already-approved rec fails honestly.
+	bot.HandleUpdate(ctx, Update{UpdateID: 10, Callback: &CallbackQuery{
+		ID: "cb-ai2", From: &User{ID: 100}, Data: kb.InlineKeyboard[0][1].Data,
+	}})
+	if ans := fake.answers(); !strings.Contains(ans[len(ans)-1], "Cannot reject") {
+		t.Fatalf("reject answer = %v", ans)
 	}
 }
 

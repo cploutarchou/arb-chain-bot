@@ -66,6 +66,9 @@ type Bootstrap struct {
 	// AI advisor (optional; empty key disables the advisor)
 	AnthropicAPIKey string
 	AIModel         string
+	// AIProvider selects the implementation: "anthropic" (default when
+	// the key is set), "fake" (deterministic; dev/tests), "" = disabled.
+	AIProvider string
 
 	// Console origin allowed for cross-origin WS in dev; auth bootstrap
 	// credentials (dev-only convenience — production users live in the DB).
@@ -92,6 +95,7 @@ func Load() (Bootstrap, error) {
 		TelegramToken:   os.Getenv("ARB_TELEGRAM_TOKEN"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:         getenv("ARB_AI_MODEL", "claude-sonnet-5"),
+		AIProvider:      os.Getenv("ARB_AI_PROVIDER"),
 		AllowedOrigin:   getenv("ARB_ALLOWED_ORIGIN", "http://localhost:3000"),
 		AdminEmail:      os.Getenv("ARB_ADMIN_EMAIL"),
 		AdminPassword:   os.Getenv("ARB_ADMIN_PASSWORD"),

@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -77,6 +78,13 @@ type Services interface {
 	AckAlert(id, actor string) (notification.Alert, error)
 	PaperPause(actor string) bool  // false = paper engine absent
 	PaperResume(actor string) bool // false = paper engine absent
+
+	// AI advisor surface; AIPresent()=false renders honest absence.
+	AIPresent() bool
+	AIAnalyses(limit int) []ai.AnalysisResult
+	AIRecommendations(status string) []ai.Recommendation
+	AIApprove(id, actor string) (configVersion int64, err error)
+	AIReject(id, actor string) error
 }
 
 // Bot long-polls and dispatches. Allowlisted Telegram IDs act with the
@@ -300,6 +308,12 @@ func (b *Bot) handleCallback(ctx context.Context, cb *CallbackQuery) {
 			b.Audit(actor, "alert.ack", "alert:"+id)
 		}
 		reply = "Alert acknowledged."
+	case strings.HasPrefix(action, "ai_approve:"), strings.HasPrefix(action, "ai_reject:"):
+		if !auth.Can(role, auth.PermAIApprove) {
+			reply = "Forbidden."
+			break
+		}
+		reply = b.runAIDecision(action, actor)
 	default:
 		reply = "Unknown action."
 	}
@@ -307,6 +321,33 @@ func (b *Bot) handleCallback(ctx context.Context, cb *CallbackQuery) {
 	if cb.Message != nil {
 		b.send(ctx, cb.Message.Chat.ID, reply, nil)
 	}
+}
+
+func (b *Bot) runAIDecision(action, actor string) string {
+	// Telegram actors have no users row; the audit event carries the
+	// concrete actor while the store keeps NULL decided_by.
+	switch {
+	case strings.HasPrefix(action, "ai_approve:"):
+		id := strings.TrimPrefix(action, "ai_approve:")
+		version, err := b.Services.AIApprove(id, "")
+		if err != nil {
+			return "Cannot approve (unknown, decided, or expired)."
+		}
+		if b.Audit != nil {
+			b.Audit(actor, "ai_recommendation.approve", "ai_recommendation:"+id)
+		}
+		return fmt.Sprintf("Recommendation approved; config version %d active.", version)
+	case strings.HasPrefix(action, "ai_reject:"):
+		id := strings.TrimPrefix(action, "ai_reject:")
+		if err := b.Services.AIReject(id, ""); err != nil {
+			return "Cannot reject (unknown or already decided)."
+		}
+		if b.Audit != nil {
+			b.Audit(actor, "ai_recommendation.reject", "ai_recommendation:"+id)
+		}
+		return "Recommendation rejected."
+	}
+	return "Unknown action."
 }
 
 func (b *Bot) runPaperControl(action, actor string) string {

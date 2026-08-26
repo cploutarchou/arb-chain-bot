@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
@@ -55,6 +56,8 @@ type Server struct {
 	ObserveRequest func(method, route string, status int, seconds float64)
 	// Alerts, when set, backs the alert-center routes.
 	Alerts *notification.Center
+	// AI, when set, backs the advisor routes.
+	AI *ai.Service
 	// AuditAction records control actions (source=web); nil = log only.
 	AuditAction func(actor, action, entity string)
 }
@@ -156,6 +159,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 	s.configRoutes(mux)
 	s.alertRoutes(mux)
+	s.aiRoutes(mux)
 	if s.MetricsHandler != nil {
 		mux.Handle("GET /metrics", s.MetricsHandler)
 	}

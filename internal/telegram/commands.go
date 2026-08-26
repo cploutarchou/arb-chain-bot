@@ -43,8 +43,11 @@ func (b *Bot) dispatch(cmd, actor string) (string, *InlineKeyboard, string) {
 	case "/alerts":
 		text, kb := b.alertsText(actor)
 		return text, kb, string(auth.PermViewDashboard)
-	case "/ai", "/ai_recommendations":
-		return "The AI advisor is not built yet (MASTER_PLAN T-036); nothing to show.", nil, string(auth.PermViewDashboard)
+	case "/ai":
+		return b.aiText(), nil, string(auth.PermViewDashboard)
+	case "/ai_recommendations":
+		text, kb := b.aiRecommendationsText(actor)
+		return text, kb, string(auth.PermViewDashboard)
 	case "/report", "/daily":
 		return "Reports are not built yet (MASTER_PLAN T-042); nothing to show.", nil, string(auth.PermReportView)
 	case "/config":
@@ -232,6 +235,42 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+func (b *Bot) aiText() string {
+	if !b.Services.AIPresent() {
+		return "AI advisor is not configured (set ANTHROPIC_API_KEY or ARB_AI_PROVIDER=fake)."
+	}
+	analyses := b.Services.AIAnalyses(1)
+	if len(analyses) == 0 {
+		return "No analyses yet; the scheduler runs hourly/daily/weekly."
+	}
+	a := analyses[0]
+	return fmt.Sprintf("Latest analysis (%s, %s):\n%s\nFindings: %d · Recommendations: %d\nDecisions: /ai_recommendations",
+		a.Kind, a.At.UTC().Format("2006-01-02 15:04"), a.Summary, len(a.Findings), len(a.Recommendations))
+}
+
+func (b *Bot) aiRecommendationsText(actor string) (string, *InlineKeyboard) {
+	if !b.Services.AIPresent() {
+		return "AI advisor is not configured (set ANTHROPIC_API_KEY or ARB_AI_PROVIDER=fake).", nil
+	}
+	recs := b.Services.AIRecommendations("proposed")
+	if len(recs) == 0 {
+		return "No proposed recommendations.", nil
+	}
+	userID := actorID(actor)
+	var sb strings.Builder
+	sb.WriteString("Proposed recommendations (approval changes config; audited):\n")
+	var rows [][]InlineButton
+	for i, r := range recs {
+		fmt.Fprintf(&sb, "%d. %s: %s → %s (confidence %s)\n   %s\n",
+			i+1, r.Parameter, r.CurrentValue, r.RecommendedValue, r.Confidence, r.Reason)
+		rows = append(rows, []InlineButton{
+			{Text: fmt.Sprintf("Approve %d", i+1), Data: b.newCallback("ai_approve:"+r.ID, userID)},
+			{Text: fmt.Sprintf("Reject %d", i+1), Data: b.newCallback("ai_reject:"+r.ID, userID)},
+		})
+	}
+	return sb.String(), &InlineKeyboard{Rows: rows}
 }
 
 func (b *Bot) configText() string {

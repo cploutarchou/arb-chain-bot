@@ -72,8 +72,9 @@ type Engine struct {
 	brk   *risk.Registry
 	ready bool
 
-	oppMu      sync.Mutex
-	recentOpps []RecentOpportunity
+	oppMu        sync.Mutex
+	recentOpps   []RecentOpportunity
+	rejectCounts map[string]int64 // risk reason code → count (AI input)
 }
 
 // RecentOpportunity is a compact ring entry for /opportunities and the
@@ -100,6 +101,31 @@ func (e *Engine) RecentOpportunities(limit int) []RecentOpportunity {
 	out := make([]RecentOpportunity, 0, limit)
 	for i := len(e.recentOpps) - 1; i >= 0 && len(out) < limit; i-- {
 		out = append(out, e.recentOpps[i])
+	}
+	return out
+}
+
+func (e *Engine) countReject(code string) {
+	if code == "" {
+		return
+	}
+	e.oppMu.Lock()
+	defer e.oppMu.Unlock()
+	if e.rejectCounts == nil {
+		e.rejectCounts = map[string]int64{}
+	}
+	if len(e.rejectCounts) < 64 || e.rejectCounts[code] > 0 {
+		e.rejectCounts[code]++
+	}
+}
+
+// RejectCounts snapshots the rejection-reason histogram.
+func (e *Engine) RejectCounts() map[string]int64 {
+	e.oppMu.Lock()
+	defer e.oppMu.Unlock()
+	out := make(map[string]int64, len(e.rejectCounts))
+	for k, v := range e.rejectCounts {
+		out[k] = v
 	}
 	return out
 }
@@ -490,6 +516,9 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 			if outbox != nil && ev.Opportunity.Status == opportunity.StatusQualified {
 				op, dec := ev.Opportunity, ev.Decision
 				outbox.Enqueue(storage.Record{Kind: "opportunity", Opportunity: &op, Decision: &dec})
+			}
+			if ev.Opportunity.Status == opportunity.StatusRejected {
+				e.countReject(ev.Decision.ReasonCode)
 			}
 			if ev.Opportunity.Status == opportunity.StatusQualified {
 				if e.Metrics != nil {
