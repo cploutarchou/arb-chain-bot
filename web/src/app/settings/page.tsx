@@ -9,6 +9,7 @@ import { cloneParams, setPath, validateCooldown } from "@/lib/strategyFields";
 import { diffParams, effectFor, type DiffRow } from "@/lib/diff";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { NotificationsFields } from "@/components/NotificationsFields";
+import { MarketsSection, VenuesSection, PlatformVersionHistorySection, TelegramAllowlistSection } from "@/components/PlatformSections";
 import {
   Await,
   Badge,
@@ -129,84 +130,6 @@ function SessionSection() {
       ) : (
         <p className="text-sm text-[var(--text-dim)]">Not signed in.</p>
       )}
-    </Section>
-  );
-}
-
-// ---- Markets & assets (read-only, BL-13) -----------------------------------
-
-function MarketsSection() {
-  const status = usePoll(() => api.scanner.status(), 10000);
-  return (
-    <Section title="Markets & assets">
-      <p className="mb-3 max-w-2xl text-[13px] text-[var(--text-dim)]">
-        Read-only for now — editing symbols and starting assets from the console arrives with T-057
-        (backend work: today they&apos;re boot-time environment variables, not part of the versioned
-        strategy config).
-      </p>
-      <Await state={status} what="scanner status">
-        {(s) => (
-          <div className="max-w-3xl space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-              <Stat label="Configured markets" value={s.markets.length} />
-              <Stat label="Triangles" value={s.triangles} />
-              <Stat label="Scanner" value={s.ready ? "READY" : "NOT READY"} tone={s.ready ? "ok" : "warn"} />
-            </div>
-            <div>
-              <div className="mb-1 text-[12px] text-[var(--text-dim)]">Symbols</div>
-              {s.markets.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {s.markets.map((m) => (
-                    <Badge key={m} tone="dim">
-                      {m}
-                    </Badge>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-[13px] text-[var(--text-dim)]">No markets configured.</p>
-              )}
-            </div>
-            <p className="text-[12px] text-[var(--text-dim)]">
-              Starting assets aren&apos;t exposed by the API yet — they&apos;re set via
-              <code className="mx-1 rounded bg-[var(--bg-panel)] px-1">ARB_STARTING_ASSETS</code>
-              at deploy time; see docs/deployment.md.
-            </p>
-          </div>
-        )}
-      </Await>
-    </Section>
-  );
-}
-
-// ---- Venues & fees (read-only placeholder, BL-15) --------------------------
-
-function VenuesSection() {
-  const health = usePoll(() => api.system.health(), 10000);
-  return (
-    <Section title="Venues & fees">
-      <p className="mb-3 max-w-2xl text-[13px] text-[var(--text-dim)]">
-        Not yet editable from the console — no backend endpoint exists for per-exchange
-        enabled/paper-enabled/markets/fee-tier/limit configuration (backend design T-057). Public feed
-        health is shown below for reference; see the{" "}
-        <Link href="/exchanges" className="text-[var(--accent)] underline">
-          Exchanges
-        </Link>{" "}
-        page for the live order-book view.
-      </p>
-      <Await state={health} what="exchange health">
-        {(h) =>
-          h.feed ? (
-            <div className="grid max-w-3xl grid-cols-2 gap-3 md:grid-cols-4">
-              <Stat label="Frames" value={h.feed.frames} />
-              <Stat label="Reconnects" value={h.feed.reconnects} tone={h.feed.reconnects > 5 ? "warn" : undefined} />
-              <Stat label="Resyncs" value={h.feed.resyncs} />
-              <Stat label="Sequence gaps" value={h.feed.seq_gaps} tone={h.feed.seq_gaps > 0 ? "warn" : undefined} />
-            </div>
-          ) : (
-            <p className="text-[13px] text-[var(--text-dim)]">Feed not started yet.</p>
-          )
-        }
-      </Await>
     </Section>
   );
 }
@@ -720,6 +643,7 @@ function NotificationsSection() {
           </div>
         )}
       </Await>
+      <TelegramAllowlistSection />
       {confirmState && (
         <ConfirmDialog
           title="Apply new notification settings?"
@@ -755,6 +679,9 @@ export default function SettingsPage() {
         <MarketsSection />
       </div>
       <VenuesSection />
+      <div id="platform-versions">
+        <PlatformVersionHistorySection />
+      </div>
       <div id="users">
         <UsersSection />
       </div>
