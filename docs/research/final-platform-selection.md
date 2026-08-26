@@ -167,11 +167,11 @@ hardcode), and diff the connector spec against current official docs.
 |---|---|---|
 | OKX OKB fee ladder | **RESOLVED** — current schedule tiers by 30-day volume or assets on platform; no OKB tier (EU regional page) | okx.com/fees embedded `feeDataInfo` JSON; okx.com/help/trading-fee-rules-faq |
 | OKX `market/books` rate limit | **RESOLVED** — 40 req/2 s/IP (`sz` ≤ 400); `books-full` 10 req/2 s/IP | okx.com/docs-v5/en "Get order book" / "Get full order book" |
-| Bitget spot-demo coverage | **DEMOTED → runtime-verified assumption** (demo assets SUSDT/SBTC/SETH/SUSDC and `paptrading: 1` strongly imply spot, but api-doc pages are client-rendered) — burn-in: connect to `wss://wspap.bitget.com` and subscribe a spot `books` channel | bitget.com/api-doc demotrading pages (shell only) |
-| Bitget per-endpoint REST limits | **DEMOTED → runtime-verified assumption** (global 6,000 req/min/IP; per-endpoint values unreadable) — burn-in: measure 429 onset on `/api/v2/spot/market/orderbook` | bitget.com/api-doc (shell only) |
+| Bitget spot-demo coverage | **DEMOTED → runtime-verified assumption** (demo assets SUSDT/SBTC/SETH/SUSDC and `paptrading: 1` strongly imply spot, but the current UTA v3 doc tree has no demo-trading section; old paths 404) — burn-in: connect to `wss://wspap.bitget.com` and subscribe a spot `books` channel | bitget.com/api-doc/uta (browser) |
+| Bitget per-endpoint REST limits | **RESOLVED (v3)** — UTA v3 `GET /api/v3/market/orderbook` 20 req/s/IP, `limit` ≤ 1000, numeric JSON prices; account table 10 req/s default → 60–100 req/s by VIP; v2 doc paths now redirect to v3 | bitget.com/api-doc/uta/public/OrderBook, /uta/rate-limit (browser) |
 | Coinbase private REST rps | **DEMOTED → runtime-verified assumption** (~30 req/s/IP per secondary sources) — burn-in: measure with a read-only key | docs.cdp.coinbase.com changelog (did not render) |
 | Coinbase per-connection subscription cap | **PARTIAL** — 8 connections/s/IP and 8 unauthenticated msgs/s/IP confirmed; no per-connection subscription cap is documented → runtime-verified assumption | docs.cdp.coinbase.com …/websocket/websocket-rate-limits |
-| Gate per-IP WS caps | **DEMOTED → runtime-verified assumption** — gate.com and gate.io docs answer HTTP 403 to non-browser clients | (unreachable) |
+| Gate per-IP WS caps | **DEMOTED → runtime-verified assumption** — the WS reference (browsed) publishes no per-IP connection/subscription cap, only order-op rate-limit headers; burn-in: ramp connections until refused | gate.com/docs/developers/apiv4/ws/en (browser) |
 | Kraken REST depth max | **RESOLVED** — `count` maximum 500 | docs.kraken.com/api/docs/rest-api/get-order-book |
 
 Additional corrections found while re-verifying (details in fees.md /
