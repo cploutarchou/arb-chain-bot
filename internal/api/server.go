@@ -19,6 +19,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
+	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
@@ -60,6 +61,10 @@ type Server struct {
 	AI *ai.Service
 	// AuditAction records control actions (source=web); nil = log only.
 	AuditAction func(actor, action, entity string)
+	// Reads, when set, backs the live read groups (engine profiles).
+	Reads ReadModel
+	// Store, when set, backs the history read groups.
+	Store *storage.Store
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -113,9 +118,15 @@ func (s *Server) routes(mux *http.ServeMux) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
-		// Readiness gains real dependency checks (DB, feeds) as those
-		// components land; for now the process is ready once serving.
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		// Ready = serving AND (when persistence is on) the pool answers.
+		// Feeds degrade rather than gate readiness: the API must stay up
+		// to show WHY books are unhealthy.
+		if !s.storeHealthy(r.Context()) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("database unreachable"))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
@@ -160,6 +171,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.configRoutes(mux)
 	s.alertRoutes(mux)
 	s.aiRoutes(mux)
+	s.readRoutes(mux)
 	if s.MetricsHandler != nil {
 		mux.Handle("GET /metrics", s.MetricsHandler)
 	}

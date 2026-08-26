@@ -195,7 +195,12 @@ data-flow,security,risk}.md`.
   expiry/revocation tests; no plaintext secrets.
 
 ### T-024 Core API v1 + realtime hub
-- priority: P0 · component: api/realtime · status: IN_PROGRESS (auth endpoints + gated status routes + WS hub with seq/resync DONE and tested; remaining: opportunities/paper/portfolio/pnl/risk/audit/config route groups over the storage layer)
+- priority: P0 · component: api/realtime · status: DONE (auth + status +
+  WS hub with seq/resync; config (T-034), alerts (T-037), ai (T-036)
+  groups; opportunities (memory ring + DB history), paper cycles +
+  per-cycle orders, portfolio snapshot, pnl, risk (limits + breakers +
+  reject histogram), audit list, deep /system/health; /readyz gates on
+  DB reachability; honest 404s for absent components)
 - description: /api/v1 groups (auth, dashboard, scanner, opportunities,
   paper, portfolio, pnl, risk, system, audit, config) with envelope/
   pagination/correlation conventions; WS topic hub with seq + snapshot +

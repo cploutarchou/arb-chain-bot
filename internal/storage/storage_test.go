@@ -178,6 +178,36 @@ func TestOpportunityAndCyclePersistence(t *testing.T) {
 	if !pnl.Equal(d("16.94204")) {
 		t.Fatalf("pnl round-trip = %s", pnl)
 	}
+
+	// Read-side list queries (T-024 route groups) over the same rows.
+	opps, err := s.ListOpportunities(ctx, "", 10)
+	if err != nil || len(opps) != 1 {
+		t.Fatalf("ListOpportunities = %+v err=%v", opps, err)
+	}
+	if opps[0].ID != "op-1" || opps[0].StartAmount != "1000" || *opps[0].NetReturnBps == "" {
+		t.Fatalf("opportunity row = %+v", opps[0])
+	}
+	if none, err := s.ListOpportunities(ctx, "REJECTED", 10); err != nil || len(none) != 0 {
+		t.Fatalf("status filter leaked: %+v err=%v", none, err)
+	}
+	cycles, err := s.ListCycles(ctx, "sess-1", 10)
+	if err != nil || len(cycles) != 1 || cycles[0].Outcome != "ALL_FILLED" || *cycles[0].PnLAmount != "16.94204" {
+		t.Fatalf("ListCycles = %+v err=%v", cycles, err)
+	}
+	orders, err := s.ListOrders(ctx, "cyc-1")
+	if err != nil || len(orders) != 1 || orders[0].Side != "BUY" || *orders[0].AvgPrice != "100" {
+		t.Fatalf("ListOrders = %+v err=%v", orders, err)
+	}
+	if err := s.InsertAuditEvent(ctx, AuditRow{
+		ID: "aud-1", Actor: "telegram:1", Source: "telegram",
+		Action: "paper_pause", Entity: "paper_engine",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	audits, err := s.ListAuditEvents(ctx, "paper_engine", 10)
+	if err != nil || len(audits) != 1 || audits[0].Action != "paper_pause" {
+		t.Fatalf("ListAuditEvents = %+v err=%v", audits, err)
+	}
 }
 
 func TestUpsertMarketsAndOutbox(t *testing.T) {
