@@ -212,7 +212,10 @@ data-flow,security,risk}.md`.
 ## P1 — HIGH
 
 ### T-030 Basic web operations console
-- priority: P1 · component: web · status: TODO
+- priority: P1 · component: web · status: DONE (auth flow with login/
+  CSRF recovery via /auth/me, Overview, Scanner with WS-fed live stream
+  + resync-aware hub client, Paper console with pause/resume, System
+  Health; dark-first; typed client; lint+typecheck+build green)
 - description: Next.js scaffold with auth flow, Overview (system status,
   today stats, health), live Scanner table (virtualized, WS-fed),
   Opportunity detail, Paper console (status + pause/resume), System
@@ -316,10 +319,15 @@ data-flow,security,risk}.md`.
 ## P2 — MEDIUM
 
 ### T-040 Full console page inventory
-- status: TODO — Triangles, Orders, Fills, Portfolio/Balances, PnL &
-  Analytics (charts), Exchanges, Markets, Strategies UI, AI Advisor UI,
-  Risk Center, Replay UI, Reports, Alerts, Audit Log, Users & Security,
-  Settings per SKILL.md §31–§55.
+- status: DONE for the current backend surface (login, Overview,
+  Scanner with live WS stream, Triangles+quality scores, Opportunities
+  history, Paper with per-cycle orders drill-down, Portfolio/Balances +
+  PnL, Exchanges/Markets with book states, Strategies with versioned
+  edit + rollback, AI Advisor approve/reject, Risk Center, Reports with
+  on-demand generation, Alerts ack/resolve, System Health, Audit Log,
+  Settings/Users & Security with honest not-built notes). Remaining
+  inventory rides its features: Replay UI (T-041), a charts pass for
+  PnL & Analytics, user CRUD (needs backend user management first)
 - dependencies: T-030, T-034..T-037
 
 ### T-041 Replay & backtest UI + config comparison
