@@ -107,7 +107,13 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r.Context())
-	WriteData(w, http.StatusOK, map[string]string{"user_id": p.UserID, "role": string(p.Role)})
+	out := map[string]string{"user_id": p.UserID, "role": string(p.Role)}
+	// Re-derive the CSRF token so a reloaded console recovers it without
+	// re-authenticating (it is bound to the session, not stored).
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		out["csrf_token"] = s.csrfFor(c.Value)
+	}
+	WriteData(w, http.StatusOK, out)
 }
 
 // requireAuth validates the session cookie and attaches the principal.
