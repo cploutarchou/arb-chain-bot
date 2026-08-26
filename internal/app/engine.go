@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -64,17 +65,18 @@ type Engine struct {
 	// Center, when set, supplies the live active-alert count (AI input).
 	Center *notification.Center
 
-	mu     sync.RWMutex
-	scn    *scanner.Scanner
-	topo   *graph.Topology
-	pap    *paper.Engine
-	rctl   *marketdata.RecorderControl
-	port   *portfolio.Portfolio
-	feed   *binance.Feed
-	resv   *reservation.Manager
-	brk    *risk.Registry
-	marker portfolio.BookMarker
-	ready  bool
+	mu        sync.RWMutex
+	scn       *scanner.Scanner
+	topo      *graph.Topology
+	pap       *paper.Engine
+	rctl      *marketdata.RecorderControl
+	port      *portfolio.Portfolio
+	feed      *binance.Feed
+	resv      *reservation.Manager
+	brk       *risk.Registry
+	marker    portfolio.BookMarker
+	ready     bool
+	sessionID string // current paper/persistence session id; rotated by ResetPaper (BL-10)
 
 	oppMu        sync.Mutex
 	recentOpps   []RecentOpportunity
@@ -223,6 +225,93 @@ func (e *Engine) Paper() *paper.Engine {
 	return e.pap
 }
 
+// currentSessionID / setSessionID let ResetPaper rotate the session a
+// settled cycle is tagged with (new cycles get the new session; already
+// -persisted history keeps its original tag — SKILL §37).
+func (e *Engine) currentSessionID() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.sessionID
+}
+
+func (e *Engine) setSessionID(id string) {
+	e.mu.Lock()
+	e.sessionID = id
+	e.mu.Unlock()
+}
+
+// errPaperNotBootstrapped: ResetPaper was called before the engine
+// finished its PAPER-mode bootstrap (paper.Engine does not exist yet).
+var errPaperNotBootstrapped = errors.New("engine: paper engine not bootstrapped yet")
+
+// paperInitialBalances recomputes the configured starting balances the
+// same way Run does, so ResetPaper rebuilds the ledger to exactly what a
+// fresh boot would have started with.
+func (e *Engine) paperInitialBalances() (map[exchange.Asset]decimal.Decimal, error) {
+	balance, err := decimal.NewFromString(e.cfg.PaperBalance)
+	if err != nil {
+		return nil, fmt.Errorf("engine: invalid ARB_PAPER_BALANCE: %w", err)
+	}
+	initial := make(map[exchange.Asset]decimal.Decimal, len(e.cfg.StartingAssets))
+	for _, a := range e.cfg.StartingAssets {
+		initial[exchange.Asset(a)] = balance
+	}
+	return initial, nil
+}
+
+// ResetPaper rebuilds the paper engine's reservation ledger and
+// portfolio to the configured initial balances and registers a new
+// paper session row, preserving every historical cycle/order under its
+// original session id (BL-10, SKILL §37: "do not delete historical
+// metrics when a new session begins"). It refuses (paper.ErrActive) if
+// the engine is running or a simulation is in flight — the caller is
+// expected to have paused first.
+//
+// Ordering matters here: paper_cycles.session_id is a NOT NULL foreign
+// key into paper_sessions, so the new session row must exist in the
+// database BEFORE any cycle can be tagged with its id. This method
+// registers the session first and only rotates the live session id (so
+// the next settled cycle picks it up) after that write succeeds — if
+// EnsurePaperSession fails, ResetPaper aborts without touching the
+// ledger/portfolio or the live session id at all, rather than leaving
+// every subsequent cycle insert rejected by the foreign key.
+func (e *Engine) ResetPaper(ctx context.Context) error {
+	e.mu.RLock()
+	pap := e.pap
+	e.mu.RUnlock()
+	if pap == nil {
+		return errPaperNotBootstrapped
+	}
+	// Cheap, non-mutating idle check up front: the common rejection path
+	// (still running / a simulation in flight) then never touches the
+	// database or creates a session row nobody will use.
+	if pap.Running() || pap.Active() > 0 {
+		return paper.ErrActive
+	}
+	initial, err := e.paperInitialBalances()
+	if err != nil {
+		return err
+	}
+	newSession := newULID()
+	if e.Store != nil {
+		balances := make(map[string]string, len(initial))
+		for a, v := range initial {
+			balances[string(a)] = v.String()
+		}
+		if err := e.Store.EnsurePaperSession(ctx, newSession, string(e.cfg.Mode), balances, 1, e.cfg.Seed); err != nil {
+			return fmt.Errorf("engine: register new paper session: %w", err)
+		}
+	}
+	// The session row (if any) is durable now; only after that do we
+	// rebuild the in-memory ledger/portfolio and start tagging cycles
+	// with the new session id.
+	if err := pap.Reset(initial); err != nil {
+		return err
+	}
+	e.setSessionID(newSession)
+	return nil
+}
+
 func (e *Engine) Run(ctx context.Context) error {
 	rest := binance.NewRESTClient(binance.MarketDataRESTHost)
 
@@ -261,6 +350,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	var outbox *storage.Outbox
 	sessionID := newULID()
+	e.setSessionID(sessionID)
 	if e.Store != nil {
 		if err := e.Store.UpsertMarkets(ctx, scoped); err != nil {
 			e.log.Warn("market metadata sync failed", "error", err)
@@ -448,7 +538,12 @@ func (e *Engine) Run(ctx context.Context) error {
 				}
 				if outbox != nil {
 					r := res
-					outbox.Enqueue(storage.Record{Kind: "cycle", Cycle: &r, SessionID: sessionID})
+					// Read the live session id (not the closure-captured
+					// local): ResetPaper (BL-10) rotates it so cycles
+					// settling after a reset are tagged to the new
+					// session while everything already persisted keeps
+					// its original tag.
+					outbox.Enqueue(storage.Record{Kind: "cycle", Cycle: &r, SessionID: e.currentSessionID()})
 				}
 				if e.Hub != nil {
 					_ = e.Hub.Publish("cycles", map[string]any{

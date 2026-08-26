@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +39,7 @@ func newTestServer(t *testing.T) (*Server, *http.ServeMux) {
 		TTL:      time.Hour,
 		Now:      time.Now,
 	}
+	s.Users = &auth.AdminService{Store: store, Sessions: store, Now: time.Now}
 	s.MetricsHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("# metrics"))
 	})
@@ -172,11 +174,25 @@ func TestRBACAndCSRFOnPaperPause(t *testing.T) {
 	}
 }
 
-type fakePaper struct{ running bool }
+type fakePaper struct {
+	running bool
+	// resetErr, when set, is returned by Reset instead of succeeding —
+	// tests use ErrPaperNotIdle to exercise the 409 path.
+	resetErr error
+	resets   int
+}
 
 func (f *fakePaper) Pause()        { f.running = false }
 func (f *fakePaper) Resume()       { f.running = true }
 func (f *fakePaper) Running() bool { return f.running }
+
+func (f *fakePaper) Reset(context.Context) error {
+	if f.resetErr != nil {
+		return f.resetErr
+	}
+	f.resets++
+	return nil
+}
 
 func TestPaperPauseResumeWiring(t *testing.T) {
 	s, mux := newTestServer(t)

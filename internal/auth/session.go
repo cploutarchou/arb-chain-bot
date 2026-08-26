@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 )
@@ -28,6 +29,7 @@ type User struct {
 	PasswordHash string
 	Role         Role
 	Disabled     bool
+	CreatedAt    time.Time
 }
 
 // Session is a server-side revocable session.
@@ -247,4 +249,94 @@ func (s *MemoryStore) RevokeUserSessions(_ context.Context, userID string, at ti
 		}
 	}
 	return nil
+}
+
+// The methods below make MemoryStore also satisfy AdminStore (BL-11), so
+// the users/roles console API works identically with or without a
+// database (docs/security.md §4). users is keyed by email; ID lookups
+// scan it — the admin user list is small (operator-managed accounts),
+// so this trades a map for simplicity rather than performance.
+
+func (s *MemoryStore) ListUsers(_ context.Context) ([]User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]User, 0, len(s.users))
+	for _, u := range s.users {
+		out = append(out, u)
+	}
+	// Match AuthStore's (pgx) ORDER BY created_at ASC, email ASC — a map
+	// iteration order would otherwise reshuffle the console's user
+	// roster on every poll.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].Email < out[j].Email
+	})
+	return out, nil
+}
+
+func (s *MemoryStore) UserByID(_ context.Context, id string) (User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, u := range s.users {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return User{}, ErrUnknownUser
+}
+
+// CreateUser inserts a brand-new user; a duplicate email fails closed
+// rather than silently overwriting an existing account's credentials
+// (that is what AddUser/UpsertUser-style methods are for — CreateUser is
+// the console's "invite" action and must never be a privilege-escalation
+// primitive).
+func (s *MemoryStore) CreateUser(_ context.Context, u User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[u.Email]; exists {
+		return ErrDuplicateEmail
+	}
+	s.users[u.Email] = u
+	return nil
+}
+
+func (s *MemoryStore) UpdateUserRole(_ context.Context, id string, role Role) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == id {
+			u.Role = role
+			s.users[email] = u
+			return nil
+		}
+	}
+	return ErrUnknownUser
+}
+
+func (s *MemoryStore) SetUserDisabled(_ context.Context, id string, disabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == id {
+			u.Disabled = disabled
+			s.users[email] = u
+			return nil
+		}
+	}
+	return ErrUnknownUser
+}
+
+func (s *MemoryStore) SetUserPassword(_ context.Context, id, passwordHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == id {
+			u.PasswordHash = passwordHash
+			s.users[email] = u
+			return nil
+		}
+	}
+	return ErrUnknownUser
 }

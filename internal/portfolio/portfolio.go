@@ -183,6 +183,30 @@ func (p *Portfolio) TakeSnapshot(now time.Time, marker Marker) Snapshot {
 	return snap
 }
 
+// Reset rebuilds the portfolio to a fresh session over new initial
+// balances (BL-10, paper reset): realized P&L, exposure, fees, and cycle
+// counters clear, and the high-water mark restarts at the new initial
+// balances (not zero — a zeroed peak would report a fabricated drawdown
+// on the very first snapshot after reset). It does not alter any of the
+// accounting above: ApplyCycle/ReduceExposure/TakeSnapshot are untouched.
+// The caller is responsible for ensuring no cycle is in flight when
+// calling Reset (mirrors reservation.Manager.Reset).
+func (p *Portfolio) Reset(initial map[exchange.Asset]decimal.Decimal) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.initial = make(map[exchange.Asset]decimal.Decimal, len(initial))
+	p.realized = make(map[exchange.Asset]decimal.Decimal)
+	p.exposure = make(map[exchange.Asset]decimal.Decimal)
+	p.fees = make(map[exchange.Asset]decimal.Decimal)
+	p.peak = make(map[exchange.Asset]decimal.Decimal, len(initial))
+	p.drawdown = make(map[exchange.Asset]decimal.Decimal)
+	p.cycles, p.completed, p.failed = 0, 0, 0
+	for a, v := range initial {
+		p.initial[a] = v
+		p.peak[a] = v
+	}
+}
+
 // Realized returns the realized session PnL for one start asset.
 func (p *Portfolio) Realized(start exchange.Asset) decimal.Decimal {
 	p.mu.Lock()
