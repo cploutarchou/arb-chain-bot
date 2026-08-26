@@ -1,0 +1,35 @@
+# Binaries and build output
+/bin/
+/dist/
+*.exe
+
+# Local environment and secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Recordings and local data
+/recordings/
+/data/
+
+# Go
+/vendor/
+coverage.out
+*.test
+
+# Node / Next.js
+node_modules/
+web/.next/
+web/out/
+web/coverage/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Playwright
+web/test-results/
+web/playwright-report/
+web/tsconfig.tsbuildinfo

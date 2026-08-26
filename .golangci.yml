@@ -1,0 +1,21 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - gosec
+    - misspell
+    - unconvert
+    - copyloopvar
+  settings:
+    gosec:
+      excludes:
+        - G104 # duplicate of errcheck
+  exclusions:
+    rules:
+      # Test helpers may ignore Close/Write errors and use weak randomness.
+      - path: _test\.go
+        linters: [gosec, errcheck]
