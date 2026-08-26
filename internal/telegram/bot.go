@@ -100,6 +100,11 @@ type Bot struct {
 	Log       *slog.Logger
 	// Audit records control actions (source=telegram); nil = log only.
 	Audit func(actor, action, entity string)
+	// Allowed, when set, takes precedence over Allowlist (T-057: the
+	// wiring points it at one live allow-set shared with PushSink.Targets
+	// so revoking a Telegram user takes effect immediately everywhere,
+	// not just here). nil = use Allowlist (tests set the map directly).
+	Allowed func(userID int64) bool
 	// PollTimeout for getUpdates (tests use 0 for immediate returns).
 	PollTimeout time.Duration
 
@@ -190,7 +195,11 @@ func (b *Bot) handleUpdate(ctx context.Context, u Update) {
 }
 
 func (b *Bot) roleFor(userID int64) (auth.Role, bool) {
-	if b.Allowlist[userID] {
+	allowed := b.Allowlist[userID]
+	if b.Allowed != nil {
+		allowed = b.Allowed(userID)
+	}
+	if allowed {
 		return auth.RoleOperator, true
 	}
 	return "", false
