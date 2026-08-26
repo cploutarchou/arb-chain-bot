@@ -91,6 +91,10 @@ func (s *Server) readRoutes(mux *http.ServeMux) {
 		rows, err := s.Store.ListAuditEvents(r.Context(), r.URL.Query().Get("entity"), limitOf(r))
 		s.writeListResult(w, r, "events", rows, err)
 	})))
+	mux.HandleFunc("GET /api/v1/recordings", s.requirePerm(auth.PermViewSystem, needStore(func(w http.ResponseWriter, r *http.Request) {
+		rows, err := s.Store.ListRecordings(r.Context(), limitOf(r))
+		s.writeListResult(w, r, "recordings", rows, err)
+	})))
 	mux.HandleFunc("GET /api/v1/triangles/quality", s.requirePerm(auth.PermViewDashboard, needStore(func(w http.ResponseWriter, r *http.Request) {
 		hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
 		if hours < 1 || hours > 24*30 {
