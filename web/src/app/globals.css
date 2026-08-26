@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-/* Dark-first operations-console theme tokens (resources/client-area.md). */
+/* Dark-first operations-console theme tokens (resources/client-area.md).
+   Dark is the default (BL-24); a light-mode token set follows under
+   prefers-color-scheme so light mode is usable, not merely "not broken". */
 :root {
   --bg: #0b0e14;
   --bg-panel: #11151f;
@@ -15,12 +17,44 @@
   --critical: #e5484d;
 }
 
+/* color-scheme: dark light (not just "dark") — otherwise the browser
+   forces dark-themed native form controls (checkboxes, date pickers)
+   even once the light token block below takes effect. */
 html {
-  color-scheme: dark;
+  color-scheme: dark light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --bg-panel: #ffffff;
+    --bg-raised: #eceef2;
+    --border: #d7dbe3;
+    --text: #171a21;
+    --text-dim: #5b6270;
+    --accent: #2f66d0;
+    --ok: #1f8f52;
+    --warn: #a8650f;
+    --high: #b8541f;
+    --critical: #c8323a;
+  }
 }
 
 body {
   background: var(--bg);
   color: var(--text);
   font-feature-settings: "tnum" 1; /* aligned numerals for tables */
+}
+
+/* Visible focus rings against the theme's own accent, both modes (§4.6:
+   audit against WCAG AA on --bg/--bg-panel — the previous Tailwind
+   default ring was never verified against the dark background). */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

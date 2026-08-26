@@ -231,6 +231,9 @@ export default function CampaignsPage() {
                 : `Engine restart pending: ${engineStatus.data.restart.pending_reasons?.join("; ") ?? "settings changed"}.`}
             </p>
           )}
+        {/* WS-driven (recordings topic): announce state changes to screen
+            readers without interrupting (§4.6/BL-23). */}
+        <div aria-live="polite" aria-atomic="false">
         <Await state={recordingsState} what="recorder status">
           {(r) => {
             const recorder = wsRecorder ?? r.recorder;
@@ -246,7 +249,7 @@ export default function CampaignsPage() {
               : "—";
             return (
               <div className="max-w-4xl">
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
                   <Stat
                     label="State"
                     value={recorder.running ? "RECORDING" : "IDLE"}
@@ -292,6 +295,7 @@ export default function CampaignsPage() {
             );
           }}
         </Await>
+        </div>
       </Section>
 
       <Section title="Recorded sessions">
@@ -425,6 +429,9 @@ export default function CampaignsPage() {
       </Section>
 
       <Section title="Runs">
+        {/* WS-driven (campaigns topic): progress/status updates announce
+            without stealing focus (§4.6/BL-23). */}
+        <div aria-live="polite" aria-atomic="false">
         {runsState.kind === "loading" && <Loading what="campaign runs" />}
         {runsState.kind === "error" && (
           <ErrorBox message={runsState.message} status={runsState.status} />
@@ -468,6 +475,7 @@ export default function CampaignsPage() {
             })}
           />
         )}
+        </div>
       </Section>
 
       {detail && (

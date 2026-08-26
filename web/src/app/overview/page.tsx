@@ -51,7 +51,7 @@ export default function OverviewPage() {
       <PageTitle>Overview</PageTitle>
 
       <Section title="Status">
-        <div className="grid max-w-5xl grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <div className="grid max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
           {statOrError(status, "Mode", (s) => ({ value: s.mode }))}
           {statOrError(scanner, "Scanner", (s) => ({
             value: s.ready ? "READY" : "NOT READY",
@@ -82,7 +82,7 @@ export default function OverviewPage() {
       <Section title="Today (session counters)">
         <Await state={scanner} what="today's counters">
           {(s) => (
-            <div className="grid max-w-5xl grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+            <div className="grid max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
               <Stat label="Opportunities detected" value={s.evaluations} />
               <Stat label="Qualified" value={s.qualified} tone="ok" />
               <Stat label="Rejected" value={s.rejected} />
@@ -97,7 +97,7 @@ export default function OverviewPage() {
       <Section title="Current">
         <Await state={scanner} what="active simulations">
           {(s) => (
-            <div className="mb-3 grid max-w-2xl grid-cols-2 gap-3 md:grid-cols-3">
+            <div className="mb-3 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
               <Stat label="Active simulations" value={s.paper?.active_simulations ?? "—"} />
               <Stat label="Triangles" value={s.triangles} />
               <Stat label="Markets" value={s.markets.length} />
@@ -134,7 +134,7 @@ export default function OverviewPage() {
         <Await state={health} what="exchange health">
           {(h) =>
             h.feed ? (
-              <div className="grid max-w-4xl grid-cols-2 gap-3 md:grid-cols-5">
+              <div className="grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-5">
                 <Stat label="Frames" value={h.feed.frames} />
                 <Stat label="Reconnects" value={h.feed.reconnects} tone={h.feed.reconnects > 5 ? "warn" : undefined} />
                 <Stat label="REST errors" value={h.feed.api_errors} tone={h.feed.api_errors > 0 ? "warn" : undefined} />
