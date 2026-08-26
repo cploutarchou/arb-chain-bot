@@ -251,16 +251,22 @@ Item-level record: `okx-connector-checklist.md` §14.
   snapshot needed.
 - **WS limits**: 300 connection requests/IP/5min, ≤100 connections/IP;
   240 subscribes/hour/connection; literal `"ping"` every 30s.
-- **REST**: orderbook limit ≤150; global 6,000 req/min/IP; per-endpoint
-  numbers not retrievable (api-doc pages are client-rendered; 2026-08-26
-  re-check found only a generic 20 req/s market-data figure in secondary
-  sources) — runtime-verified assumption.
+- **REST** [browser re-check 2026-08-26]: the classic v2 api-doc paths
+  now redirect to the **Unified Trading Account v3 docs**; there
+  `GET /api/v3/market/orderbook?category=SPOT` is **20 req/s per IP**,
+  `limit` ≤ 1000, and — watch out — prices/quantities are emitted as
+  **JSON numbers**, not strings; the account-wide table is 10 req/s
+  default rising to 60–100 req/s by VIP level. The v2 `orderbook ≤150 /
+  6,000 req/min/IP` figures from round 1 are therefore stale for new
+  integrations; the decimal-safety rule (decode via json.Number) must
+  be enforced on this venue.
 - **Server time**: `/api/v2/public/time`.
 - **Orders**: limit/market; force **gtc/post_only/fok/ioc**.
 - **Test env**: demo via `paptrading: 1` header + `wss://wspap.bitget.com`
   with "S"-prefixed demo assets (SUSDT/SBTC/SETH/SUSDC) — strong evidence
-  of spot coverage but not stated on a retrievable primary page
-  (2026-08-26) — runtime-verified assumption.
+  of spot coverage, but the UTA v3 doc tree browsed on 2026-08-26 has no
+  demo-trading section at all (old demotrading paths 404/redirect) —
+  runtime-verified assumption.
 - **Keys**: secret+passphrase; read-only/trade split; IP allowlist.
 - **Universe**: ~800–1,000+ pairs; metadata `/api/v2/spot/public/symbols`
   (decimals-based precision, `minTradeUSDT`).
@@ -280,9 +286,11 @@ Item-level record: `okx-connector-checklist.md` §14.
   @100ms) with in-band snapshots + U/u increments — preferred; plain
   `spot.order_book` periodic snapshots. **No checksum.**
 - **WS limits**: ≤50 requests/sec/connection; per-IP caps unpublished —
-  gate.com/gate.io doc and help domains answer HTTP 403 to non-browser
-  clients (re-checked 2026-08-26), so this stays a runtime-verified
-  assumption.
+  confirmed 2026-08-26 by browsing gate.com/docs/developers/apiv4/ws/en
+  (it documents only order-placement rate-limit headers
+  `x_gate_ratelimit_*`, no connection or subscription caps; the domain
+  answers HTTP 403 to non-browser clients), so the per-IP cap stays a
+  runtime-verified assumption.
 - **REST**: `order_book` limit ≤100 (`with_id=true` for sync); public 200
   req/10s per endpoint per IP.
 - **Server time**: `/api/v4/spot/time`.
