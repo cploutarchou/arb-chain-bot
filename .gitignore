@@ -32,3 +32,4 @@ web/coverage/
 # Playwright
 web/test-results/
 web/playwright-report/
+web/tsconfig.tsbuildinfo
