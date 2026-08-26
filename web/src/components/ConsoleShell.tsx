@@ -14,7 +14,7 @@ const NAV: { label: string; href?: string }[] = [
   { label: "Strategies", href: "/strategies" },
   { label: "AI Advisor", href: "/ai" },
   { label: "Risk Center", href: "/risk" },
-  { label: "Replay & Backtesting" },
+  { label: "Replay & Backtesting", href: "/replay" },
   { label: "Reports", href: "/reports" },
   { label: "Alerts", href: "/alerts" },
   { label: "System Health", href: "/system" },

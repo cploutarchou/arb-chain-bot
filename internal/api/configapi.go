@@ -28,6 +28,19 @@ func (s *Server) configRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/config", s.requirePerm(auth.PermViewSystem, gate(func(w http.ResponseWriter, r *http.Request) {
 		WriteData(w, http.StatusOK, s.Strategy.Current())
 	})))
+	mux.HandleFunc("GET /api/v1/config/version/{n}", s.requirePerm(auth.PermViewSystem, gate(func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.ParseInt(r.PathValue("n"), 10, 64)
+		if err != nil || n <= 0 {
+			WriteError(w, http.StatusBadRequest, "bad_version", "version must be a positive integer", correlationID(r))
+			return
+		}
+		snap, err := s.Strategy.Get(r.Context(), n)
+		if err != nil {
+			s.writeConfigError(w, r, err)
+			return
+		}
+		WriteData(w, http.StatusOK, snap)
+	})))
 	mux.HandleFunc("GET /api/v1/config/versions", s.requirePerm(auth.PermViewSystem, gate(func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		list, err := s.Strategy.List(r.Context(), limit)

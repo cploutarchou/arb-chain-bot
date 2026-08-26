@@ -50,6 +50,7 @@ test("every nav page renders content or an honest state", async ({ page }) => {
     ["/ai", /AI Advisor/],
     ["/risk", /Risk Center/],
     ["/reports", /Reports/],
+    ["/replay", /Replay/],
     ["/alerts", /Alert Center/],
     ["/system", /System/],
     ["/audit", /Audit Log/],
