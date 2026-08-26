@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+/* Dark-first operations-console theme tokens (resources/client-area.md). */
+:root {
+  --bg: #0b0e14;
+  --bg-panel: #11151f;
+  --bg-raised: #171c29;
+  --border: #232a3b;
+  --text: #d7dce7;
+  --text-dim: #8b93a7;
+  --accent: #4f8cff;
+  --ok: #2fbf71;
+  --warn: #e6a23c;
+  --high: #f0713a;
+  --critical: #e5484d;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-feature-settings: "tnum" 1; /* aligned numerals for tables */
+}
