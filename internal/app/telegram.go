@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -15,10 +17,11 @@ import (
 // through the same paper controller the web console uses, so state is
 // one and the same.
 type telegramServices struct {
-	e *Engine
-	n *notification.Service
-	c *notification.Center
-	s *strategy.Service
+	e  *Engine
+	n  *notification.Service
+	c  *notification.Center
+	s  *strategy.Service
+	ai *ai.Service
 }
 
 func (t telegramServices) Status() telegram.StatusView {
@@ -155,6 +158,44 @@ func (t telegramServices) AckAlert(id, actor string) (notification.Alert, error)
 		return notification.Alert{}, notification.ErrAlertNotFound
 	}
 	return t.c.Ack(id, actor)
+}
+
+func (t telegramServices) AIPresent() bool { return t.ai != nil }
+
+func (t telegramServices) AIAnalyses(limit int) []ai.AnalysisResult {
+	if t.ai == nil {
+		return nil
+	}
+	return t.ai.Analyses(limit)
+}
+
+func (t telegramServices) AIRecommendations(status string) []ai.Recommendation {
+	if t.ai == nil {
+		return nil
+	}
+	return t.ai.Recommendations(status)
+}
+
+func (t telegramServices) AIApprove(id, actor string) (int64, error) {
+	if t.ai == nil {
+		return 0, ai.ErrRecommendationNotFound
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	snap, err := t.ai.Approve(ctx, id, actor, "telegram")
+	if err != nil {
+		return 0, err
+	}
+	return snap.Version, nil
+}
+
+func (t telegramServices) AIReject(id, actor string) error {
+	if t.ai == nil {
+		return ai.ErrRecommendationNotFound
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return t.ai.Reject(ctx, id, actor)
 }
 
 func (t telegramServices) PaperPause(string) bool {

@@ -7,6 +7,7 @@ import (
 
 	"encoding/json"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/api"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
@@ -88,6 +89,25 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	}
 	notify.RegisterAlways(center)
 
+	// AI advisor: provider per config. It is an analyst off the hot
+	// path; absence just leaves the routes and commands reporting so.
+	var aiSvc *ai.Service
+	if adv := buildAdvisor(cfg, log); adv != nil {
+		aiSvc = &ai.Service{
+			Advisor: adv, Strategy: stratSvc,
+			Notify: notify.Notify, Log: log, IDGen: newULID,
+		}
+		if store != nil {
+			aiSvc.Store = store.AI()
+		}
+		if mtr != nil {
+			if err := mtr.RegisterAI(aiSvc.Requests, aiSvc.Failures); err != nil {
+				log.Error("ai metrics registration failed", "error", err)
+			}
+		}
+		log.Info("ai advisor enabled", "provider", adv.Name(), "model", adv.Model())
+	}
+
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
 		engine = NewEngine(cfg, log)
@@ -96,6 +116,14 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		engine.Metrics = mtr
 		engine.Notifier = notify
 		others = append(others, engine)
+
+		if aiSvc != nil {
+			others = append(others, &ai.Scheduler{
+				Service:  aiSvc,
+				InputFor: engine.AIInput,
+				Log:      log,
+			})
+		}
 
 		// Telegram control surface: only with a token, a non-empty
 		// allow-list, and an engine to control.
@@ -108,7 +136,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			bot := &telegram.Bot{
 				Client:    client,
 				Allowlist: allow,
-				Services:  telegramServices{e: engine, n: notify, c: center, s: stratSvc},
+				Services:  telegramServices{e: engine, n: notify, c: center, s: stratSvc, ai: aiSvc},
 				Log:       log,
 				Audit:     telegramAudit(log, store),
 			}
@@ -162,6 +190,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			_ = hub.Publish("alerts", map[string]any{"kind": "alert_change", "alert": a})
 		}
 		apiServer.Alerts = center
+		apiServer.AI = aiSvc
 		apiServer.AuditAction = webAudit(log, store)
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
@@ -197,6 +226,26 @@ func (p paperProxy) Running() bool {
 		return pe.Running()
 	}
 	return false
+}
+
+// buildAdvisor selects the AI provider. Keys come from the environment
+// only and never leave the process except in the provider's auth header.
+func buildAdvisor(cfg config.Bootstrap, log *slog.Logger) ai.Advisor {
+	switch cfg.AIProvider {
+	case "fake":
+		return ai.Fake{}
+	case "", "anthropic":
+		if cfg.AnthropicAPIKey == "" {
+			if cfg.AIProvider == "anthropic" {
+				log.Warn("ARB_AI_PROVIDER=anthropic but ANTHROPIC_API_KEY unset; advisor disabled")
+			}
+			return nil
+		}
+		return ai.NewAnthropic(cfg.AnthropicAPIKey, cfg.AIModel)
+	default:
+		log.Warn("unknown ARB_AI_PROVIDER; advisor disabled", "provider", cfg.AIProvider)
+		return nil
+	}
 }
 
 // notificationConfig converts the strategy payload's notification slice.

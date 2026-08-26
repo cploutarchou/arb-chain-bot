@@ -306,6 +306,26 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 	return err
 }
 
+// RegisterAI exposes ai_requests_total / ai_failures_total.
+func (m *Metrics) RegisterAI(reqs, fails func() int64) error {
+	requests, err := m.meter.Int64ObservableCounter("ai_requests",
+		api.WithDescription("AI advisor analysis runs"))
+	if err != nil {
+		return err
+	}
+	failures, err := m.meter.Int64ObservableCounter("ai_failures",
+		api.WithDescription("AI advisor failures (provider or validation)"))
+	if err != nil {
+		return err
+	}
+	_, err = m.meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		o.ObserveInt64(requests, reqs())
+		o.ObserveInt64(failures, fails())
+		return nil
+	}, requests, failures)
+	return err
+}
+
 // RegisterTelegram exposes the bot's message/error counters
 // (telegram_messages_total, telegram_errors_total).
 func (m *Metrics) RegisterTelegram(msgs, errs func() int64) error {

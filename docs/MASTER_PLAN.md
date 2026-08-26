@@ -279,7 +279,15 @@ data-flow,security,risk}.md`.
   overhead benchmarked.
 
 ### T-036 AI advisor subsystem
-- priority: P1 · component: ai · status: TODO
+- priority: P1 · component: ai · status: DONE (Advisor interface;
+  Anthropic provider over raw Messages API + deterministic Fake through
+  the same strict validation gate — unknown fields/params/bounds all
+  rejected with WARNING alerts; typed-summary inputs only; versioned
+  prompt; scheduler hourly/daily/weekly that survives outages;
+  approve/reject through the strategy service (validated, versioned,
+  audited) via web API and Telegram buttons; rejection history kept;
+  ai_analyses migration 000002; provider outage fault test proves
+  isolation. OpenAI alternative provider remains optional follow-up)
 - description: Advisor interface, Anthropic provider (+Fake), schema-
   validated outputs, scheduled hourly/daily/weekly analyses, parameter
   recommendations + approval flow + audit per resources/ai-advisor.md.
