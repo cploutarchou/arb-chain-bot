@@ -463,6 +463,21 @@ data-flow,security,risk}.md`.
   burn-ins (API fee via `tradeFee`, IOC behaviour, real IP/UID budget,
   WS ping/connection caps, fee asset convention).
 
+### T-057 Platform settings + supervised engine restart
+- status: DESIGNED (2026-08-26) — `docs/design/platform-settings-and-restart.md`.
+  Closes console-ux-audit BL-13b (editable symbols/starting assets) and
+  BL-15 (venues & fees). New versioned `platform_settings` document
+  (separate from `strategy.Params`: the section→permission mapping in
+  rbac.go:72-77 fails open to OPERATOR, and symbol validation needs
+  exchangeInfo), migration 000006, and an `app.Supervisor` that re-enters
+  one stable `Engine.Run` on `POST /api/v1/engine/restart`. Env vars
+  become first-boot seeds only.
+- dependencies: T-034 (config service pattern), T-040
+- acceptance: settings validation + supervisor unit tests (fake engine);
+  API tests for RBAC/CSRF/confirm/409 guard rails; one integration path
+  rebuilding the topology across a restart with persisted rows intact;
+  `LiveExecutor` untouched.
+
 ---
 
 ## Status log
