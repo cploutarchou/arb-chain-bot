@@ -3,10 +3,14 @@
 import { useState } from "react";
 import { api, ApiError, type Report } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
+import { useAuth, can } from "@/lib/auth";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Await, Badge, Button, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
 export default function ReportsPage() {
+  const { state: auth } = useAuth();
+  const role = auth.kind === "authenticated" ? auth.me.role : undefined;
+  const mayGenerate = can(role, "reports:generate");
   const [refresh, setRefresh] = useState(0);
   const reports = usePoll(() => api.reports.list("", 20), 15000, [refresh]);
   const [selected, setSelected] = useState<Report | null>(null);
@@ -26,9 +30,15 @@ export default function ReportsPage() {
   return (
     <ConsoleShell active="Reports">
       <PageTitle>Reports</PageTitle>
-      <div className="mb-3 flex gap-2">
-        <Button onClick={() => generate("daily")}>Generate daily now</Button>
-        <Button onClick={() => generate("weekly")}>Generate weekly now</Button>
+      <div className="mb-3 flex items-center gap-2">
+        {mayGenerate ? (
+          <>
+            <Button onClick={() => generate("daily")}>Generate daily now</Button>
+            <Button onClick={() => generate("weekly")}>Generate weekly now</Button>
+          </>
+        ) : (
+          <span className="text-[12px] text-[var(--text-dim)]">Generating reports requires OPERATOR or ADMIN.</span>
+        )}
         {msg && <span className="self-center text-[12px] text-[var(--critical)]">{msg}</span>}
       </div>
       <Section title="Persisted reports">
@@ -36,7 +46,11 @@ export default function ReportsPage() {
           {(r) => (
             <Table
               head={["Generated", "Kind", "Period", "Executive summary", ""]}
-              empty="persisted reports (requires ARB_DATABASE_URL)"
+              empty={
+                mayGenerate
+                  ? "reports yet. Generate one above, or persistence isn't configured for this deployment — see docs/deployment.md"
+                  : "reports yet. An OPERATOR or ADMIN can generate one, or persistence isn't configured for this deployment — see docs/deployment.md"
+              }
               rows={(r.reports ?? []).map((rep) => [
                 fmtTime(rep.generated_at),
                 <Badge key="k" tone="dim">{rep.kind}</Badge>,

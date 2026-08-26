@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { api, request } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
+import { flatten } from "@/lib/diff";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Await, Badge, Button, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
@@ -18,19 +20,6 @@ interface RecordingRow {
 interface ConfigSnapshotFull {
   version: number;
   params: Record<string, unknown>;
-}
-
-function flatten(obj: Record<string, unknown>, prefix = ""): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const [k, v] of Object.entries(obj)) {
-    const key = prefix ? `${prefix}.${k}` : k;
-    if (v !== null && typeof v === "object" && !Array.isArray(v)) {
-      for (const [ck, cv] of flatten(v as Record<string, unknown>, key)) out.set(ck, cv);
-    } else {
-      out.set(key, JSON.stringify(v));
-    }
-  }
-  return out;
 }
 
 export default function ReplayPage() {
@@ -79,26 +68,32 @@ export default function ReplayPage() {
       </p>
       <Section title="Recorded sessions">
         <Await state={recordings} what="recordings">
-          {(r) => (
-            <Table
-              head={["Started", "Ended", "Exchange", "Session", "Segments", "Frames", "Replay command"]}
-              empty="recordings (run arbd with ARB_MODE=RECORD to capture)"
-              rows={(r.recordings ?? []).map((rec) => {
-                const frames = (rec.segment_files ?? []).reduce((n, s) => n + (s.frames ?? 0), 0);
-                return [
-                  fmtTime(rec.started_at),
-                  rec.ended_at ? fmtTime(rec.ended_at) : <Badge tone="warn">open</Badge>,
-                  rec.exchange_id,
-                  <span key="id" className="text-[var(--text-dim)]">{rec.id}</span>,
-                  (rec.segment_files ?? []).length,
-                  frames,
-                  <code key="cmd" className="rounded bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px]">
-                    ARB_MODE=REPLAY ARB_REPLAY_SESSION={rec.id} ./arbd
-                  </code>,
-                ];
-              })}
-            />
-          )}
+          {(r) =>
+            (r.recordings ?? []).length === 0 ? (
+              <p className="text-sm text-[var(--text-dim)]">
+                No recordings yet. Start one from <Link href="/campaigns" className="text-[var(--accent)]">Campaigns → Recorder</Link>.
+              </p>
+            ) : (
+              <Table
+                head={["Started", "Ended", "Exchange", "Session", "Segments", "Frames", "Replay (CLI only for now)"]}
+                empty="recordings"
+                rows={(r.recordings ?? []).map((rec) => {
+                  const frames = (rec.segment_files ?? []).reduce((n, s) => n + (s.frames ?? 0), 0);
+                  return [
+                    fmtTime(rec.started_at),
+                    rec.ended_at ? fmtTime(rec.ended_at) : <Badge tone="warn">open</Badge>,
+                    rec.exchange_id,
+                    <span key="id" className="text-[var(--text-dim)]">{rec.id}</span>,
+                    (rec.segment_files ?? []).length,
+                    frames,
+                    <code key="cmd" className="rounded bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px]">
+                      ARB_MODE=REPLAY ARB_REPLAY_SESSION={rec.id} ./arbd
+                    </code>,
+                  ];
+                })}
+              />
+            )
+          }
         </Await>
       </Section>
       <Section title="Config comparison (any two versions)">
