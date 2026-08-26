@@ -5,7 +5,20 @@ import { api, ApiError, type StrategyParams } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { diffParams, effectFor, fmtDiffValue, type DiffRow } from "@/lib/diff";
+import {
+  ALL_FIELDS,
+  RISK_FIELDS,
+  SCANNER_FIELDS,
+  cloneParams,
+  getPath,
+  setPath,
+  validateCooldown,
+  validateField,
+  fieldPathFromError,
+  type FieldSpec,
+} from "@/lib/strategyFields";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { NotificationsFields } from "@/components/NotificationsFields";
 import { Await, Badge, Button, ConfirmDialog, DiffTable, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
 interface ApplyConfirm {
@@ -20,13 +33,78 @@ interface RollbackConfirm {
   fromVersion: number;
 }
 
+function notifRoutes(params: StrategyParams): Record<string, string[]> {
+  const r = (params.notifications as Record<string, unknown>).routes;
+  return r ? (JSON.parse(JSON.stringify(r)) as Record<string, string[]>) : {};
+}
+
+function notifCooldown(params: StrategyParams): string {
+  const v = (params.notifications as Record<string, unknown>).cooldown_seconds;
+  return v === undefined || v === null ? "" : String(v);
+}
+
+function FieldRow({
+  spec,
+  value,
+  error,
+  disabled,
+  disabledNote,
+  onChange,
+}: {
+  spec: FieldSpec;
+  value: string;
+  error?: string;
+  disabled?: boolean;
+  disabledNote?: string;
+  onChange: (v: string) => void;
+}) {
+  const id = `field-${spec.path}`;
+  return (
+    <div>
+      <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor={id}>
+        {spec.label}
+        {disabled && disabledNote && (
+          <span className="ml-1 text-[var(--warn)]">({disabledNote})</span>
+        )}
+      </label>
+      <input
+        id={id}
+        type="text"
+        inputMode={spec.kind === "int" ? "numeric" : "decimal"}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className={`w-full rounded border bg-[var(--bg)] px-2 py-1 text-[13px] outline-none disabled:opacity-50 ${
+          error ? "border-[var(--critical)]" : "border-[var(--border)] focus:border-[var(--accent)]"
+        }`}
+      />
+      <p className="mt-1 text-[11px] text-[var(--text-dim)]">
+        {spec.help}
+        {spec.effect === "on restart" && (
+          <span className="ml-1 text-[var(--warn)]">Applies on restart, not hot-swapped.</span>
+        )}
+      </p>
+      {error && <p className="mt-1 text-[11px] text-[var(--critical)]">{error}</p>}
+    </div>
+  );
+}
+
 export default function StrategiesPage() {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const [refresh, setRefresh] = useState(0);
   const current = usePoll(() => api.config.current(), 10000, [refresh]);
   const versions = usePoll(() => api.config.versions(25), 10000, [refresh]);
-  const [draft, setDraft] = useState<string | null>(null);
+
+  const [editing, setEditing] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [fieldRaw, setFieldRaw] = useState<Record<string, string>>({});
+  const [cooldownRaw, setCooldownRaw] = useState("");
+  const [routesDraft, setRoutesDraft] = useState<Record<string, string[]>>({});
+  const [jsonText, setJsonText] = useState("");
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [applyConfirm, setApplyConfirm] = useState<ApplyConfirm | null>(null);
   const [rollbackConfirm, setRollbackConfirm] = useState<RollbackConfirm | null>(null);
@@ -35,22 +113,136 @@ export default function StrategiesPage() {
 
   const activeParams = current.kind === "ready" ? current.data.params : null;
   const activeVersion = current.kind === "ready" ? current.data.version : null;
+  const mayEdit = can(role, "scanner:config");
+  const mayEditRisk = role === "ADMIN";
+
+  const populateFromParams = (params: StrategyParams) => {
+    const raw: Record<string, string> = {};
+    for (const f of ALL_FIELDS) {
+      const v = getPath(params, f.path);
+      raw[f.path] = v === undefined || v === null ? "" : String(v);
+    }
+    setFieldRaw(raw);
+    setCooldownRaw(notifCooldown(params));
+    setRoutesDraft(notifRoutes(params));
+    setFieldErrors({});
+  };
+
+  const startEdit = () => {
+    if (!activeParams) return;
+    setMsg(null);
+    setJsonError(null);
+    populateFromParams(activeParams);
+    setJsonText(JSON.stringify(activeParams, null, 2));
+    setAdvanced(false);
+    setEditing(true);
+  };
+
+  const discard = () => {
+    setEditing(false);
+    setAdvanced(false);
+    setFieldErrors({});
+    setJsonError(null);
+  };
+
+  // buildFromFields folds the current per-field raw text into a full
+  // params document by cloning the active version and overwriting only
+  // the leaves the operator touched (never re-serializing untouched
+  // fields, per §4.4 — avoids manufacturing a diff on fields the
+  // operator didn't edit and possibly tripping the risk->ADMIN gate).
+  const buildFromFields = (base: StrategyParams): { params: StrategyParams; errors: Record<string, string> } => {
+    let params = cloneParams(base);
+    const errors: Record<string, string> = {};
+    for (const f of ALL_FIELDS) {
+      if (f.section === "risk" && !mayEditRisk) continue; // untouchable, leave as-is
+      const raw = fieldRaw[f.path] ?? "";
+      const err = validateField(f, raw);
+      if (err) {
+        errors[f.path] = err;
+        continue;
+      }
+      const value = f.kind === "decimal" ? raw.trim() : Number(raw.trim());
+      params = setPath(params, f.path, value);
+    }
+    const cdErr = validateCooldown(cooldownRaw);
+    if (cdErr) {
+      errors["notifications.cooldown_seconds"] = cdErr;
+    } else {
+      params = setPath(params, "notifications.cooldown_seconds", Number(cooldownRaw.trim()));
+    }
+    params = setPath(params, "notifications.routes", routesDraft);
+    return { params, errors };
+  };
+
+  const switchToAdvanced = () => {
+    if (!activeParams) return;
+    const { params, errors } = buildFromFields(activeParams);
+    // buildFromFields silently keeps the last-valid value for any field
+    // that fails validation — refuse the switch rather than seed the JSON
+    // view with an edit the operator just typed and would otherwise lose
+    // without any message.
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setMsg({ ok: false, text: "Fix the highlighted fields before switching to Advanced: JSON." });
+      return;
+    }
+    setJsonText(JSON.stringify(params, null, 2));
+    setJsonError(null);
+    setAdvanced(true);
+  };
+
+  const switchToStructured = () => {
+    try {
+      const parsed = JSON.parse(jsonText) as StrategyParams;
+      populateFromParams(parsed);
+      setAdvanced(false);
+      setJsonError(null);
+    } catch {
+      setJsonError("Draft is not valid JSON — fix it before switching back to the structured form.");
+    }
+  };
+
+  const toggleChannel = (severity: string, channel: string, enabled: boolean) => {
+    setRoutesDraft((prev) => {
+      const current = new Set(prev[severity] ?? []);
+      if (enabled) current.add(channel);
+      else current.delete(channel);
+      return { ...prev, [severity]: [...current] };
+    });
+  };
 
   const reviewChanges = () => {
-    if (draft === null || activeParams === null || activeVersion === null) return;
+    if (!activeParams || activeVersion === null) return;
     setMsg(null);
-    let parsed: StrategyParams;
-    try {
-      parsed = JSON.parse(draft) as StrategyParams;
-    } catch {
-      setMsg({ ok: false, text: "Draft is not valid JSON." });
+    let params: StrategyParams;
+    let errors: Record<string, string> = {};
+    if (advanced) {
+      try {
+        params = JSON.parse(jsonText) as StrategyParams;
+        setJsonError(null);
+      } catch {
+        setJsonError("Draft is not valid JSON.");
+        return;
+      }
+    } else {
+      const built = buildFromFields(activeParams);
+      params = built.params;
+      errors = built.errors;
+    }
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setMsg({ ok: false, text: "Fix the highlighted fields before reviewing changes." });
       return;
     }
     const rows = diffParams(
       activeParams as unknown as Record<string, unknown>,
-      parsed as unknown as Record<string, unknown>,
+      params as unknown as Record<string, unknown>,
     ).map((r) => ({ ...r, effect: effectFor(r.path) }));
-    setApplyConfirm({ params: parsed, rows, fromVersion: activeVersion });
+    if (rows.length === 0) {
+      setMsg({ ok: false, text: "No changes to apply." });
+      return;
+    }
+    setApplyConfirm({ params, rows, fromVersion: activeVersion });
   };
 
   const confirmApply = async () => {
@@ -59,14 +251,18 @@ export default function StrategiesPage() {
     try {
       const snap = await api.config.apply(applyConfirm.params);
       setMsg({ ok: true, text: `Version ${snap.version} active.` });
-      setDraft(null);
       setApplyConfirm(null);
+      discard();
       setRefresh((n) => n + 1);
     } catch (err: unknown) {
-      setMsg({
-        ok: false,
-        text: err instanceof ApiError ? err.message : "Apply failed.",
-      });
+      const text = err instanceof ApiError ? err.message : "Apply failed.";
+      const path = err instanceof ApiError ? fieldPathFromError(text) : null;
+      if (path && !advanced) {
+        setFieldErrors((prev) => ({ ...prev, [path]: text }));
+        setMsg({ ok: false, text: "The backend rejected this change — see the highlighted field." });
+      } else {
+        setMsg({ ok: false, text });
+      }
       setApplyConfirm(null);
     }
   };
@@ -103,14 +299,13 @@ export default function StrategiesPage() {
     }
   };
 
-  const mayEdit = can(role, "scanner:config");
-
   return (
     <ConsoleShell active="Strategies">
       <PageTitle>Strategy Configuration</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         Every change becomes an immutable version with a diff, actor, and audit event, and hot-swaps
-        into the running scanner. Risk-section changes require ADMIN; the backend validates bounds.
+        into the running scanner — except <strong>scanner.workers</strong>, which only applies the next
+        time the engine process starts. Risk-section changes require ADMIN; the backend validates bounds.
       </p>
       {msg && (
         <p className={`mb-3 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>
@@ -119,35 +314,92 @@ export default function StrategiesPage() {
         <Await state={current} what="active config">
           {(c) => (
             <>
-              <div className="mb-2 flex items-center gap-3 text-[13px]">
+              <div className="mb-3 flex items-center gap-3 text-[13px]">
                 <Badge tone="ok">v{c.version}</Badge>
                 <span className="text-[var(--text-dim)]">
                   created {fmtTime(c.created_at)} by {c.created_by || "system"}
                   {c.parent_version ? ` (parent v${c.parent_version})` : ""}
                 </span>
-                {mayEdit && draft === null && (
-                  <Button onClick={() => setDraft(JSON.stringify(c.params, null, 2))}>Edit draft</Button>
+                {mayEdit && !editing && <Button onClick={startEdit}>Edit configuration</Button>}
+                {editing && (
+                  <>
+                    <Button onClick={advanced ? switchToStructured : switchToAdvanced}>
+                      {advanced ? "Structured form" : "Advanced: JSON"}
+                    </Button>
+                    <Button onClick={discard} danger>
+                      Discard draft
+                    </Button>
+                  </>
                 )}
               </div>
-              {draft === null ? (
+
+              {!editing ? (
                 <pre className="max-h-96 overflow-auto rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3 text-[12px]">
                   {JSON.stringify(c.params, null, 2)}
                 </pre>
-              ) : (
+              ) : advanced ? (
                 <>
+                  {jsonError && <p className="mb-2 text-[12px] text-[var(--critical)]">{jsonError}</p>}
                   <textarea
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    value={jsonText}
+                    onChange={(e) => setJsonText(e.target.value)}
                     spellCheck={false}
                     className="h-96 w-full rounded border border-[var(--accent)] bg-[var(--bg-panel)] p-3 font-mono text-[12px] outline-none"
                   />
                   <div className="mt-2 flex gap-2">
-                    <Button onClick={reviewChanges}>Apply as new version</Button>
-                    <Button onClick={() => setDraft(null)} danger>
-                      Discard draft
-                    </Button>
+                    <Button onClick={reviewChanges}>Review changes</Button>
                   </div>
                 </>
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+                      Scanner
+                    </h3>
+                    <div className="grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-2">
+                      {SCANNER_FIELDS.map((f) => (
+                        <FieldRow
+                          key={f.path}
+                          spec={f}
+                          value={fieldRaw[f.path] ?? ""}
+                          error={fieldErrors[f.path]}
+                          onChange={(v) => setFieldRaw((prev) => ({ ...prev, [f.path]: v }))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+                      Risk
+                    </h3>
+                    <div className="grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-2">
+                      {RISK_FIELDS.map((f) => (
+                        <FieldRow
+                          key={f.path}
+                          spec={f}
+                          value={fieldRaw[f.path] ?? ""}
+                          error={fieldErrors[f.path]}
+                          disabled={!mayEditRisk}
+                          disabledNote={!mayEditRisk ? "requires ADMIN" : undefined}
+                          onChange={(v) => setFieldRaw((prev) => ({ ...prev, [f.path]: v }))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+                      Notifications
+                    </h3>
+                    <NotificationsFields
+                      cooldownRaw={cooldownRaw}
+                      onCooldownChange={setCooldownRaw}
+                      cooldownError={fieldErrors["notifications.cooldown_seconds"]}
+                      routes={routesDraft}
+                      onToggleChannel={toggleChannel}
+                    />
+                  </div>
+                  <Button onClick={reviewChanges}>Review changes</Button>
+                </div>
               )}
             </>
           )}

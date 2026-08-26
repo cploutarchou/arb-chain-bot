@@ -71,19 +71,38 @@ test("strategy config shows the active version and history", async ({ page }) =>
   await page.goto("/strategies");
   await expect(page.getByText(/v\d+ active/).first()).toBeVisible({ timeout: 10_000 });
   // Admin sees the edit affordance (RBAC-aware UI; backend enforces).
-  await expect(page.getByRole("button", { name: "Edit draft" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit configuration" })).toBeVisible();
 });
 
-test("config edit applies as a new version end to end", async ({ page }) => {
+test("structured config edit applies as a new version end to end", async ({ page }) => {
   await login(page);
   await page.goto("/strategies");
-  await page.getByRole("button", { name: "Edit draft" }).click();
+  await page.getByRole("button", { name: "Edit configuration" }).click();
+  // Structured field form (BL-14) — no raw JSON textarea by default.
+  const depthField = page.getByLabel("Book depth");
+  await expect(depthField).toBeVisible();
+  const current = Number(await depthField.inputValue());
+  const next = current === 50 ? 60 : 50;
+  await depthField.fill(String(next));
+  await page.getByRole("button", { name: "Review changes" }).click();
+  // Confirmation dialog with a before/after diff table (BL-02, BL-03).
+  await page.getByRole("dialog", { name: "Apply new strategy configuration?" }).waitFor();
+  await expect(page.getByRole("dialog")).toContainText("scanner.depth");
+  await page.getByRole("button", { name: "Apply new version" }).click();
+  await expect(page.getByText(/Version \d+ active\./)).toBeVisible({ timeout: 10_000 });
+});
+
+test("strategy config advanced JSON toggle still works", async ({ page }) => {
+  await login(page);
+  await page.goto("/strategies");
+  await page.getByRole("button", { name: "Edit configuration" }).click();
+  await page.getByRole("button", { name: "Advanced: JSON" }).click();
   const editor = page.locator("textarea");
+  await expect(editor).toBeVisible();
   const draft = JSON.parse(await editor.inputValue());
-  draft.scanner.depth = draft.scanner.depth === 50 ? 60 : 50;
+  draft.scanner.depth = draft.scanner.depth === 55 ? 65 : 55;
   await editor.fill(JSON.stringify(draft, null, 2));
-  await page.getByRole("button", { name: "Apply as new version" }).click();
-  // Confirmation dialog (before/after diff) — BL-02.
+  await page.getByRole("button", { name: "Review changes" }).click();
   await page.getByRole("dialog", { name: "Apply new strategy configuration?" }).waitFor();
   await page.getByRole("button", { name: "Apply new version" }).click();
   await expect(page.getByText(/Version \d+ active\./)).toBeVisible({ timeout: 10_000 });
@@ -110,6 +129,28 @@ test("reports generate on demand", async ({ page }) => {
   await expect(page.locator("main")).toContainText(/daily report .* Scanner: \d+ evaluations/, {
     timeout: 15_000,
   });
+});
+
+test("users & roles shows the bootstrap admin for ADMIN", async ({ page }) => {
+  await login(page);
+  await page.goto("/settings#users");
+  await expect(page.getByRole("heading", { name: "Users & roles" })).toBeVisible();
+  await expect(page.getByText(ADMIN.email)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("heading", { name: "Create user" })).toBeVisible();
+});
+
+test("paper reset is disabled with a hint while the engine is running", async ({ page }) => {
+  await login(page);
+  await page.goto("/paper");
+  const resetButton = page.getByRole("button", { name: "Reset paper session…" });
+  await expect(resetButton).toBeVisible({ timeout: 10_000 });
+  // The e2e harness starts the engine running (no exchange egress to
+  // pause against) and reset is ADMIN-only while paused — this asserts
+  // the honest disabled/hint state rather than resetting a live paper
+  // session mid-suite. If the harness ever starts paused instead, this
+  // assertion should flip to the enabled + ConfirmDialog path.
+  await expect(resetButton).toBeDisabled();
+  await expect(page.getByText(/pause the engine before resetting/)).toBeVisible();
 });
 
 test("sign out returns to login", async ({ page }) => {
