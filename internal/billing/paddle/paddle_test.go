@@ -305,10 +305,13 @@ func TestTransactionCompletedAndUnmappedPrice(t *testing.T) {
 // TestCheckoutAndPortalAgainstFakePaddle exercises the client against a
 // fake Paddle API: new organisation -> transaction; existing -> update
 // with the right proration; portal URL from the mirrored customer id.
+// fixtureKey is a deliberately low-entropy stand-in for a Paddle API key.
+const fixtureKey = "kkkkkkkkkkkkkkkkkkkkkkkk"
+
 func TestCheckoutAndPortalAgainstFakePaddle(t *testing.T) {
 	var calls []string
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test_api_key_0123456789" {
+		if r.Header.Get("Authorization") != "Bearer "+fixtureKey {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":{"code":"authentication_malformed","detail":"bad key"}}`))
 			return
@@ -328,7 +331,7 @@ func TestCheckoutAndPortalAgainstFakePaddle(t *testing.T) {
 	}))
 	defer fake.Close()
 	svc, store, _ := newService(t)
-	key := strings.Repeat("k", 24) // fixture, not a credential
+	key := fixtureKey
 	svc.Client = NewClient(fake.URL, func(context.Context) string { return key })
 	svc.ClientToken, svc.Environment = "test_client_token", "sandbox"
 	ctx := context.Background()
@@ -371,7 +374,7 @@ func TestCheckoutAndPortalAgainstFakePaddle(t *testing.T) {
 		t.Fatalf("no key = %v", err)
 	}
 	for _, c := range calls {
-		if strings.Contains(c, "test_api_key") {
+		if strings.Contains(c, fixtureKey) {
 			t.Fatal("api key in request body")
 		}
 	}
