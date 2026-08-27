@@ -316,7 +316,9 @@ test("users & roles shows the bootstrap admin for ADMIN", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Users & roles" }),
   ).toBeVisible();
-  await expect(page.getByText(ADMIN.email)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(ADMIN.email).first()).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(
     page.getByRole("heading", { name: "Create user" }),
   ).toBeVisible();
@@ -624,7 +626,7 @@ async function ensureOperatorAccount(page: Page) {
     await page.getByLabel("Password", { exact: true }).fill(OPERATOR.password);
     await page.getByLabel("Confirm password").fill(OPERATOR.password);
     await page.getByRole("button", { name: "Create user" }).click();
-    await expect(page.getByText(OPERATOR.email)).toBeVisible({
+    await expect(page.getByText(OPERATOR.email).first()).toBeVisible({
       timeout: 10_000,
     });
   }
