@@ -14,21 +14,72 @@ type Spec struct {
 	Env     string
 	Label   string
 	MinLen  int
-	Applies string // "immediately" | "process_restart"
+	Applies string // "immediately" | "process_restart" | "not_consumed"
+	Group   string // "provider" | "exchange"
+	Venue   string // exchange group only: the venue id the credential belongs to
 }
 
 // Applies values (backend-computed, never hardcoded on the frontend).
 const (
 	AppliesImmediately    = "immediately"
 	AppliesProcessRestart = "process_restart"
+	// AppliesNotConsumed marks a credential that is stored encrypted but
+	// read by NO component: exchange API credentials. Manager.Get refuses
+	// them, so no code path — trading or otherwise — can obtain the value
+	// without a reviewed change to this package.
+	AppliesNotConsumed = "not_consumed"
 )
 
-// Known is the CLOSED registry. Both entries are provider credentials
-// for advisory/notification channels; neither is, or can become, an
-// exchange trading key. Adding a name is a reviewed code change.
+// Registry groups.
+const (
+	GroupProvider = "provider"
+	GroupExchange = "exchange"
+)
+
+// Known is the CLOSED registry. Adding a name is a reviewed code change.
+//
+// Provider entries are credentials for the advisory/notification channels
+// and are resolved by their consumers through Manager.Get.
+//
+// Exchange entries hold the operator's exchange API credentials so they
+// can be managed from the console and stored encrypted instead of in
+// .env. They are write-only in the strongest sense: Manager.Get refuses
+// the exchange group, nothing in the codebase reads them, and live
+// trading stays disabled by design. They exist so that a future,
+// separately reviewed read-only consumer (fee-tier lookup, account
+// snapshot) has a vetted place to find them; operators should create
+// them with read-only permissions and no trading/withdrawal scopes.
 var Known = map[string]Spec{
-	"anthropic_api_key":  {Env: "ANTHROPIC_API_KEY", Label: "Anthropic API key", MinLen: 20, Applies: AppliesImmediately},
-	"telegram_bot_token": {Env: "ARB_TELEGRAM_TOKEN", Label: "Telegram bot token", MinLen: 20, Applies: AppliesProcessRestart},
+	"anthropic_api_key":  {Env: "ANTHROPIC_API_KEY", Label: "Anthropic API key", MinLen: 20, Applies: AppliesImmediately, Group: GroupProvider},
+	"telegram_bot_token": {Env: "ARB_TELEGRAM_TOKEN", Label: "Telegram bot token", MinLen: 20, Applies: AppliesProcessRestart, Group: GroupProvider},
+
+	"binance_api_key":       exchangeCred("binance", "Binance API key"),
+	"binance_api_secret":    exchangeCred("binance", "Binance API secret"),
+	"okx_api_key":           exchangeCred("okx", "OKX API key"),
+	"okx_api_secret":        exchangeCred("okx", "OKX API secret"),
+	"okx_api_passphrase":    exchangeCred("okx", "OKX API passphrase"),
+	"bybit_api_key":         exchangeCred("bybit", "Bybit API key"),
+	"bybit_api_secret":      exchangeCred("bybit", "Bybit API secret"),
+	"bitget_api_key":        exchangeCred("bitget", "Bitget API key"),
+	"bitget_api_secret":     exchangeCred("bitget", "Bitget API secret"),
+	"bitget_api_passphrase": exchangeCred("bitget", "Bitget API passphrase"),
+	"gate_api_key":          exchangeCred("gate", "Gate API key"),
+	"gate_api_secret":       exchangeCred("gate", "Gate API secret"),
+	"mexc_api_key":          exchangeCred("mexc", "MEXC API key"),
+	"mexc_api_secret":       exchangeCred("mexc", "MEXC API secret"),
+}
+
+// exchangeCred builds an exchange-group entry: no env fallback (exchange
+// credentials are never read from the environment), a short minimum
+// (passphrases are operator-chosen), and never consumed.
+func exchangeCred(venue, label string) Spec {
+	return Spec{Label: label, MinLen: 8, Applies: AppliesNotConsumed, Group: GroupExchange, Venue: venue}
+}
+
+// IsConsumable reports whether Manager.Get may resolve name.
+func IsConsumable(name string) bool {
+	spec, ok := Known[name]
+	return ok && spec.Group != GroupExchange
 }
 
 // Names returns the registry names, sorted.

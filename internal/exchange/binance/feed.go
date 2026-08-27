@@ -55,6 +55,27 @@ type Feed struct {
 	// the mutex. Per-market single-flight for resyncs lives on Syncer.
 	syncMu  sync.Mutex
 	syncers map[exchange.MarketID]*Syncer
+
+	// gate meters every REST snapshot fetch against the venue's per-IP
+	// weight budget and honours 429/418 Retry-After (weight.go).
+	gateOnce sync.Once
+	gate     *restGate
+}
+
+// depthSnapshot is the only path to GET /api/v3/depth: it waits for
+// weight budget, performs the call and records rate-limit responses so
+// the next caller backs off instead of extending a ban.
+func (f *Feed) depthSnapshot(ctx context.Context, sym exchange.Symbol) ([]byte, orderbook.DepthEvent, error) {
+	f.gateOnce.Do(func() { f.gate = newRESTGate() })
+	if err := f.gate.wait(ctx, depthWeight(SnapshotDepthLimit)); err != nil {
+		return nil, orderbook.DepthEvent{}, err
+	}
+	body, snap, err := f.REST.DepthRaw(ctx, sym, SnapshotDepthLimit)
+	if err != nil && f.gate.observe(err) {
+		f.Stats.RateLimited.Add(1)
+		f.Log.Warn("binance REST rate limited; pausing snapshot fetches", "market", sym, "pause", f.gate.blockedFor().String())
+	}
+	return body, snap, err
 }
 
 func (f *Feed) getSyncer(id exchange.MarketID) (*Syncer, bool) {
@@ -66,11 +87,12 @@ func (f *Feed) getSyncer(id exchange.MarketID) (*Syncer, bool) {
 
 // FeedStats are the feed's atomic counters.
 type FeedStats struct {
-	Frames     atomic.Int64 // WS frames received
-	Reconnects atomic.Int64 // session restarts after the first connect
-	APIErrors  atomic.Int64 // REST snapshot failures
-	Resyncs    atomic.Int64 // snapshot splices started
-	SeqGaps    atomic.Int64 // sequence gaps detected
+	Frames      atomic.Int64 // WS frames received
+	Reconnects  atomic.Int64 // session restarts after the first connect
+	APIErrors   atomic.Int64 // REST snapshot failures
+	Resyncs     atomic.Int64 // snapshot splices started
+	SeqGaps     atomic.Int64 // sequence gaps detected
+	RateLimited atomic.Int64 // 429/418 responses from REST
 }
 
 func (f *Feed) defaults() {
@@ -142,8 +164,8 @@ func (f *Feed) session(ctx context.Context) error {
 	f.syncers = fresh
 	f.syncMu.Unlock()
 
-	// Snapshot fetches run beside the read loop, paced for REST weight
-	// (250 per 5000-level call against the 6000/min budget).
+	// Snapshot fetches run beside the read loop; depthSnapshot meters
+	// them against the REST weight budget.
 	snapErr := make(chan error, 1)
 	go f.fetchSnapshots(ctx, snapErr)
 
@@ -232,7 +254,7 @@ func (f *Feed) fetchSnapshots(ctx context.Context, done chan<- error) {
 		}
 		id := exchange.MarketID{Exchange: ID, Symbol: sym}
 		f.resyncMarket(ctx, id)
-		// ~4 snapshots/second keeps far under the weight budget.
+		// Light pacing between markets; the weight gate is the real limit.
 		select {
 		case <-ctx.Done():
 			done <- ctx.Err()
@@ -247,8 +269,8 @@ func (f *Feed) fetchSnapshots(ctx context.Context, done chan<- error) {
 // and hands it to SnapTap WITHOUT splicing it into the live books. A
 // recording session that starts after the feed synced would otherwise
 // hold only diff frames, and a replay of it could never initialise a
-// book (its syncers buffer diffs until a snapshot arrives). Paced like
-// fetchSnapshots to stay far under the REST weight budget.
+// book (its syncers buffer diffs until a snapshot arrives). Metered by
+// depthSnapshot like every other fetch.
 func (f *Feed) CaptureSnapshots(ctx context.Context) error {
 	if f.SnapTap == nil || f.REST == nil {
 		return nil
@@ -257,7 +279,7 @@ func (f *Feed) CaptureSnapshots(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		body, snap, err := f.REST.DepthRaw(ctx, sym, SnapshotDepthLimit)
+		body, snap, err := f.depthSnapshot(ctx, sym)
 		if err != nil {
 			f.Stats.APIErrors.Add(1)
 			return fmt.Errorf("capture snapshot %s: %w", sym, err)
@@ -290,7 +312,7 @@ func (f *Feed) resyncMarket(ctx context.Context, id exchange.MarketID) {
 	defer syncer.resyncing.Store(false)
 	f.Stats.Resyncs.Add(1)
 	for attempt := 0; attempt < 5; attempt++ {
-		body, snap, err := f.REST.DepthRaw(ctx, id.Symbol, SnapshotDepthLimit)
+		body, snap, err := f.depthSnapshot(ctx, id.Symbol)
 		if err == nil && f.SnapTap != nil {
 			f.SnapTap(id.Symbol, body, snap.ReceiveTime)
 		}

@@ -237,7 +237,7 @@ AES-256-GCM under `ARB_SECRET_KEY`. Generate a key once and keep it out
 of the repo:
 
 ```sh
-ARB_SECRET_KEY=$(head -c 32 /dev/urandom | base64)   # must decode to exactly 32 bytes
+make create-secret   # writes ARB_SECRET_KEY to .env (32 random bytes, base64); keeps an existing key
 ```
 
 - Unset or invalid key → the vault stays closed (logged at boot), the
@@ -260,6 +260,33 @@ ARB_SECRET_KEY=$(head -c 32 /dev/urandom | base64)   # must decode to exactly 32
   process holds …"` and resolution falls through to env. Rotating the
   master key is manual: `DELETE` every row, restart with the new key,
   `PUT` every value.
+
+### Exchange API credentials (Settings → Security → Exchange API credentials)
+
+The same vault holds, per venue, the API key / secret (and passphrase
+for OKX and Bitget) so they never sit in `.env`. `applies` is
+`not_consumed`: the backend refuses to resolve the exchange group and no
+component reads the values — the platform consumes public market data
+only and live trading is disabled by design. Create the keys on the
+exchange as **read-only** (no trade, no withdrawal). The vault must be
+open (`ARB_SECRET_KEY` set) for writes, as for every secret.
+
+### What still comes from the environment, and why
+
+After T-057..T-061 the console owns every operating parameter. What
+remains in `.env` is process bootstrap that cannot live in the database
+it configures:
+
+| Variable | Why it stays env |
+|---|---|
+| `ARB_DATABASE_URL` | Locates the database the settings live in. |
+| `ARB_SECRET_KEY` | Master key for the vault; storing it in the vault is circular. |
+| `ARB_HTTP_ADDR`, `ARB_METRICS_ADDR` | Listen addresses; bound before the database is reachable. |
+| `ARB_RECORDING_DIR` | Filesystem path of the recordings volume (container mount). |
+| `ARB_ADMIN_EMAIL`, `ARB_ADMIN_PASSWORD` | First-boot admin bootstrap only; ignored once a user exists. |
+| `ARB_SHUTDOWN_GRACE` | Read during shutdown; never a trading parameter. |
+| `ARB_REPLAY_SESSION`, `ARB_SEED` | CLI batch tools only (`replay`/`campaign` binaries); the console passes them per job. |
+| `ARB_MODE`, `ARB_SYMBOLS`, `ARB_STARTING_ASSETS`, `ARB_PAPER_BALANCE`, `ARB_LOG_LEVEL`, `ARB_ALLOWED_ORIGIN`, `ARB_AI_*`, `ARB_TELEGRAM_*`, `ANTHROPIC_API_KEY` | **Seed version 1 only**; ignored once the settings document exists. Safe to delete from `.env` after first boot. |
 
 ## 4. Optional: full paper deployment
 

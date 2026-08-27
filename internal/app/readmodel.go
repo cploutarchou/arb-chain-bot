@@ -133,6 +133,7 @@ func (r readModel) Health() any {
 			"api_errors":   feed.Stats.APIErrors.Load(),
 			"resyncs":      feed.Stats.Resyncs.Load(),
 			"seq_gaps":     feed.Stats.SeqGaps.Load(),
+			"rate_limited": feed.Stats.RateLimited.Load(),
 			"msgs_per_sec": msgsPerSec,
 		}
 		if window := r.e.currentLatency(); window != nil {

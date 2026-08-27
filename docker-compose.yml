@@ -43,6 +43,7 @@ services:
     environment:
       ARB_MODE: RECORD
       ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_SECRET_KEY: ${ARB_SECRET_KEY:-}
       ARB_RECORDING_DIR: /recordings
       ARB_SYMBOLS: ${ARB_SYMBOLS:-BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT}
       ARB_STARTING_ASSETS: ${ARB_STARTING_ASSETS:-USDT,USDC}
@@ -66,6 +67,7 @@ services:
     environment:
       ARB_MODE: PAPER
       ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_SECRET_KEY: ${ARB_SECRET_KEY:-}
       ARB_RECORDING_DIR: /recordings
       ARB_SYMBOLS: ${ARB_SYMBOLS:-BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT}
       ARB_STARTING_ASSETS: ${ARB_STARTING_ASSETS:-USDT,USDC}
@@ -94,6 +96,7 @@ services:
         condition: service_healthy
     environment:
       ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_SECRET_KEY: ${ARB_SECRET_KEY:-}
     volumes:
       - recordings:/recordings
 

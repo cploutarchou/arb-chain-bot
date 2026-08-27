@@ -47,6 +47,8 @@ type Info struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	UpdatedBy string     `json:"updated_by,omitempty"`
 	Applies   string     `json:"applies"`
+	Group     string     `json:"group"`
+	Venue     string     `json:"venue,omitempty"`
 }
 
 // ErrVaultUnavailable reports a write against a vault that did not
@@ -193,8 +195,12 @@ func (m *Manager) KeyID() string {
 	return m.vault.KeyID()
 }
 
-// Get resolves vault first, then env.
+// Get resolves vault first, then env. Exchange-group credentials are
+// never resolvable (registry.go): the call reports absent.
 func (m *Manager) Get(ctx context.Context, name string) (string, string, bool) {
+	if !IsConsumable(name) {
+		return "", "", false
+	}
 	if m.vault != nil {
 		return Chain{m.vault, m.env}.Get(ctx, name)
 	}
@@ -280,7 +286,7 @@ func (m *Manager) info(ctx context.Context, name string) (Info, error) {
 // row; the vault may be closed) plus the env fallback.
 func (m *Manager) infoFrom(ctx context.Context, name string, row *Row) Info {
 	spec := Known[name]
-	in := Info{Name: name, Label: spec.Label, Applies: spec.Applies}
+	in := Info{Name: name, Label: spec.Label, Applies: spec.Applies, Group: spec.Group, Venue: spec.Venue}
 	if m.vault != nil && row != nil {
 		in.Present, in.Source = true, "vault"
 		at := row.UpdatedAt
