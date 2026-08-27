@@ -34,9 +34,11 @@ var Capabilities = exchange.Capabilities{
 
 // Operational limits the transport must respect (docs/research §Binance).
 const (
-	MaxStreamsPerConn      = 1024
-	ConnAttemptsPer5Min    = 300
-	ForcedDisconnectHours  = 24
-	SnapshotDepthLimit     = 5000
+	MaxStreamsPerConn     = 1024
+	ConnAttemptsPer5Min   = 300
+	ForcedDisconnectHours = 24
+	// 1000 levels cost 50 weight (5000 would cost 250): a 60-symbol
+	// universe primes within one minute instead of tripping an IP ban.
+	SnapshotDepthLimit     = 1000
 	RESTWeightBudgetPerMin = 6000
 )
