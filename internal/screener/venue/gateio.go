@@ -101,7 +101,7 @@ func (c *gateCollector) fetchInstruments(ctx context.Context) ([]Instrument, err
 		byID[p.ID] = p
 		out = append(out, Instrument{Venue: screener.VenueGate, Kind: KindSpot, Symbol: p.ID,
 			Base: p.Base, Quote: p.Quote, Tradable: p.TradeStatus == "tradable",
-			TickSize: decimal.New(1, int32(-p.Precision)).String(), StepSize: decimal.New(1, int32(-p.AmountPrecision)).String(),
+			TickSize: decimal.New(1, int32(-p.Precision)).String(), StepSize: decimal.New(1, int32(-p.AmountPrecision)).String(), //nolint:gosec // venue precisions are small non-negative ints
 			MinNotional: p.MinQuoteAmount})
 	}
 	for _, ct := range contracts {
