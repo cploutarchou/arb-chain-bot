@@ -328,7 +328,7 @@ func TestCheckoutAndPortalAgainstFakePaddle(t *testing.T) {
 	}))
 	defer fake.Close()
 	svc, store, _ := newService(t)
-	key := "test_api_key_0123456789"
+	key := strings.Repeat("k", 24) // fixture, not a credential
 	svc.Client = NewClient(fake.URL, func(context.Context) string { return key })
 	svc.ClientToken, svc.Environment = "test_client_token", "sandbox"
 	ctx := context.Background()
