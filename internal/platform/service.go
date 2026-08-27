@@ -77,8 +77,7 @@ type Service struct {
 	// payload that becomes a Settings — Load, Get, rollback — is passed
 	// through Settings.WithDefaults(seed) so a pre-expansion row without
 	// "platform"/"ai" keys keeps validating after the deploy.
-	seed    config.Bootstrap
-	seedSet bool
+	seed atomic.Pointer[config.Bootstrap] // nil until Load; read lock-free by Get
 
 	mu     sync.Mutex // serializes writers (Apply/Rollback/Load)
 	cur    atomic.Pointer[Snapshot]
@@ -95,15 +94,17 @@ func NewService(store Store, log *slog.Logger, audit func(context.Context, Audit
 func (s *Service) Load(ctx context.Context, cfg config.Bootstrap) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.seed, s.seedSet = cfg, true
+	seed := cfg
+	s.seed.Store(&seed)
 	snap, ok, err := s.store.Active(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if _, note := SeedMode(cfg.Mode); note != "" {
-		// Named substitution (§2.2): ARB_MODE=SHADOW/REPLAY/BACKTEST is a
-		// legal env value that the document's own validator refuses, so
-		// the seed (and the WithDefaults fallback) run as MARKET_DATA.
+	for _, note := range SeedNotes(cfg) {
+		// Named substitutions (§2.2): ARB_MODE=SHADOW/REPLAY/BACKTEST, an
+		// unknown ARB_LOG_LEVEL or a malformed ARB_ALLOWED_ORIGIN are env
+		// values the document's own validator refuses, so the seed (and
+		// the WithDefaults fallback) run on the substitute — never quietly.
 		s.log.Warn(note)
 	}
 	if !ok {
@@ -225,10 +226,15 @@ func (s *Service) Get(ctx context.Context, version int64) (Snapshot, error) {
 // service that was never Loaded (impossible in production wiring) has
 // nothing to fill from and returns the document unchanged.
 func (s *Service) withDefaults(doc Settings) Settings {
-	if !s.seedSet {
+	seed := s.seed.Load()
+	if seed == nil {
 		return doc
 	}
-	return doc.WithDefaults(s.seed)
+	out, note := doc.WithDefaultsNote(*seed)
+	if note != "" {
+		s.log.Warn(note)
+	}
+	return out
 }
 
 // List returns recent versions, newest first.

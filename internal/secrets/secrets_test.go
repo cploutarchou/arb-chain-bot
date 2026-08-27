@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -131,7 +133,7 @@ func TestChainPrecedenceAndSource(t *testing.T) {
 	if !ok || src != "env" || val != env["anthropic_api_key"] {
 		t.Fatalf("env fallback: %q %q %v", val, src, ok)
 	}
-	if _, err := m.Put(ctx, "anthropic_api_key", "vault-anthropic-key-value-1234", "u_1"); err != nil {
+	if _, err := m.Put(ctx, "anthropic_api_key", []byte("vault-anthropic-key-value-1234"), "u_1"); err != nil {
 		t.Fatal(err)
 	}
 	val, src, ok = m.Get(ctx, "anthropic_api_key")
@@ -153,7 +155,7 @@ func TestChainPrecedenceAndSource(t *testing.T) {
 	if _, _, ok := m.Get(ctx, "binance_api_key"); ok {
 		t.Fatal("unknown name resolved")
 	}
-	if _, err := m.Put(ctx, "binance_api_key", "x", "u"); !errors.Is(err, ErrUnknownSecret) {
+	if _, err := m.Put(ctx, "binance_api_key", []byte("x"), "u"); !errors.Is(err, ErrUnknownSecret) {
 		t.Fatalf("unknown put = %v", err)
 	}
 	list, err := m.List(ctx)
@@ -172,7 +174,7 @@ func TestStatusReportsKeyMismatchAsUnreadable(t *testing.T) {
 	ctx := context.Background()
 	st := NewMemoryStore()
 	old, _ := NewVault(st, testKey(1))
-	if err := old.Put(ctx, "telegram_bot_token", "old-key-telegram-token-value-1", "u_1", time.Now()); err != nil {
+	if err := old.Put(ctx, "telegram_bot_token", []byte("old-key-telegram-token-value-1"), "u_1", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	cur, _ := NewVault(st, testKey(2))
@@ -205,7 +207,7 @@ func TestClosedVaultStillServesEnv(t *testing.T) {
 	if _, src, ok := m.Get(ctx, "anthropic_api_key"); !ok || src != "env" {
 		t.Fatalf("env must still resolve: %q %v", src, ok)
 	}
-	if _, err := m.Put(ctx, "anthropic_api_key", "vault-anthropic-key-value-1234", "u"); !errors.Is(err, ErrVaultUnavailable) {
+	if _, err := m.Put(ctx, "anthropic_api_key", []byte("vault-anthropic-key-value-1234"), "u"); !errors.Is(err, ErrVaultUnavailable) {
 		t.Fatalf("put on closed vault = %v", err)
 	}
 	if _, err := m.Delete(ctx, "anthropic_api_key"); !errors.Is(err, ErrVaultUnavailable) {
@@ -237,15 +239,15 @@ func TestValidateValueTrimVsReject(t *testing.T) {
 		{"exactly min", strings.Repeat("a", 20), strings.Repeat("a", 20), true},
 	}
 	for _, tc := range cases {
-		got, err := ValidateValue("anthropic_api_key", tc.in)
-		if tc.valid && (err != nil || got != tc.want) {
+		got, err := ValidateValue("anthropic_api_key", []byte(tc.in))
+		if tc.valid && (err != nil || string(got) != tc.want) {
 			t.Errorf("%s: got %q err %v", tc.name, got, err)
 		}
 		if !tc.valid && !errors.Is(err, ErrInvalidValue) {
 			t.Errorf("%s: want ErrInvalidValue, got %v", tc.name, err)
 		}
 	}
-	if _, err := ValidateValue("exchange_api_key", good); !errors.Is(err, ErrUnknownSecret) {
+	if _, err := ValidateValue("exchange_api_key", []byte(good)); !errors.Is(err, ErrUnknownSecret) {
 		t.Fatalf("registry must be closed: %v", err)
 	}
 }
@@ -256,10 +258,10 @@ func TestManagerOnChangeFiresWithNameOnly(t *testing.T) {
 	m := NewManager(v, "", nil)
 	var seen []string
 	m.OnChange = func(name string) { seen = append(seen, name) }
-	if _, err := m.Put(ctx, "anthropic_api_key", "vault-anthropic-key-value-1234", "u"); err != nil {
+	if _, err := m.Put(ctx, "anthropic_api_key", []byte("vault-anthropic-key-value-1234"), "u"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Put(ctx, "anthropic_api_key", "short", "u"); err == nil {
+	if _, err := m.Put(ctx, "anthropic_api_key", []byte("short"), "u"); err == nil {
 		t.Fatal("invalid value must not be stored")
 	}
 	if _, err := m.Delete(ctx, "anthropic_api_key"); err != nil {
@@ -283,5 +285,59 @@ func TestRegistryIsClosed(t *testing.T) {
 				t.Fatalf("registry entry %q looks like an exchange credential", name)
 			}
 		}
+	}
+}
+
+// failingStore is a Store whose Get/List fail: the vault must report the
+// fault (P3-8) instead of silently resolving as "absent → env".
+type failingStore struct{ *MemoryStore }
+
+func (failingStore) Get(context.Context, string) (Row, bool, error) {
+	return Row{}, false, errors.New("connection refused")
+}
+
+func TestVaultGetStoreErrorIsLoggedNotSilent(t *testing.T) {
+	var logs bytes.Buffer
+	v, err := NewVault(failingStore{NewMemoryStore()}, testKey(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	m := NewManager(v, "", Env{"anthropic_api_key": "env-anthropic-key-value-000001"})
+	val, src, ok := m.Get(context.Background(), "anthropic_api_key")
+	if !ok || src != "env" || val != "env-anthropic-key-value-000001" {
+		t.Fatalf("chain must still fall through to env: %q %q %v", val, src, ok)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "connection refused") || !strings.Contains(out, "name=anthropic_api_key") {
+		t.Fatalf("store error not surfaced at WARN: %s", out)
+	}
+	if strings.Contains(out, "env-anthropic-key-value") {
+		t.Fatalf("value leaked into the log: %s", out)
+	}
+}
+
+// TestManagerListUsesStoreList: the status view comes from one
+// Store.List round trip; a store whose Get fails but whose List works
+// still lists (and a Put'd row shows as vault-sourced).
+func TestManagerListUsesStoreList(t *testing.T) {
+	ctx := context.Background()
+	mem := NewMemoryStore()
+	v, _ := NewVault(mem, testKey(1))
+	if err := v.Put(ctx, "telegram_bot_token", []byte("telegram-token-value-12345678"), "u_1", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	fv, _ := NewVault(failingStore{mem}, testKey(1))
+	fv.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	m := NewManager(fv, "", Env{"anthropic_api_key": "env-anthropic-key-value-000001"})
+	list, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List must not go through Get: %v", err)
+	}
+	if len(list) != 2 || list[0].Name != "anthropic_api_key" || list[1].Name != "telegram_bot_token" {
+		t.Fatalf("list = %+v", list)
+	}
+	if list[0].Source != "env" || !list[0].Present || list[1].Source != "vault" || !list[1].Readable || list[1].UpdatedBy != "u_1" {
+		t.Fatalf("list = %+v", list)
 	}
 }

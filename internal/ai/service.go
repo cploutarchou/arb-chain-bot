@@ -148,6 +148,18 @@ func (s *Service) reserveBudget() bool {
 	return true
 }
 
+// releaseBudget hands back a slot reserveBudget took when the call was
+// never made (advisor switched off in between). A day rollover since
+// the reservation makes the release a no-op.
+func (s *Service) releaseBudget() {
+	today := s.Now().UTC().Format("2006-01-02")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dayKey == today && s.dayCount > 0 {
+		s.dayCount--
+	}
+}
+
 const analysesCap = 32
 
 // init is called from every entry point; sync.Once makes the lazy
@@ -181,15 +193,17 @@ func (s *Service) RunAnalysis(ctx context.Context, in Input) (AnalysisResult, er
 	if sw, ok := s.Advisor.(interface{ Enabled() bool }); ok && !sw.Enabled() {
 		return AnalysisResult{}, ErrAdvisorDisabled
 	}
+	// The prompt is built BEFORE a budget slot is taken: a malformed
+	// input is a failure, not a consumed analysis.
+	prompt, err := buildPrompt(in)
+	if err != nil {
+		return AnalysisResult{}, s.fail("prompt build failed", err)
+	}
 	if !s.reserveBudget() {
 		s.Log.Info("ai analysis skipped: daily budget exhausted", "kind", string(in.Kind))
 		return AnalysisResult{}, ErrBudgetExhausted
 	}
 	s.requests.Add(1)
-	prompt, err := buildPrompt(in)
-	if err != nil {
-		return AnalysisResult{}, s.fail("prompt build failed", err)
-	}
 	s.Log.Info("ai analysis starting",
 		"kind", string(in.Kind), "model", s.Advisor.Model(),
 		"prompt_version", PromptVersion, "config_version", in.ConfigVersion)
@@ -199,7 +213,8 @@ func (s *Service) RunAnalysis(ctx context.Context, in Input) (AnalysisResult, er
 	raw, err := s.Advisor.Analyze(callCtx, prompt)
 	if errors.Is(err, ErrAdvisorDisabled) {
 		// Switched off between the check above and the call: still a
-		// skip, not a failure.
+		// skip, not a failure, and the slot goes back to the budget.
+		s.releaseBudget()
 		return AnalysisResult{}, ErrAdvisorDisabled
 	}
 	if err != nil {

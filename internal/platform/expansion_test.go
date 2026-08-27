@@ -1,9 +1,11 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -414,5 +416,141 @@ func TestErrConnectorUnavailableSurvivesApply(t *testing.T) {
 	_, err := svc.Apply(context.Background(), "alice", "web", bad)
 	if !errors.Is(err, ErrConnectorUnavailable) || !errors.Is(err, ErrInvalid) {
 		t.Fatalf("both sentinels must be reachable: %v", err)
+	}
+}
+
+// paperDisabledPayload is a raw pre-expansion row written under a
+// non-paper deployment: venues.binance.paper_enabled=false. Seeding
+// platform.mode=PAPER from ARB_MODE onto it breaks the cross-field rule
+// (PAPER needs a paper-enabled venue), which is the review's P2 case.
+const paperDisabledPayload = `{
+  "venues": {"binance": {"enabled": true, "paper_enabled": false,
+    "symbols": ["BTCUSDT","ETHBTC","ETHUSDT"], "starting_assets": ["USDT"],
+    "fees": {"maker_bps": "10", "taker_bps": "10", "token_discount": false}}},
+  "paper": {"balances": {"USDT": "10000"}},
+  "telegram": {"allowlist": [111]}
+}`
+
+func TestWithDefaultsFallsBackToMarketDataWhenSeededModeInvalid(t *testing.T) {
+	var doc Settings
+	if err := json.Unmarshal([]byte(paperDisabledPayload), &doc); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testCfg() // ARB_MODE=PAPER
+	naive := doc
+	naive.Platform.Mode = config.ModePaper
+	naive.Platform.LogLevel, naive.Platform.AllowedOrigin = "info", "http://localhost:3000"
+	naive.AI = Seed(cfg).AI
+	if err := naive.Validate(); err == nil {
+		t.Fatal("PAPER over paper_enabled=false must be invalid — otherwise this test proves nothing")
+	}
+	up, note := doc.WithDefaultsNote(cfg)
+	if err := up.Validate(); err != nil {
+		t.Fatalf("WithDefaults must yield a valid document: %v", err)
+	}
+	if up.Platform.Mode != config.ModeMarketData {
+		t.Fatalf("mode = %s, want MARKET_DATA fallback", up.Platform.Mode)
+	}
+	if !strings.Contains(note, "ARB_MODE=PAPER") || !strings.Contains(note, "MARKET_DATA") {
+		t.Fatalf("fallback must be named: %q", note)
+	}
+	if up.Venues["binance"].PaperEnabled {
+		t.Fatal("the stored venue section must not be rewritten")
+	}
+	// A stored (non-empty) mode is never substituted, even when invalid:
+	// that is the operator's document and Validate must refuse it.
+	var stored Settings
+	_ = json.Unmarshal([]byte(paperDisabledPayload), &stored)
+	stored.Platform.Mode = config.ModePaper
+	kept, note := stored.WithDefaultsNote(cfg)
+	if kept.Platform.Mode != config.ModePaper || note != "" {
+		t.Fatalf("stored mode rewritten: %s %q", kept.Platform.Mode, note)
+	}
+	// The happy path stays silent.
+	var ok Settings
+	_ = json.Unmarshal([]byte(preExpansionPayload), &ok)
+	if _, note := ok.WithDefaultsNote(cfg); note != "" {
+		t.Fatalf("unexpected note on a compatible row: %q", note)
+	}
+}
+
+func TestServiceLoadSurvivesPreExpansionRowUnderIncompatibleMode(t *testing.T) {
+	ctx := context.Background()
+	st := &rawStore{MemoryStore: NewMemoryStore(), raw: map[int64]json.RawMessage{}}
+	if _, _, err := st.Insert(ctx, "", json.RawMessage(paperDisabledPayload), nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	st.raw[1] = json.RawMessage(paperDisabledPayload)
+	var logs bytes.Buffer
+	svc := NewService(st, slog.New(slog.NewTextHandler(&logs, nil)), nil)
+	snap, err := svc.Load(ctx, testCfg())
+	if err != nil {
+		t.Fatalf("boot must not be refused: %v", err)
+	}
+	if snap.Settings.Platform.Mode != config.ModeMarketData {
+		t.Fatalf("mode = %s", snap.Settings.Platform.Mode)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "ARB_MODE=PAPER") {
+		t.Fatalf("substitution not logged at WARN: %s", logs.String())
+	}
+	if got, err := svc.Get(ctx, 1); err != nil || got.Settings.Platform.Mode != config.ModeMarketData {
+		t.Fatalf("Get = %+v %v", got.Settings.Platform, err)
+	}
+}
+
+func TestSeedNotesNameEverySubstitution(t *testing.T) {
+	cfg := testCfg()
+	if n := SeedNotes(cfg); len(n) != 0 {
+		t.Fatalf("clean env must produce no notes: %v", n)
+	}
+	cfg.Mode, cfg.LogLevel, cfg.AllowedOrigin = config.ModeShadow, "verbose", "localhost:3000"
+	notes := SeedNotes(cfg)
+	if len(notes) != 3 {
+		t.Fatalf("notes = %v", notes)
+	}
+	for i, want := range []string{"ARB_MODE=SHADOW", "ARB_LOG_LEVEL=", "ARB_ALLOWED_ORIGIN="} {
+		if !strings.Contains(notes[i], want) {
+			t.Errorf("note %d = %q, want %s", i, notes[i], want)
+		}
+	}
+	s := Seed(cfg)
+	if s.Platform.LogLevel != "info" || s.Platform.AllowedOrigin != "http://localhost:3000" {
+		t.Fatalf("substitutes not applied: %+v", s.Platform)
+	}
+	var logs bytes.Buffer
+	svc := NewService(NewMemoryStore(), slog.New(slog.NewTextHandler(&logs, nil)), nil)
+	if _, err := svc.Load(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if c := strings.Count(logs.String(), "level=WARN"); c != 3 {
+		t.Fatalf("want 3 WARN lines, got %d: %s", c, logs.String())
+	}
+}
+
+func TestWithDefaultsFillsAIFieldByField(t *testing.T) {
+	const partial = `{
+  "venues": {"binance": {"enabled": true, "paper_enabled": true,
+    "symbols": ["BTCUSDT","ETHBTC","ETHUSDT"], "starting_assets": ["USDT"],
+    "fees": {"maker_bps": "10", "taker_bps": "10", "token_discount": false}}},
+  "paper": {"balances": {"USDT": "10000"}},
+  "telegram": {"allowlist": [111]},
+  "ai": {"enabled": true, "provider": "fake", "budget": {"max_output_tokens": 512}}
+}`
+	var doc Settings
+	if err := json.Unmarshal([]byte(partial), &doc); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testCfg()
+	cfg.AIModel = "claude-sonnet-5"
+	up := doc.WithDefaults(cfg)
+	if err := up.Validate(); err != nil {
+		t.Fatalf("partial ai section must be completed: %v", err)
+	}
+	ai := up.AI
+	if !ai.Enabled || ai.Provider != "fake" || ai.Budget.MaxOutputTokens != 512 {
+		t.Fatalf("set fields overwritten: %+v", ai)
+	}
+	if ai.Model != "claude-sonnet-5" || ai.Schedule.HourlyMinutes != 60 || ai.Budget.MaxAnalysesPerDay != 48 {
+		t.Fatalf("missing fields not filled: %+v", ai)
 	}
 }

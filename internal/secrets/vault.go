@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -68,6 +69,17 @@ func (e Env) Get(_ context.Context, name string) (string, string, bool) {
 type Vault struct {
 	store  Store
 	cipher *Cipher
+
+	// Log, when set, receives the WARN a store error on Get produces.
+	// Falls back to slog.Default. The value never reaches a log line.
+	Log *slog.Logger
+}
+
+func (v *Vault) logger() *slog.Logger {
+	if v.Log != nil {
+		return v.Log
+	}
+	return slog.Default()
 }
 
 // NewVault opens the vault over store with key.
@@ -83,10 +95,17 @@ func NewVault(store Store, key []byte) (*Vault, error) {
 func (v *Vault) KeyID() string { return v.cipher.KeyID() }
 
 // Get resolves name from the vault; unreadable rows (other key, tamper)
-// resolve as absent so the chain falls through to env.
+// resolve as absent so the chain falls through to env. A store error is
+// ALSO absent for the chain, but it is logged at WARN (name and error,
+// never a value) so an env fallback caused by a database fault is not
+// silent.
 func (v *Vault) Get(ctx context.Context, name string) (string, string, bool) {
 	row, ok, err := v.store.Get(ctx, name)
-	if err != nil || !ok {
+	if err != nil {
+		v.logger().Warn("secrets: vault read failed; resolution falls back to env", "name", name, "error", err)
+		return "", "", false
+	}
+	if !ok {
 		return "", "", false
 	}
 	plain, err := v.cipher.Open(row.Name, row.Ciphertext, row.Nonce, row.KeyID)
@@ -97,12 +116,14 @@ func (v *Vault) Get(ctx context.Context, name string) (string, string, bool) {
 }
 
 // Put validates, encrypts and overwrites name (idempotent rotation).
-func (v *Vault) Put(ctx context.Context, name, value, actor string, now time.Time) error {
+// value is a []byte the caller owns and zeroes afterwards; nothing here
+// copies it into a string.
+func (v *Vault) Put(ctx context.Context, name string, value []byte, actor string, now time.Time) error {
 	clean, err := ValidateValue(name, value)
 	if err != nil {
 		return err
 	}
-	ct, nonce, err := v.cipher.Seal(name, []byte(clean))
+	ct, nonce, err := v.cipher.Seal(name, clean)
 	if err != nil {
 		return err
 	}
@@ -180,8 +201,9 @@ func (m *Manager) Get(ctx context.Context, name string) (string, string, bool) {
 	return m.env.Get(ctx, name)
 }
 
-// Put writes name to the vault (503 when closed).
-func (m *Manager) Put(ctx context.Context, name, value, actor string) (Info, error) {
+// Put writes name to the vault (503 when closed). value is owned and
+// zeroed by the caller.
+func (m *Manager) Put(ctx context.Context, name string, value []byte, actor string) (Info, error) {
 	if _, ok := Known[name]; !ok {
 		return Info{}, fmt.Errorf("%w: %q", ErrUnknownSecret, name)
 	}
@@ -214,50 +236,72 @@ func (m *Manager) Delete(ctx context.Context, name string) (Info, error) {
 	return m.info(ctx, name)
 }
 
-// List returns one Info per registry entry, sorted by name.
+// List returns one Info per registry entry, sorted by name, from ONE
+// store round trip (Store.List) rather than a Get per entry.
 func (m *Manager) List(ctx context.Context) ([]Info, error) {
-	out := make([]Info, 0, len(Known))
-	for _, name := range Names() {
-		in, err := m.info(ctx, name)
+	rows := map[string]Row{}
+	if m.vault != nil {
+		list, err := m.vault.store.List(ctx)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, in)
+		for _, r := range list {
+			rows[r.Name] = r
+		}
+	}
+	out := make([]Info, 0, len(Known))
+	for _, name := range Names() {
+		var row *Row
+		if r, ok := rows[name]; ok {
+			row = &r
+		}
+		out = append(out, m.infoFrom(ctx, name, row))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
+// info is the single-entry view used after Put/Delete.
 func (m *Manager) info(ctx context.Context, name string) (Info, error) {
-	spec := Known[name]
-	in := Info{Name: name, Label: spec.Label, Applies: spec.Applies}
+	var row *Row
 	if m.vault != nil {
-		row, ok, err := m.vault.store.Get(ctx, name)
+		r, ok, err := m.vault.store.Get(ctx, name)
 		if err != nil {
 			return Info{}, err
 		}
 		if ok {
-			in.Present, in.Source = true, "vault"
-			at := row.UpdatedAt
-			in.UpdatedAt, in.UpdatedBy = &at, row.UpdatedBy
-			if _, err := m.vault.cipher.Open(row.Name, row.Ciphertext, row.Nonce, row.KeyID); err != nil {
-				in.Readable = false
-				var km *KeyMismatchError
-				if errors.As(err, &km) {
-					in.Reason = km.Error()
-				} else {
-					in.Reason = "stored ciphertext failed authentication"
-				}
-			} else {
-				in.Readable = true
-			}
-			return in, nil
+			row = &r
 		}
+	}
+	return m.infoFrom(ctx, name, row), nil
+}
+
+// infoFrom builds the status view from an optional vault row (nil = no
+// row; the vault may be closed) plus the env fallback.
+func (m *Manager) infoFrom(ctx context.Context, name string, row *Row) Info {
+	spec := Known[name]
+	in := Info{Name: name, Label: spec.Label, Applies: spec.Applies}
+	if m.vault != nil && row != nil {
+		in.Present, in.Source = true, "vault"
+		at := row.UpdatedAt
+		in.UpdatedAt, in.UpdatedBy = &at, row.UpdatedBy
+		if _, err := m.vault.cipher.Open(row.Name, row.Ciphertext, row.Nonce, row.KeyID); err != nil {
+			in.Readable = false
+			var km *KeyMismatchError
+			if errors.As(err, &km) {
+				in.Reason = km.Error()
+			} else {
+				in.Reason = "stored ciphertext failed authentication"
+			}
+		} else {
+			in.Readable = true
+		}
+		return in
 	}
 	if _, _, ok := m.env.Get(ctx, name); ok {
 		in.Present, in.Source, in.Readable = true, "env", true
 	}
-	return in, nil
+	return in
 }
 
 // MemoryStore is the in-memory Store for tests.

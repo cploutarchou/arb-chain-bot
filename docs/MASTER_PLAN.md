@@ -1149,7 +1149,11 @@ data-flow,security,risk}.md`.
 - acceptance: `internal/platform` validation table incl. `LIVE`/`live`/
   `REPLAY`/`SHADOW`; `WithDefaults` tested against raw JSON literals that
   omit the new sections AND that carry a `telegram` section with only
-  `allowlist` (a round-tripped struct would not exercise either branch);
+  `allowlist` (a round-tripped struct would not exercise either branch),
+  plus the raw literal with `paper_enabled=false` seeded under
+  `ARB_MODE=PAPER` (mode falls back to `MARKET_DATA` with a named WARN,
+  `Service.Load` does not refuse the boot); invalid log-level/origin
+  seeds WARN by name; the `ai` section is filled field by field;
   `ModeTable`/`Settable` agree with `Validate` for every `config.Mode`
   constant; reflect-over-sections test for
   `PermissionForSection`; `internal/app` mode-from-settings restart test;
@@ -1172,8 +1176,11 @@ data-flow,security,risk}.md`.
 - acceptance: `internal/secrets` crypto tests (wrong key, AAD mismatch,
   key_id mismatch reported not returned, nonce uniqueness); `internal/api`
   RBAC/CSRF denial plus a log-capture assertion that the submitted value
-  appears in no emitted log record; `internal/storage` round-trip against a
-  disposable Postgres.
+  appears in no emitted log record; the PUT body is decoded straight into
+  a zeroed `[]byte` (no Go string copy) and `secret.write`/`secret.delete`
+  audit rows carry `after={name,present,key_id}` (design §3.4); a vault
+  store error WARNs before the env fallback; `internal/storage` round-trip
+  and `List` against a disposable Postgres.
 
 ### T-061 Venue availability + capabilities route
 - status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §5;
@@ -1515,3 +1522,18 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   `go test -race ./...`, `go vet`, `gofmt` clean; `golangci-lint` reports
   one pre-existing gosec finding in `internal/simulation/paper.go`
   (out of scope for this task). Console work (design §6) NOT built.
+- 2026-08-27 (T-059/T-060 review fixes): `WithDefaults` falls back to
+  `MARKET_DATA` (named WARN) when the `ARB_MODE` seed breaks a stored
+  cross-field rule, fills `ai` field by field; `SeedNotes` WARNs invalid
+  log-level/origin seeds; `Service.seed` is an `atomic.Pointer` (lock-free
+  `Get`). `internal/app`: `aiApplier` serialises advisor rebuilds under one
+  mutex, skips unchanged `ai` sections, resolves the key in a goroutine
+  (never inside the platform writer lock) with a generation counter
+  dropping stale results. `internal/ai`: budget reserved after the prompt
+  builds and released on a mid-call switch-off. `internal/secrets`:
+  `Vault.Get` WARNs on store errors, values are `[]byte` end to end,
+  `Manager.List` uses `Store.List`. `internal/api`: `AuditAction` gains an
+  `after []byte` payload (`auditWith`), secret PUT decodes into a zeroed
+  `[]byte`. All under `go test -race ./...`; storage on a disposable
+  Postgres; the same pre-existing gosec finding remains the only lint
+  item.

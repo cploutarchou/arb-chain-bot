@@ -399,10 +399,18 @@ anything owned by a sibling Component (AI scheduler, Telegram bot,
 "restart", which would silently mean "redeploy". Because the payload is
 JSONB, `Settings.WithDefaults` normalizes pre-expansion versions wherever a
 stored payload becomes a `Settings` (load, get, rollback) — otherwise a
-deploy would fail validation at boot. Secrets (Anthropic key, Telegram
+deploy would fail validation at boot. The fill is field by field, and when
+the `ARB_MODE`-seeded `platform.mode` breaks a cross-field rule the stored
+venues carry (e.g. `PAPER` over `paper_enabled=false`) it falls back to
+`MARKET_DATA` with a WARN naming the substitution; a stored mode is never
+rewritten. Secrets (Anthropic key, Telegram
 token) move to a `secrets` table encrypted with AES-256-GCM under
 `ARB_SECRET_KEY`, resolved through a vault-first/env-fallback
-`SecretSource`, write-only over the API, with a closed two-name registry:
+`SecretSource` (a vault read that fails at the store level logs a WARN
+before the env fallback; an unreadable row does not), write-only over the
+API (the value is decoded into a `[]byte` that is zeroed after the write;
+`secret.write`/`secret.delete` audit rows carry
+`after={name,present,key_id}`), with a closed two-name registry:
 no exchange trading key is ever stored, and live trading stays disabled.
 
 Implemented surface (backend): `platform.ModeTable`/`VenueTable`/

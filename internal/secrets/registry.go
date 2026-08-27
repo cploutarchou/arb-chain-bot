@@ -1,10 +1,10 @@
 package secrets
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 )
 
 // Spec describes one registry entry: the env variable it falls back to,
@@ -55,22 +55,26 @@ const maxLen = 4096
 // whitespace: a token containing "\n" is an HTTP header-injection
 // vector (the Telegram client builds its base URL from it; the
 // Anthropic client puts it in x-api-key).
-func ValidateValue(name, value string) (string, error) {
+//
+// The value travels as []byte so the caller can zero it after use: a
+// Go string copy cannot be scrubbed. The returned slice aliases the
+// trimmed window of the input (no extra copy is made).
+func ValidateValue(name string, value []byte) ([]byte, error) {
 	spec, ok := Known[name]
 	if !ok {
-		return "", fmt.Errorf("%w: %q", ErrUnknownSecret, name)
+		return nil, fmt.Errorf("%w: %q", ErrUnknownSecret, name)
 	}
-	v := strings.TrimSpace(value)
+	v := bytes.TrimSpace(value)
 	if len(v) < spec.MinLen {
-		return "", fmt.Errorf("%w: %s must be at least %d characters", ErrInvalidValue, name, spec.MinLen)
+		return nil, fmt.Errorf("%w: %s must be at least %d characters", ErrInvalidValue, name, spec.MinLen)
 	}
 	if len(v) > maxLen {
-		return "", fmt.Errorf("%w: %s must be at most %d characters", ErrInvalidValue, name, maxLen)
+		return nil, fmt.Errorf("%w: %s must be at most %d characters", ErrInvalidValue, name, maxLen)
 	}
 	for i := 0; i < len(v); i++ {
 		c := v[i]
 		if c <= 0x20 || c >= 0x7f {
-			return "", fmt.Errorf("%w: %s must be printable ASCII with no whitespace", ErrInvalidValue, name)
+			return nil, fmt.Errorf("%w: %s must be printable ASCII with no whitespace", ErrInvalidValue, name)
 		}
 	}
 	return v, nil
