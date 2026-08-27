@@ -1,0 +1,132 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+# Default deny for the release, then explicit allows per component.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "arb.fullname" . }}-default-deny
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    # DNS only
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "arb.arbdName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: arbd
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # console -> API
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "arb.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: web
+      ports: [{protocol: TCP, port: {{ .Values.arbd.httpPort }}}]
+    # ingress controller -> API/WS
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $np.ingressNamespaceSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ .Values.arbd.httpPort }}}]
+    # prometheus -> private metrics port
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $np.monitoringNamespaceSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ .Values.arbd.metricsPort }}}]
+  egress:
+    # exchange REST + WS (TLS only); RFC1918 and metadata excluded
+    - to:
+        {{- range $np.egressExchangeCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+            except:
+              {{- toYaml $np.egressExcludeCIDRs | nindent 14 }}
+        {{- end }}
+      ports: [{protocol: TCP, port: 443}]
+    {{- with $np.egressDatabaseCIDRs }}
+    - to:
+        {{- range . }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      ports: [{protocol: TCP, port: {{ $np.databasePort }}}]
+    {{- end }}
+    {{- with $np.egressRedisCIDRs }}
+    - to:
+        {{- range . }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      ports: [{protocol: TCP, port: {{ $np.redisPort }}}]
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "arb.webName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $np.ingressNamespaceSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ .Values.web.port }}}]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "arb.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: arbd
+      ports: [{protocol: TCP, port: {{ .Values.arbd.httpPort }}}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "arb.fullname" . }}-migrate
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: migrate
+  policyTypes: [Egress]
+  egress:
+    {{- with $np.egressDatabaseCIDRs }}
+    - to:
+        {{- range . }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      ports: [{protocol: TCP, port: {{ $np.databasePort }}}]
+    {{- else }}
+    - to:
+        - podSelector: {}   # in-cluster Postgres (dev only)
+      ports: [{protocol: TCP, port: {{ $np.databasePort }}}]
+    {{- end }}
+{{- end }}

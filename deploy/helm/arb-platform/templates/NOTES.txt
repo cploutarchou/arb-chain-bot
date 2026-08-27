@@ -1,0 +1,12 @@
+arb-platform {{ .Chart.Version }} released as {{ .Release.Name }} in {{ .Release.Namespace }}
+  environment : {{ .Values.global.environment }}
+  arbd mode   : {{ include "arb.mode" . }}  (LIVE is not a mode; ErrLiveTradingDisabled stays in code)
+  arbd image  : {{ include "arb.image" (dict "root" . "img" .Values.image.arbd) }}
+  web image   : {{ include "arb.image" (dict "root" . "img" .Values.image.web) }}
+
+Smoke:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "arb.arbdName" . }} 8080:{{ .Values.arbd.httpPort }} &
+  curl -fsS http://127.0.0.1:8080/healthz && curl -fsS http://127.0.0.1:8080/readyz
+
+Rollback:
+  helm -n {{ .Release.Namespace }} rollback {{ .Release.Name }} <previous-revision>
