@@ -34,9 +34,21 @@ func TestLatestMigrationVersionMatchesFiles(t *testing.T) {
 func TestMigrationsPending(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
+	var hasTable bool
+	if err := s.Pool.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&hasTable); err != nil {
+		t.Fatal(err)
+	}
 	pending, err := s.MigrationsPending(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !hasTable {
+		// Schema applied without golang-migrate (CI): the version cannot
+		// be verified, so the gauge must read pending.
+		if pending != 1 {
+			t.Fatalf("pending = %d without schema_migrations, want 1", pending)
+		}
+		return
 	}
 	if pending != 0 {
 		t.Fatalf("pending = %d on an up-to-date test database (built for %d)", pending, LatestMigrationVersion)

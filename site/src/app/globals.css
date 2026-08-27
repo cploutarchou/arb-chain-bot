@@ -1,0 +1,184 @@
+@import "tailwindcss";
+
+/* Marketing site tokens — a verbatim mirror of web/src/app/globals.css
+   (docs/design/ui/design-system.md §1, §6: "Marketing site imports the
+   same globals.css; no second token file"). The site is a separate Next
+   app and a static export, so the token blocks are copied rather than
+   imported across packages; keep the three blocks byte-identical to the
+   console's. The only marketing additions are the §6 type scale and the
+   10 % accent band, at the end of this file. */
+:root {
+  --bg: #f5f6f8;
+  --bg-panel: #ffffff;
+  --bg-raised: #eceef2;
+  --border: #d7dbe3;
+  --border-strong: #7f8797;
+  --text: #171a21;
+  --text-dim: #4a505e;
+  --text-gated: #6b6e78;
+  --accent: #2f66d0;
+  --on-accent: #ffffff;
+  --ok: #177a45;
+  --warn: #8a5208;
+  --high: #a2451a;
+  --critical: #c8323a;
+  --on-critical: #ffffff;
+  --pos: var(--ok);
+  --neg: var(--critical);
+  --neu: var(--text-dim);
+  --heat-n4: #2f66d0;
+  --heat-n3: #5a8ee8;
+  --heat-n2: #a9c4f5;
+  --heat-n1: #dbe7fb;
+  --heat-0: var(--bg-raised);
+  --heat-p1: #fbe9d2;
+  --heat-p2: #f3c98d;
+  --heat-p3: #d9932c;
+  --heat-p4: #a86414;
+  --heat-ink: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --opacity-disabled: 0.4;
+  --opacity-stale: 0.8;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #0b0e14;
+  --bg-panel: #11151f;
+  --bg-raised: #171c29;
+  --border: #232a3b;
+  --border-strong: #616a7e;
+  --text: #d7dce7;
+  --text-dim: #959db0;
+  --text-gated: #888c97;
+  --accent: #4f8cff;
+  --on-accent: #0b0e14;
+  --ok: #2fbf71;
+  --warn: #e6a23c;
+  --high: #f0713a;
+  --critical: #ef5a5e;
+  --on-critical: #0b0e14;
+  --pos: var(--ok);
+  --neg: var(--critical);
+  --neu: var(--text-dim);
+  --heat-n4: #8ab4ff;
+  --heat-n3: #3d7be6;
+  --heat-n2: #1f3f7f;
+  --heat-n1: #16294f;
+  --heat-0: var(--bg-raised);
+  --heat-p1: #4a2a0c;
+  --heat-p2: #7a4610;
+  --heat-p3: #b8741c;
+  --heat-p4: #f0b04e;
+  --heat-ink: #0b0e14;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --opacity-disabled: 0.4;
+  --opacity-stale: 0.8;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b0e14;
+    --bg-panel: #11151f;
+    --bg-raised: #171c29;
+    --border: #232a3b;
+    --border-strong: #616a7e;
+    --text: #d7dce7;
+    --text-dim: #959db0;
+    --text-gated: #888c97;
+    --accent: #4f8cff;
+    --on-accent: #0b0e14;
+    --ok: #2fbf71;
+    --warn: #e6a23c;
+    --high: #f0713a;
+    --critical: #ef5a5e;
+    --on-critical: #0b0e14;
+    --pos: var(--ok);
+    --neg: var(--critical);
+    --neu: var(--text-dim);
+    --heat-n4: #8ab4ff;
+    --heat-n3: #3d7be6;
+    --heat-n2: #1f3f7f;
+    --heat-n1: #16294f;
+    --heat-0: var(--bg-raised);
+    --heat-p1: #4a2a0c;
+    --heat-p2: #7a4610;
+    --heat-p3: #b8741c;
+    --heat-p4: #f0b04e;
+    --heat-ink: #0b0e14;
+    --overlay: rgba(0, 0, 0, 0.6);
+    --opacity-disabled: 0.4;
+    --opacity-stale: 0.8;
+    color-scheme: dark;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-feature-settings: "tnum" 1;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* §6 marketing type scale (the console never uses these). */
+.t-display { font-size: 40px; line-height: 48px; font-weight: 700; letter-spacing: -0.01em; }
+.t-h2 { font-size: 28px; line-height: 36px; font-weight: 600; }
+.t-h3 { font-size: 20px; line-height: 28px; font-weight: 600; }
+.t-lead { font-size: 18px; line-height: 28px; }
+.t-body { font-size: 16px; line-height: 26px; }
+.t-small { font-size: 14px; line-height: 20px; }
+.t-caption { font-size: 12px; line-height: 16px; color: var(--text-dim); }
+.band { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+@media (max-width: 640px) {
+  .t-display { font-size: 32px; line-height: 40px; }
+  .t-h2 { font-size: 24px; line-height: 32px; }
+}
+
+/* Rendered markdown (docs, legal, copy sections). Measure ≤ 68ch. */
+.prose { max-width: 68ch; font-size: 16px; line-height: 26px; }
+.prose > * + * { margin-top: 16px; }
+.prose h1 { font-size: 28px; line-height: 36px; font-weight: 600; margin-top: 0; }
+.prose h2 { font-size: 20px; line-height: 28px; font-weight: 600; margin-top: 40px; }
+.prose h3 { font-size: 16px; line-height: 24px; font-weight: 600; margin-top: 24px; }
+.prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.prose ul, .prose ol { padding-left: 1.4em; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li + li { margin-top: 6px; }
+.prose blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding: 8px 16px;
+  background: var(--bg-panel);
+  border-radius: 4px;
+  color: var(--text);
+}
+.prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--bg-raised);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.prose pre { background: var(--bg-raised); padding: 12px; border-radius: 4px; overflow-x: auto; }
+.prose pre code { background: none; padding: 0; }
+.prose table { border-collapse: collapse; font-size: 14px; line-height: 20px; }
+.prose .table-wrap { overflow-x: auto; }
+.prose th, .prose td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.prose th { background: var(--bg-panel); color: var(--text-dim); font-weight: 600; }
+.prose hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
+.prose strong { font-weight: 600; }
+.counsel { color: var(--warn); font-size: 0.9em; }
+.unset {
+  color: var(--critical);
+  border-bottom: 1px dashed var(--critical);
+  font-size: 0.8em;
+  margin-left: 2px;
+}

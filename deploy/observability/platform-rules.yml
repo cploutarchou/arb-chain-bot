@@ -5,7 +5,7 @@
 # Series marked "PENDING EXPORTER" are not yet emitted by internal/metrics
 # and are tracked as follow-up work; the rules are kept here so the
 # dashboards/alerts land together with the exporter change:
-#   - exchange_rate_limited_total{exchange}  (HTTP 429 / WS -1003 responses)
+#   - exchange_rate_limited_total{venue}  (HTTP 429 / WS -1003 responses)
 #   - db_migrations_pending                  (count of unapplied files)
 #   - campaign_runs_total{status}            (from internal/campaign)
 groups:
@@ -25,14 +25,14 @@ groups:
         expr: increase(exchange_rate_limited_total[10m]) > 0
         labels: {severity: warning, team: platform}
         annotations:
-          summary: "Collector received 429s from {{ $labels.exchange }}"
+          summary: "Collector received 429s from {{ $labels.venue }}"
           description: "{{ $value }} rate-limit responses in 10m. Back off REST resyncs; check for a reconnect loop."
       - alert: CollectorRateLimitedSustained
         expr: rate(exchange_rate_limited_total[15m]) > 0.05
         for: 15m
         labels: {severity: critical, team: platform}
         annotations:
-          summary: "Sustained rate limiting on {{ $labels.exchange }}; ban risk"
+          summary: "Sustained rate limiting on {{ $labels.venue }}; ban risk"
 
   - name: arb-recorder
     rules:
