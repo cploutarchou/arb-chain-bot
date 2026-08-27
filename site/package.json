@@ -1,0 +1,31 @@
+{
+  "name": "arb-site",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "sync": "node scripts/sync-content.mjs",
+    "dev": "node scripts/sync-content.mjs && next dev -p 3100",
+    "build": "node scripts/sync-content.mjs && node scripts/copy-lint.mjs && next build",
+    "start": "npx serve out",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "copy-lint": "node scripts/sync-content.mjs && node scripts/copy-lint.mjs"
+  },
+  "dependencies": {
+    "marked": "^15.0.0",
+    "next": "^15.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.2.0",
+    "@tailwindcss/postcss": "^4.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "eslint": "^9.20.0",
+    "eslint-config-next": "^15.4.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.7.0"
+  }
+}

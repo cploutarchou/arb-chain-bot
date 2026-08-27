@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // LatestMigrationVersion is the highest migrations/NNNNNN_*.up.sql this
@@ -25,8 +26,14 @@ func (s *Store) MigrationsPending(ctx context.Context) (int64, error) {
 	var version int64
 	var dirty bool
 	err := s.Pool.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&version, &dirty)
+	var pgErr *pgconn.PgError
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
+		return 1, nil
+	case errors.As(err, &pgErr) && pgErr.Code == "42P01":
+		// No schema_migrations table: the schema was applied without
+		// golang-migrate (CI pipes the SQL files through psql), so the
+		// version cannot be verified. Report pending rather than guess.
 		return 1, nil
 	case err != nil:
 		return 0, fmt.Errorf("schema_migrations: %w", err)
