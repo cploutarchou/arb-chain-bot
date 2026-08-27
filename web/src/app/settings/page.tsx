@@ -2,7 +2,14 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { api, ApiError, isStaleVersion, staleVersion, type StrategyParams, type UserRow } from "@/lib/api/client";
+import {
+  api,
+  ApiError,
+  isStaleVersion,
+  staleVersion,
+  type StrategyParams,
+  type UserRow,
+} from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { cloneParams, setPath, validateCooldown } from "@/lib/strategyFields";
@@ -49,23 +56,35 @@ function SessionSection() {
     e.preventDefault();
     setMsg(null);
     if (next.length < 12) {
-      setMsg({ ok: false, text: "New password must be at least 12 characters." });
+      setMsg({
+        ok: false,
+        text: "New password must be at least 12 characters.",
+      });
       return;
     }
     if (next !== confirm) {
-      setMsg({ ok: false, text: "New password and confirmation do not match." });
+      setMsg({
+        ok: false,
+        text: "New password and confirmation do not match.",
+      });
       return;
     }
     setBusy(true);
     try {
       await api.auth.changePassword(current, next);
-      setMsg({ ok: true, text: "Password changed. You'll need it next time you sign in." });
+      setMsg({
+        ok: true,
+        text: "Password changed. You'll need it next time you sign in.",
+      });
       setCurrent("");
       setNext("");
       setConfirm("");
       setShowPwForm(false);
     } catch (err: unknown) {
-      setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Password change failed." });
+      setMsg({
+        ok: false,
+        text: err instanceof ApiError ? err.message : "Password change failed.",
+      });
     } finally {
       setBusy(false);
     }
@@ -77,16 +96,29 @@ function SessionSection() {
         <div className="max-w-xl">
           <div className="flex items-center gap-3">
             <Stat label="User" value={auth.me.user_id} />
-            <Stat label="Role" value={<Badge tone="ok">{auth.me.role}</Badge>} />
+            <Stat
+              label="Role"
+              value={<Badge tone="ok">{auth.me.role}</Badge>}
+            />
             <Button onClick={() => void logout()} danger>
               Sign out
             </Button>
-            {!showPwForm && <Button onClick={() => setShowPwForm(true)}>Change my password</Button>}
+            {!showPwForm && (
+              <Button onClick={() => setShowPwForm(true)}>
+                Change my password
+              </Button>
+            )}
           </div>
           {showPwForm && (
-            <form onSubmit={submit} className="mt-3 max-w-sm space-y-2 rounded border border-[var(--border)] p-3">
+            <form
+              onSubmit={submit}
+              className="mt-3 max-w-sm space-y-2 rounded border border-[var(--border)] p-3"
+            >
               <div>
-                <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="pw-current">
+                <label
+                  className="mb-1 block text-[12px] text-[var(--text-dim)]"
+                  htmlFor="pw-current"
+                >
                   Current password
                 </label>
                 <input
@@ -98,7 +130,10 @@ function SessionSection() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="pw-new">
+                <label
+                  className="mb-1 block text-[12px] text-[var(--text-dim)]"
+                  htmlFor="pw-new"
+                >
                   New password
                 </label>
                 <input
@@ -108,10 +143,15 @@ function SessionSection() {
                   onChange={(e) => setNext(e.target.value)}
                   className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--accent)]"
                 />
-                <p className="mt-1 text-[11px] text-[var(--text-dim)]">At least 12 characters.</p>
+                <p className="mt-1 text-[11px] text-[var(--text-dim)]">
+                  At least 12 characters.
+                </p>
               </div>
               <div>
-                <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="pw-confirm">
+                <label
+                  className="mb-1 block text-[12px] text-[var(--text-dim)]"
+                  htmlFor="pw-confirm"
+                >
                   Confirm new password
                 </label>
                 <input
@@ -135,7 +175,11 @@ function SessionSection() {
             </form>
           )}
           {msg && (
-            <p className={`mt-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>
+            <p
+              className={`mt-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}
+            >
+              {msg.text}
+            </p>
           )}
         </div>
       ) : (
@@ -154,11 +198,19 @@ function UsersSection() {
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const selfId = auth.kind === "authenticated" ? auth.me.user_id : undefined;
   const mayManage = can(role, "users:manage");
+  // Users & Security manages the platform operator's own console
+  // accounts (internal/api/usersapi.go: every route needs
+  // users.platform_admin since T-081, not just the console ADMIN role —
+  // a tenant OWNER/ADMIN's console role can equal ADMIN too, but that
+  // never grants operator-staff account management).
+  const platformAdmin = auth.kind === "authenticated" && auth.me.platform_admin;
 
-  if (!mayManage) {
+  if (!mayManage || !platformAdmin) {
     return (
       <Section title="Users & roles">
-        <p className="text-[13px] text-[var(--text-dim)]">Requires ADMIN.</p>
+        <p className="text-[13px] text-[var(--text-dim)]">
+          Requires the platform operator (platform_admin).
+        </p>
       </Section>
     );
   }
@@ -172,7 +224,9 @@ function UsersSection() {
 function UsersManager({ selfId }: { selfId: string | undefined }) {
   const [refresh, setRefresh] = useState(0);
   const users = usePoll(() => api.users.list(), 15000, [refresh]);
-  const [listMsg, setListMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [listMsg, setListMsg] = useState<{ ok: boolean; text: string } | null>(
+    null,
+  );
 
   // Create form
   const [email, setEmail] = useState("");
@@ -183,7 +237,10 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
   const [creating, setCreating] = useState(false);
 
   // Row-action dialogs
-  const [roleDialog, setRoleDialog] = useState<{ user: UserRow; role: UserRow["role"] } | null>(null);
+  const [roleDialog, setRoleDialog] = useState<{
+    user: UserRow;
+    role: UserRow["role"];
+  } | null>(null);
   const [disableDialog, setDisableDialog] = useState<UserRow | null>(null);
   const [enableDialog, setEnableDialog] = useState<UserRow | null>(null);
   const [pwDialog, setPwDialog] = useState<UserRow | null>(null);
@@ -215,7 +272,9 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
       setNewRole("VIEWER");
       bump();
     } catch (err: unknown) {
-      setCreateErr(err instanceof ApiError ? err.message : "Create user failed.");
+      setCreateErr(
+        err instanceof ApiError ? err.message : "Create user failed.",
+      );
     } finally {
       setCreating(false);
     }
@@ -227,11 +286,16 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
     setBusy(true);
     try {
       await api.users.setRole(roleDialog.user.id, roleDialog.role);
-      setListMsg({ ok: true, text: `${roleDialog.user.email} is now ${roleDialog.role}.` });
+      setListMsg({
+        ok: true,
+        text: `${roleDialog.user.email} is now ${roleDialog.role}.`,
+      });
       setRoleDialog(null);
       bump();
     } catch (err: unknown) {
-      setActionErr(err instanceof ApiError ? err.message : "Role change failed.");
+      setActionErr(
+        err instanceof ApiError ? err.message : "Role change failed.",
+      );
       setRoleDialog(null);
     } finally {
       setBusy(false);
@@ -296,7 +360,9 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
       setPwDialog(null);
       bump();
     } catch (err: unknown) {
-      setActionErr(err instanceof ApiError ? err.message : "Password reset failed.");
+      setActionErr(
+        err instanceof ApiError ? err.message : "Password reset failed.",
+      );
     } finally {
       setBusy(false);
     }
@@ -305,7 +371,9 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
   return (
     <div className="max-w-4xl">
       {listMsg && (
-        <p className={`mb-2 text-[13px] ${listMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
+        <p
+          className={`mb-2 text-[13px] ${listMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}
+        >
           {listMsg.text}
         </p>
       )}
@@ -320,8 +388,17 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
                 key="role"
                 value={u.role}
                 disabled={u.id === selfId}
-                title={u.id === selfId ? "You cannot change your own role — ask another ADMIN." : undefined}
-                onChange={(e) => setRoleDialog({ user: u, role: e.target.value as UserRow["role"] })}
+                title={
+                  u.id === selfId
+                    ? "You cannot change your own role — ask another ADMIN."
+                    : undefined
+                }
+                onChange={(e) =>
+                  setRoleDialog({
+                    user: u,
+                    role: e.target.value as UserRow["role"],
+                  })
+                }
                 className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[12px] disabled:opacity-50"
               >
                 {ROLES.map((r) => (
@@ -338,7 +415,11 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
                 {u.disabled ? (
                   <Button onClick={() => setEnableDialog(u)}>Enable</Button>
                 ) : (
-                  <Button onClick={() => setDisableDialog(u)} disabled={u.id === selfId} danger>
+                  <Button
+                    onClick={() => setDisableDialog(u)}
+                    disabled={u.id === selfId}
+                    danger
+                  >
                     Disable
                   </Button>
                 )}
@@ -355,7 +436,10 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
         </h3>
         <form onSubmit={submitCreate} className="space-y-2">
           <div>
-            <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="new-email">
+            <label
+              className="mb-1 block text-[12px] text-[var(--text-dim)]"
+              htmlFor="new-email"
+            >
               Email
             </label>
             <input
@@ -368,7 +452,10 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
             />
           </div>
           <div>
-            <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="new-role">
+            <label
+              className="mb-1 block text-[12px] text-[var(--text-dim)]"
+              htmlFor="new-role"
+            >
               Role
             </label>
             <select
@@ -385,7 +472,10 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="new-password">
+            <label
+              className="mb-1 block text-[12px] text-[var(--text-dim)]"
+              htmlFor="new-password"
+            >
               Password
             </label>
             <input
@@ -396,10 +486,15 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--accent)]"
             />
-            <p className="mt-1 text-[11px] text-[var(--text-dim)]">At least 12 characters.</p>
+            <p className="mt-1 text-[11px] text-[var(--text-dim)]">
+              At least 12 characters.
+            </p>
           </div>
           <div>
-            <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="new-password-confirm">
+            <label
+              className="mb-1 block text-[12px] text-[var(--text-dim)]"
+              htmlFor="new-password-confirm"
+            >
               Confirm password
             </label>
             <input
@@ -411,7 +506,9 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
               className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--accent)]"
             />
           </div>
-          {createErr && <p className="text-[12px] text-[var(--critical)]">{createErr}</p>}
+          {createErr && (
+            <p className="text-[12px] text-[var(--critical)]">{createErr}</p>
+          )}
           {/* Native <button> default type is "submit"; clicking inside this
               <form> fires onSubmit above without a manual handler. */}
           <Button type="submit" onClick={() => undefined} disabled={creating}>
@@ -430,9 +527,12 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
           body={
             <>
               <p>
-                {roleDialog.user.email}: {roleDialog.user.role} → <strong>{roleDialog.role}</strong>
+                {roleDialog.user.email}: {roleDialog.user.role} →{" "}
+                <strong>{roleDialog.role}</strong>
               </p>
-              {actionErr && <p className="mt-2 text-[var(--critical)]">{actionErr}</p>}
+              {actionErr && (
+                <p className="mt-2 text-[var(--critical)]">{actionErr}</p>
+              )}
             </>
           }
         />
@@ -447,8 +547,13 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
           onCancel={() => setDisableDialog(null)}
           body={
             <>
-              <p>This immediately revokes all of {disableDialog.email}&apos;s sessions.</p>
-              {actionErr && <p className="mt-2 text-[var(--critical)]">{actionErr}</p>}
+              <p>
+                This immediately revokes all of {disableDialog.email}&apos;s
+                sessions.
+              </p>
+              {actionErr && (
+                <p className="mt-2 text-[var(--critical)]">{actionErr}</p>
+              )}
             </>
           }
         />
@@ -463,7 +568,9 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
           body={
             <>
               <p>{enableDialog.email} will be able to sign in again.</p>
-              {actionErr && <p className="mt-2 text-[var(--critical)]">{actionErr}</p>}
+              {actionErr && (
+                <p className="mt-2 text-[var(--critical)]">{actionErr}</p>
+              )}
             </>
           }
         />
@@ -478,7 +585,9 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
           onCancel={() => setPwDialog(null)}
           body={
             <div>
-              <p className="mb-2">This revokes all of {pwDialog.email}&apos;s current sessions.</p>
+              <p className="mb-2">
+                This revokes all of {pwDialog.email}&apos;s current sessions.
+              </p>
               <label className="mb-1 block text-[12px]" htmlFor="reset-pw">
                 New password
               </label>
@@ -489,8 +598,13 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
                 onChange={(e) => setPwValue(e.target.value)}
                 className="mb-2 w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--accent)]"
               />
-              <p className="mb-2 text-[11px] text-[var(--text-dim)]">At least 12 characters.</p>
-              <label className="mb-1 block text-[12px]" htmlFor="reset-pw-confirm">
+              <p className="mb-2 text-[11px] text-[var(--text-dim)]">
+                At least 12 characters.
+              </p>
+              <label
+                className="mb-1 block text-[12px]"
+                htmlFor="reset-pw-confirm"
+              >
                 Confirm new password
               </label>
               <input
@@ -500,7 +614,11 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
                 onChange={(e) => setPwConfirmValue(e.target.value)}
                 className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--accent)]"
               />
-              {actionErr && <p className="mt-2 text-[12px] text-[var(--critical)]">{actionErr}</p>}
+              {actionErr && (
+                <p className="mt-2 text-[12px] text-[var(--critical)]">
+                  {actionErr}
+                </p>
+              )}
             </div>
           }
         />
@@ -516,8 +634,8 @@ function StrategyRiskSection() {
   return (
     <Section title="Strategy & risk">
       <p className="mb-2 max-w-2xl text-[13px] text-[var(--text-dim)]">
-        Versioning, rollback, and the structured field editor live on the Strategies page — risk
-        fields there require ADMIN.
+        Versioning, rollback, and the structured field editor live on the
+        Strategies page — risk fields there require ADMIN.
       </p>
       <Await state={current} what="active config">
         {(c) => (
@@ -526,7 +644,10 @@ function StrategyRiskSection() {
             <span className="text-[13px] text-[var(--text-dim)]">
               created {fmtTime(c.created_at)} by {c.created_by || "system"}
             </span>
-            <Link href="/strategies" className="text-[13px] text-[var(--accent)] underline">
+            <Link
+              href="/strategies"
+              className="text-[13px] text-[var(--accent)] underline"
+            >
               Open Strategies →
             </Link>
           </div>
@@ -564,7 +685,9 @@ function NotificationsSection() {
   const [routesDraft, setRoutesDraft] = useState<Record<string, string[]>>({});
   const [cooldownErr, setCooldownErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [confirmState, setConfirmState] = useState<NotifApplyConfirm | null>(null);
+  const [confirmState, setConfirmState] = useState<NotifApplyConfirm | null>(
+    null,
+  );
   // stale mirrors /strategies' handling of a 409 stale_version (T-058):
   // never silently re-send the draft, only Reload does.
   const [stale, setStale] = useState<{ current: number | null } | null>(null);
@@ -585,7 +708,11 @@ function NotificationsSection() {
     setRefresh((n) => n + 1);
   };
 
-  const toggleChannel = (severity: string, channel: string, enabled: boolean) => {
+  const toggleChannel = (
+    severity: string,
+    channel: string,
+    enabled: boolean,
+  ) => {
     setRoutesDraft((prev) => {
       const set = new Set(prev[severity] ?? []);
       if (enabled) set.add(channel);
@@ -599,7 +726,11 @@ function NotificationsSection() {
     setCooldownErr(err);
     if (err) return;
     let params = cloneParams(activeParams);
-    params = setPath(params, "notifications.cooldown_seconds", Number(cooldownRaw.trim()));
+    params = setPath(
+      params,
+      "notifications.cooldown_seconds",
+      Number(cooldownRaw.trim()),
+    );
     params = setPath(params, "notifications.routes", routesDraft);
     const rows = diffParams(
       activeParams as unknown as Record<string, unknown>,
@@ -616,7 +747,10 @@ function NotificationsSection() {
     if (!confirmState) return;
     setMsg(null);
     try {
-      const snap = await api.config.apply(confirmState.params, confirmState.fromVersion);
+      const snap = await api.config.apply(
+        confirmState.params,
+        confirmState.fromVersion,
+      );
       setMsg({ ok: true, text: `Version ${snap.version} active.` });
       setStale(null);
       setEditing(false);
@@ -628,16 +762,28 @@ function NotificationsSection() {
         setConfirmState(null);
         return;
       }
-      setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Apply failed." });
+      setMsg({
+        ok: false,
+        text: err instanceof ApiError ? err.message : "Apply failed.",
+      });
       setConfirmState(null);
     }
   };
 
   return (
     <Section title="Notifications">
-      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
+      {stale && (
+        <StaleVersionNotice
+          currentVersion={stale.current}
+          onReload={reloadAfterStale}
+        />
+      )}
       {msg && (
-        <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>
+        <p
+          className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}
+        >
+          {msg.text}
+        </p>
       )}
       <Await state={current} what="active config">
         {(c) => (
@@ -650,7 +796,9 @@ function NotificationsSection() {
                     .map(([sev, chans]) => `${sev}→${chans.join("+") || "web"}`)
                     .join(", ") || "defaults"}
                 </span>
-                {mayEdit && <Button onClick={() => startEdit(c.params)}>Edit</Button>}
+                {mayEdit && (
+                  <Button onClick={() => startEdit(c.params)}>Edit</Button>
+                )}
               </div>
             ) : (
               <>
@@ -662,7 +810,9 @@ function NotificationsSection() {
                   onToggleChannel={toggleChannel}
                 />
                 <div className="mt-3 flex gap-2">
-                  <Button onClick={() => review(c.params, c.version)}>Review changes</Button>
+                  <Button onClick={() => review(c.params, c.version)}>
+                    Review changes
+                  </Button>
                   <Button onClick={() => setEditing(false)} danger>
                     Cancel
                   </Button>
@@ -682,8 +832,9 @@ function NotificationsSection() {
           body={
             <>
               <p className="mb-3">
-                This becomes a new strategy config version on top of v{confirmState.fromVersion} —
-                it&apos;s the same versioned document Strategies edits, so it shows there too.
+                This becomes a new strategy config version on top of v
+                {confirmState.fromVersion} — it&apos;s the same versioned
+                document Strategies edits, so it shows there too.
               </p>
               <DiffTable
                 rows={confirmState.rows}
@@ -703,6 +854,15 @@ export default function SettingsPage() {
   return (
     <ConsoleShell active="Settings">
       <PageTitle>Settings</PageTitle>
+      <Section title="Setup wizard">
+        <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+          Pick venues, set simulated paper balances and create a rule in three
+          short steps.{" "}
+          <Link href="/onboarding" className="text-[var(--accent)] underline">
+            Run the setup wizard →
+          </Link>
+        </p>
+      </Section>
       <SessionSection />
       <div id="operating-mode">
         <OperatingModeSection />
@@ -735,10 +895,22 @@ export default function SettingsPage() {
       </div>
       <Section title="Security posture">
         <ul className="max-w-2xl list-inside list-disc space-y-1 text-[13px] text-[var(--text-dim)]">
-          <li>Live trading is permanently disabled by design (LiveExecutor returns ErrLiveTradingDisabled).</li>
-          <li>Sessions are server-side and revocable; CSRF required on every state change; RBAC enforced in the backend.</li>
-          <li>Exchange access is public market data only — no API keys with trade, withdrawal, or transfer permissions exist anywhere in this system.</li>
-          <li>MFA (TOTP) enrollment is reserved in the auth flow but not yet implemented (MASTER_PLAN T-052).</li>
+          <li>
+            Live trading is permanently disabled by design (LiveExecutor returns
+            ErrLiveTradingDisabled).
+          </li>
+          <li>
+            Sessions are server-side and revocable; CSRF required on every state
+            change; RBAC enforced in the backend.
+          </li>
+          <li>
+            Exchange access is public market data only — no API keys with trade,
+            withdrawal, or transfer permissions exist anywhere in this system.
+          </li>
+          <li>
+            MFA (TOTP) enrollment is reserved in the auth flow but not yet
+            implemented (MASTER_PLAN T-052).
+          </li>
         </ul>
       </Section>
     </ConsoleShell>

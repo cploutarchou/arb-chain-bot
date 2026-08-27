@@ -1279,6 +1279,16 @@ func (e *Engine) attachRunObservers(scn *scanner.Scanner, feed *binance.Feed) {
 	}
 }
 
+// FeedRateLimited returns the live Binance feed's cumulative REST
+// 429/418 count (0 without a feed) for exchange_rate_limited_total.
+func (e *Engine) FeedRateLimited() int64 {
+	feed := e.currentFeed()
+	if feed == nil {
+		return 0
+	}
+	return feed.Stats.RateLimited.Load()
+}
+
 // registerMetricsOnce attaches the engine's pull-metrics sources to the
 // meter exactly once across the engine's lifetime (E4): every source is
 // an accessor-based closure (e.currentX()), so the SAME registered

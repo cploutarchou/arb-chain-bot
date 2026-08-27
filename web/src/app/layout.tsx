@@ -2,10 +2,13 @@ import type { Metadata } from "next";
 import Script from "next/script";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
+import { RiskAckGate } from "@/components/RiskAckGate";
+import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
   title: "Arb Console",
-  description: "Triangular-arbitrage research & paper-trading operations console",
+  description:
+    "Triangular-arbitrage research & paper-trading operations console",
 };
 
 // Runs before hydration (strategy="beforeInteractive") so a saved theme
@@ -23,7 +26,11 @@ try {
 } catch (e) {}
 `;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <head>
@@ -32,7 +39,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </Script>
       </head>
       <body className="min-h-screen antialiased">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <ToastProvider>
+            <RiskAckGate>{children}</RiskAckGate>
+          </ToastProvider>
+        </AuthProvider>
       </body>
     </html>
   );

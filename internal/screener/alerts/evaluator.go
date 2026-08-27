@@ -22,17 +22,40 @@ type Notifier func(notification.Event)
 // from (strategy-models §2.6 step 3 → 4).
 type OpenHook func(ctx context.Context, s Signal, ev screener.Event)
 
+// SkipAlertsPerDay is the skip reason recorded when the rule's
+// organisation has used its alerts.per_day quota (packages.md §3.2).
+const SkipAlertsPerDay = "ALERTS_PER_DAY"
+
+// Entitlement is the answer to "may this alert open now?" for one rule:
+// Allow=false skips the alert with Reason (counted in Skipped());
+// Telegram=false keeps the event but withholds the Telegram delivery
+// (alerts.channels no longer includes it — a downgrade after the rule
+// was created; creation itself is gated in the API).
+type Entitlement struct {
+	Allow    bool
+	Reason   string
+	Telegram bool
+}
+
+// EntitlementCheck resolves the rule's organisation and consumes one
+// unit of its daily alert quota when it answers Allow. nil = no gating
+// (single-tenant profiles and tests).
+type EntitlementCheck func(ctx context.Context, rule screener.Rule, now time.Time) Entitlement
+
 // Evaluator runs every enabled rule over the book each poll.
 type Evaluator struct {
-	svc    *screener.Service
-	notify Notifier
-	log    *slog.Logger
-	idGen  func() string
-	hooks  []OpenHook
+	svc     *screener.Service
+	notify  Notifier
+	log     *slog.Logger
+	idGen   func() string
+	hooks   []OpenHook
+	entitle EntitlementCheck
 
-	mu     sync.Mutex
-	lanes  map[laneID]*laneState
-	states map[string]Signal // last signal per lane id (diagnostics)
+	mu      sync.Mutex
+	lanes   map[laneID]*laneState
+	states  map[string]Signal // last signal per lane id (diagnostics)
+	opened  map[screener.RuleKind]int64
+	skipped map[string]int64 // by reason
 }
 
 type laneID struct {
@@ -46,6 +69,7 @@ type laneState struct {
 	peak      decimal.Decimal
 	lastOpen  time.Time
 	lastSig   Signal
+	skipped   string // last entitlement skip reason logged for this lane
 }
 
 // New builds an evaluator over the service's book, rules, events,
@@ -56,14 +80,42 @@ func New(svc *screener.Service, notify Notifier, log *slog.Logger) *Evaluator {
 	}
 	return &Evaluator{
 		svc: svc, notify: notify, log: log,
-		idGen:  func() string { return "evt-" + ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String() },
-		lanes:  map[laneID]*laneState{},
-		states: map[string]Signal{},
+		idGen:   func() string { return "evt-" + ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String() },
+		lanes:   map[laneID]*laneState{},
+		states:  map[string]Signal{},
+		opened:  map[screener.RuleKind]int64{},
+		skipped: map[string]int64{},
 	}
 }
 
 // OnOpen registers an executor hook.
 func (e *Evaluator) OnOpen(h OpenHook) { e.hooks = append(e.hooks, h) }
+
+// SetEntitle installs the per-organisation entitlement check (T-082).
+func (e *Evaluator) SetEntitle(f EntitlementCheck) { e.entitle = f }
+
+// Opened returns cumulative opened alerts per rule kind
+// (screener_alerts_total{rule_kind}).
+func (e *Evaluator) Opened() map[screener.RuleKind]int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[screener.RuleKind]int64, len(e.opened))
+	for k, v := range e.opened {
+		out[k] = v
+	}
+	return out
+}
+
+// Skipped returns cumulative entitlement skips by reason.
+func (e *Evaluator) Skipped() map[string]int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]int64, len(e.skipped))
+	for k, v := range e.skipped {
+		out[k] = v
+	}
+	return out
+}
 
 // Name implements screener.Ticker.
 func (e *Evaluator) Name() string { return "alerts" }
@@ -188,6 +240,30 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 		e.mu.Unlock()
 		return
 	}
+	// Entitlements (packages.md §3.2 alerts.*): the daily quota is
+	// consumed here — after lifetime and cooldown — so a lane that is
+	// merely warming up never spends it. A refused lane stays
+	// "not opened": no cooldown is charged, and it opens as soon as the
+	// quota resets (UTC day) or the package changes.
+	telegram := s.Rule.Telegram
+	if e.entitle != nil {
+		e.mu.Unlock()
+		ent := e.entitle(ctx, s.Rule, now)
+		e.mu.Lock()
+		if !ent.Allow {
+			e.skipped[ent.Reason]++
+			if st.skipped != ent.Reason {
+				st.skipped = ent.Reason
+				e.log.Warn("screener alert skipped", "rule", s.Rule.ID, "reason", ent.Reason,
+					"base", s.Lane.Base, "quote", s.Lane.Quote, "venue_a", s.Lane.VenueA, "venue_b", s.Lane.VenueB)
+			}
+			e.mu.Unlock()
+			return
+		}
+		st.skipped = ""
+		telegram = telegram && ent.Telegram
+	}
+	e.opened[s.Rule.Kind]++
 	ev := screener.Event{
 		ID: e.idGen(), RuleID: s.Rule.ID, Kind: s.Rule.Kind,
 		Base: s.Lane.Base, Quote: s.Lane.Quote,
@@ -199,7 +275,7 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 	st.lastOpen = now
 	e.mu.Unlock()
 
-	if s.Rule.Telegram && e.notify != nil {
+	if telegram && e.notify != nil {
 		title, body := OpenText(s, lifetime)
 		e.notify(notification.Event{
 			Severity: notification.SeverityInfo,

@@ -293,3 +293,70 @@ func TestHarvestBreakevenMatchesSpec(t *testing.T) {
 		t.Errorf("basis = %s, want -2.00", got)
 	}
 }
+
+// Entitlements at open time (packages.md §3.2): the daily quota is
+// consumed only when a lane would otherwise open; once refused the lane
+// is skipped with ALERTS_PER_DAY (no event, no hook, no Telegram, no
+// cooldown charged) and opens again when the quota allows. A channel
+// refusal keeps the event but withholds Telegram.
+func TestEvaluatorEntitlementSkipsAndChannel(t *testing.T) {
+	svc := newSvc(t)
+	r := spreadRule()
+	if _, err := svc.Rules.InsertRule(context.Background(), r, "t"); err != nil {
+		t.Fatal(err)
+	}
+	fn := &fakeNotifier{}
+	ev := New(svc, fn.Notify, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hooks := 0
+	ev.OnOpen(func(context.Context, Signal, screener.Event) { hooks++ })
+	calls := 0
+	allow := false
+	ev.SetEntitle(func(_ context.Context, rule screener.Rule, _ time.Time) Entitlement {
+		calls++
+		if rule.ID != "r1" {
+			t.Errorf("rule = %q", rule.ID)
+		}
+		if !allow {
+			return Entitlement{Reason: SkipAlertsPerDay}
+		}
+		return Entitlement{Allow: true, Telegram: false}
+	})
+	ctx := context.Background()
+	// Warming up (lifetime < min): the check is never consulted.
+	setSpread(svc.Book, "50250", t0)
+	ev.Tick(ctx, t0)
+	setSpread(svc.Book, "50250", t0.Add(5*time.Second))
+	ev.Tick(ctx, t0.Add(5*time.Second))
+	if calls != 0 {
+		t.Fatalf("entitlement consulted %d times before min_lifetime", calls)
+	}
+	// Would open at 10 s: refused → skipped, counted, nothing opened.
+	setSpread(svc.Book, "50250", t0.Add(10*time.Second))
+	ev.Tick(ctx, t0.Add(10*time.Second))
+	if calls != 1 || len(ev.OpenEvents()) != 0 || hooks != 0 || fn.count() != 0 {
+		t.Fatalf("refused: calls=%d open=%d hooks=%d notified=%d", calls, len(ev.OpenEvents()), hooks, fn.count())
+	}
+	if got := ev.Skipped()[SkipAlertsPerDay]; got != 1 {
+		t.Fatalf("Skipped()[ALERTS_PER_DAY] = %d, want 1", got)
+	}
+	if n := ev.Opened()[screener.RuleKindSpread]; n != 0 {
+		t.Fatalf("Opened() = %d after a refusal", n)
+	}
+	// Quota available again: opens WITHOUT a cooldown penalty from the
+	// refusal; Telegram withheld (channel not entitled), hook still runs.
+	allow = true
+	setSpread(svc.Book, "50250", t0.Add(15*time.Second))
+	ev.Tick(ctx, t0.Add(15*time.Second))
+	if calls != 2 || len(ev.OpenEvents()) != 1 || hooks != 1 {
+		t.Fatalf("allowed: calls=%d open=%d hooks=%d", calls, len(ev.OpenEvents()), hooks)
+	}
+	if fn.count() != 0 {
+		t.Fatalf("telegram sent %d, want 0 (channel not entitled)", fn.count())
+	}
+	if evs, _ := svc.Events.ListEvents(ctx, "r1", 10); len(evs) != 1 || evs[0].TelegramSent {
+		t.Fatalf("events = %+v", evs)
+	}
+	if n := ev.Opened()[screener.RuleKindSpread]; n != 1 {
+		t.Fatalf("Opened()[spread] = %d, want 1", n)
+	}
+}

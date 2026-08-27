@@ -12,6 +12,8 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/billing/paddle"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/entitlements"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/alerts"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
@@ -30,6 +32,10 @@ type tenantWiring struct {
 	store    tenancy.Store
 	resolver *entitlements.Resolver
 	billing  *paddle.Service
+	// alertsPerDay is the in-process alerts.per_day counter
+	// (packages.md §3.2; one per process — see entitlements.DailyCounter
+	// for the scale-out note).
+	alertsPerDay *entitlements.DailyCounter
 }
 
 // buildTenancy: pgx-backed stores when persistence is on (migrations
@@ -77,7 +83,35 @@ func buildTenancy(log *slog.Logger, store *storage.Store, sec *secrets.Manager, 
 			log.Error("affiliate accrual failed", "org_id", orgID, "transaction_id", txn, "error", err)
 		}
 	}
-	return tenantWiring{store: ts, resolver: resolver, billing: billing}
+	return tenantWiring{store: ts, resolver: resolver, billing: billing, alertsPerDay: entitlements.NewDailyCounter()}
+}
+
+// alertEntitle is the alert evaluator's precondition (packages.md §3.2
+// alerts.*): resolve the rule's organisation, decide whether Telegram
+// is still an entitled channel, then consume one unit of alerts.per_day
+// — refusing with alerts.SkipAlertsPerDay once the day's quota is used.
+// The platform organisation is never gated; without tenancy nothing is.
+func (t tenantWiring) alertEntitle() alerts.EntitlementCheck {
+	if t.store == nil || t.resolver == nil || t.alertsPerDay == nil {
+		return nil
+	}
+	return func(ctx context.Context, rule screener.Rule, now time.Time) alerts.Entitlement {
+		orgID, err := t.store.OrgOfRule(ctx, rule.ID)
+		if err != nil {
+			return alerts.Entitlement{Reason: "organisation lookup failed: " + err.Error()}
+		}
+		if orgID == tenancy.PlatformOrgID {
+			return alerts.Entitlement{Allow: true, Telegram: true}
+		}
+		ent, err := t.resolver.For(ctx, orgID)
+		if err != nil {
+			return alerts.Entitlement{Reason: "entitlements unavailable: " + err.Error()}
+		}
+		if !t.alertsPerDay.Allow(orgID, ent.Alerts.PerDay, now) {
+			return alerts.Entitlement{Reason: alerts.SkipAlertsPerDay}
+		}
+		return alerts.Entitlement{Allow: true, Telegram: ent.CheckChannel("telegram") == nil}
+	}
 }
 
 // paperEntitle is the executor's precondition (packages.md §3.2

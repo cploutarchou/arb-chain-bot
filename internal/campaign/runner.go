@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/backtest"
@@ -102,6 +103,15 @@ type Runner struct {
 	order   []string
 	current string
 	once    sync.Once
+	// done/failed count terminal statuses reached in THIS process
+	// (campaign_runs_total{status}); orphan reconciliation of a previous
+	// process's rows is not counted — it is not a run this process ran.
+	done, failed atomic.Int64
+}
+
+// RunCounts returns cumulative terminal statuses (metrics source).
+func (r *Runner) RunCounts() map[string]int64 {
+	return map[string]int64{StatusDone: r.done.Load(), StatusFailed: r.failed.Load()}
 }
 
 func (r *Runner) Name() string { return "campaigns" }
@@ -257,6 +267,7 @@ func (r *Runner) execute(id, segDir string) {
 		// goroutine and a concurrent poller — clearing r.current first
 		// means "terminal status observable" implies "not busy" always.
 		r.finish(id)
+		r.failed.Add(1)
 		r.update(id, func(run *Run) { run.Status = StatusFailed; run.Error = err.Error(); run.FinishedAt = &fin })
 		return
 	}
@@ -266,6 +277,7 @@ func (r *Runner) execute(id, segDir string) {
 	flags := Flags(c, req.Assets)
 	verdicts := Verdicts(c, req.Assets)
 	r.finish(id)
+	r.done.Add(1)
 	r.update(id, func(run *Run) {
 		run.Status = StatusDone
 		run.FinishedAt = &fin

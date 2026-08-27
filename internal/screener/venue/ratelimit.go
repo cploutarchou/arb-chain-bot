@@ -114,6 +114,37 @@ func (g *gate) observe(err error) bool {
 	return true
 }
 
+// InBandRateLimit is a "too many requests" answer a venue carries INSIDE
+// an HTTP 200 body instead of a 429 (MEXC contract API: error code 510
+// "Excessive frequency of requests",
+// https://mexcdevelop.github.io/apidocs/contract_v1_en/#error-code
+// accessed 2026-08-27; observed body {"code":510,"msg":"Requests are too
+// frequent"}). The docs publish no Retry-After for it, so Pause is the
+// collector's own back-off policy.
+type InBandRateLimit struct {
+	Venue screener.Venue
+	Path  string
+	Code  int
+	Msg   string
+	Pause time.Duration
+}
+
+func (e *InBandRateLimit) Error() string {
+	return fmt.Sprintf("%s: %s: in-band rate limit code %d (%s); paused %s", e.Venue, e.Path, e.Code, e.Msg, e.Pause)
+}
+
+// observeInBand counts an in-band rate-limit answer exactly like a 429
+// and blocks the gate for e.Pause (the venue published no Retry-After).
+func (g *gate) observeInBand(e *InBandRateLimit) {
+	g.limited.Add(1)
+	until := g.now().Add(e.Pause)
+	g.mu.Lock()
+	if until.After(g.blockedTill) {
+		g.blockedTill = until
+	}
+	g.mu.Unlock()
+}
+
 // blockedFor reports the remaining block, zero when none.
 func (g *gate) blockedFor() time.Duration {
 	g.mu.Lock()

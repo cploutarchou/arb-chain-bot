@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -56,7 +57,8 @@ type Executor struct {
 
 	entitle EntitlementCheck
 
-	mu       sync.Mutex // serialises executions and balance changes
+	mu       sync.Mutex           // serialises executions and balance changes
+	outcomes map[outcomeKey]int64 // screener_paper_executions_total{strategy,outcome}
 	wallets  map[screener.Venue]*reservation.Manager
 	loaded   bool
 	pending  []pendingSlip
@@ -85,7 +87,7 @@ func New(svc *screener.Service, ledger Ledger, log *slog.Logger, opts Options) *
 	}
 	x := &Executor{svc: svc, ledger: ledger, log: log, waiter: opts.Waiter, latency: DefaultLatency,
 		tolBps: DefaultLimitToleranceBps, seed: opts.Seed, idGen: opts.IDGen, wallets: map[screener.Venue]*reservation.Manager{},
-		entitle: opts.Entitle}
+		entitle: opts.Entitle, outcomes: map[outcomeKey]int64{}}
 	if x.waiter == nil {
 		x.waiter = simulation.RealWaiter{}
 	}
@@ -103,6 +105,52 @@ func New(svc *screener.Service, ledger Ledger, log *slog.Logger, opts Options) *
 
 // Name implements screener.Ticker.
 func (x *Executor) Name() string { return "paperexec" }
+
+// Outcome values of Outcomes(): a position row was written either as a
+// simulated execution (OPEN/CLOSED) or as a skip (SKIPPED, any reason).
+const (
+	OutcomeExecuted = "executed"
+	OutcomeSkipped  = "skipped"
+)
+
+type outcomeKey struct {
+	Strategy screener.Strategy
+	Outcome  string
+}
+
+// OutcomeCount is one cumulative (strategy, outcome) counter.
+type OutcomeCount struct {
+	Strategy screener.Strategy
+	Outcome  string
+	Count    int64
+}
+
+// countOutcome tallies one inserted position (caller holds x.mu).
+func (x *Executor) countOutcome(p Position) {
+	outcome := OutcomeExecuted
+	if p.Status == StatusSkipped {
+		outcome = OutcomeSkipped
+	}
+	x.outcomes[outcomeKey{Strategy: p.Strategy, Outcome: outcome}]++
+}
+
+// Outcomes returns the cumulative execution outcomes since process
+// start, sorted by strategy then outcome (metrics source).
+func (x *Executor) Outcomes() []OutcomeCount {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	out := make([]OutcomeCount, 0, len(x.outcomes))
+	for k, n := range x.outcomes {
+		out = append(out, OutcomeCount{Strategy: k.Strategy, Outcome: k.Outcome, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Strategy != out[j].Strategy {
+			return out[i].Strategy < out[j].Strategy
+		}
+		return out[i].Outcome < out[j].Outcome
+	})
+	return out
+}
 
 // OnOpen is the alerts.OpenHook: called once per opened event.
 func (x *Executor) OnOpen(ctx context.Context, s alerts.Signal, ev screener.Event) {
@@ -252,6 +300,7 @@ func (x *Executor) skip(ctx context.Context, s alerts.Signal, ev screener.Event,
 	}
 	t := now
 	p.ClosedAt = &t
+	x.countOutcome(p)
 	if err := x.ledger.InsertPosition(ctx, p); err != nil {
 		x.log.Error("paperexec: skip row insert failed", "error", err)
 	}

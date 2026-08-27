@@ -16,8 +16,11 @@ func TestDefaultsValidates(t *testing.T) {
 	}
 	for id := range KnownVenues {
 		v, ok := def.Venues[id]
-		if !ok || v.Enabled == tier2Venues[id] { // Tier-1 on, Tier-2 opt-in (T-075)
+		if !ok || !v.Enabled { // Tier-1 and Tier-2 both on since the 2026-08-27 soak (T-075)
 			t.Fatalf("Defaults() venue %s enabled=%v", id, v.Enabled)
+		}
+		if v.PerpsEnabled == (id == VenueCoinbase) { // Coinbase: no retail perps
+			t.Fatalf("Defaults() venue %s perps_enabled=%v", id, v.PerpsEnabled)
 		}
 	}
 	if !def.Venues[VenueBybit].PerpTakerBps.Equal(d("5.5")) {

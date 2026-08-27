@@ -170,13 +170,18 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 	VenueCoinbase: {spotBps: "120", perpBps: "5"},
 }
 
-// tier2Venues start disabled (T-075: opt-in until a 30-min soak with zero
-// 429/418 per docs/design/scanner-suite.md / venue-connector SKILL step 5).
-// Coinbase has no retail perps (docs/research/venues/coinbase.md §3).
-var tier2Venues = map[Venue]bool{VenueKuCoin: true, VenueHTX: true, VenueKraken: true, VenueCoinbase: true}
+// Tier-2 venues (T-075: KuCoin, HTX, Kraken, Coinbase) were opt-in until
+// a 30-min live soak showed zero 429/418/403/510 and zero errors. Soak of
+// 2026-08-27 (TestSoakLive, poll 5 s, all ten venues): kucoin 295 polls
+// 1006 spot/664 perps avg 1104 ms; htx 197 polls 600/301 avg 4145 ms;
+// kraken 248 polls 1382/276 avg 2249 ms; coinbase 142 polls 921/0 avg
+// 7701 ms — 0 rate-limit hits, 0 errors each. They now start enabled
+// like Tier-1. Coinbase has no retail perps
+// (docs/research/venues/coinbase.md §3) so PerpsEnabled stays false.
 
-// Defaults returns the first-boot document: all six target venues
-// enabled with placeholder regular-tier taker fees (spot/perp) "to be
+// Defaults returns the first-boot document: every known venue (Tier-1
+// and, since the 2026-08-27 soak, Tier-2) enabled with regular-tier
+// taker fees (spot/perp) "to be
 // confirmed by T-065" (docs/research/screener-endpoints.md verifies each
 // against the venue's current official fee schedule).
 func Defaults() Settings {
@@ -184,7 +189,7 @@ func Defaults() Settings {
 	for _, id := range OrderedVenues {
 		f := defaultVenueFees[id]
 		venues[id] = VenueSettings{
-			Enabled: !tier2Venues[id], PerpsEnabled: id != VenueCoinbase,
+			Enabled: true, PerpsEnabled: id != VenueCoinbase,
 			SpotTakerBps: decimal.RequireFromString(f.spotBps),
 			PerpTakerBps: decimal.RequireFromString(f.perpBps),
 		}

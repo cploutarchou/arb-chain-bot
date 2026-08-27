@@ -2,6 +2,8 @@
 // wire as a string (decimal-safe) and is formatted for display only —
 // the frontend NEVER recomputes profitability, fees, or risk.
 
+import { emitEntitlementExceeded, emitRiskAckRequired } from "@/lib/errorBus";
+
 export interface APIError {
   code: string;
   message: string;
@@ -110,6 +112,20 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // non-JSON error body — fall through with env null
   }
   if (!res.ok || env?.error) {
+    // Cross-cutting error codes (errorBus): every caller still gets the
+    // thrown ApiError for local handling, but auth.tsx and ToastProvider
+    // also learn about it without every call site wiring it up.
+    if (env?.error?.code === "risk_ack_required") {
+      const data = env.data as { required_version?: string } | null;
+      emitRiskAckRequired(data?.required_version);
+    } else if (env?.error?.code === "entitlement_exceeded") {
+      const data = env.data as { key?: string; limit?: unknown } | null;
+      emitEntitlementExceeded({
+        key: data?.key,
+        limit: data?.limit,
+        message: env.error.message,
+      });
+    }
     throw new ApiError(res.status, env?.error ?? null, env?.data ?? null);
   }
   if (env === null || env.data === null) {
@@ -144,10 +160,180 @@ export interface SystemStatus {
   components: string[];
 }
 
+// ---- Tenancy, entitlements and billing (T-081/T-082/T-083, docs/design/
+// billing.md, docs/design/packages.md §3) --------------------------------
+// The console only READS entitlements; every limit is enforced server-
+// side (packages.md §3: "the console only reads them"). Nothing here
+// recomputes a limit or a price.
+
+export type OrgRole = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+export type CustomerType = "consumer" | "business";
+
+export interface Org {
+  id: number;
+  name: string;
+  package_code: string;
+  country?: string;
+  customer_type: CustomerType;
+  risk_ack_version?: string;
+  risk_ack_at?: string;
+  trial_ends_at?: string;
+  created_at: string;
+}
+
+export interface EntitlementVenues {
+  screener_max: number; // -1 = unlimited
+  screener_tiers: string[];
+  screener_fixed: string[];
+  triangular_max: number;
+  dex_enabled: boolean;
+  perps_enabled: boolean;
+}
+
+export interface EntitlementRules {
+  max_active: number;
+  templates_max: number; // -1 = unlimited
+  min_refresh_s: number;
+  kinds: string[];
+}
+
+export interface EntitlementAlerts {
+  channels: string[]; // web | telegram | email | webhook
+  per_day: number;
+  telegram_destinations_max: number;
+  min_cooldown_s: number;
+}
+
+export interface EntitlementAutoPaper {
+  strategies: string[];
+  max_open_positions: number;
+  ledgers_max: number;
+  max_size_quote: string; // decimal string
+}
+
+export interface EntitlementAPI {
+  enabled: boolean;
+  scopes: string[];
+  rate_per_min: number;
+  burst: number;
+  keys_max: number;
+  streaming: boolean;
+}
+
+export interface EntitlementHistory {
+  retention_days: number; // 1 = 24h (Watch)
+  export_formats: string[];
+  export_scheduled: boolean;
+  reports: string;
+}
+
+export interface EntitlementSeats {
+  max: number;
+  roles: string[];
+}
+
+export interface EntitlementSupport {
+  tier: string;
+  response_hours: number;
+}
+
+export interface EntitlementExecution {
+  paper: true;
+  live: false;
+}
+
+export interface EntitlementStatus {
+  subscription: string; // none|trialing|active|past_due|paused|canceled
+  read_only: boolean;
+  trial_ends_at?: string;
+  effective_package: string;
+}
+
+export interface Entitlements {
+  schema_version: number;
+  package_code: string;
+  venues: EntitlementVenues;
+  rules: EntitlementRules;
+  alerts: EntitlementAlerts;
+  auto_paper: EntitlementAutoPaper;
+  api: EntitlementAPI;
+  history: EntitlementHistory;
+  seats: EntitlementSeats;
+  support: EntitlementSupport;
+  execution: EntitlementExecution;
+  white_label?: boolean;
+  status?: EntitlementStatus;
+}
+
 export interface Me {
   user_id: string;
   role: "ADMIN" | "OPERATOR" | "VIEWER";
+  platform_admin: boolean;
+  org: Org;
+  org_role: OrgRole;
+  risk_ack_required: boolean;
+  risk_ack_version: string;
+  entitlements: Entitlements;
   csrf_token?: string;
+}
+
+export interface OrgMember {
+  org_id: number;
+  user_id: string;
+  email?: string;
+  role: OrgRole;
+  suspended: boolean;
+  created_at: string;
+}
+
+export interface OrgGetResponse {
+  org: Org;
+  org_role: OrgRole;
+  members: OrgMember[] | null;
+  entitlements: Entitlements;
+}
+
+export interface BillingSubscription {
+  org_id: number;
+  paddle_customer_id?: string;
+  paddle_subscription_id?: string;
+  price_id?: string;
+  status: string; // trialing|active|past_due|paused|canceled
+  current_period_end?: string;
+  cancel_at_period_end: boolean;
+  past_due_since?: string;
+  scheduled_price_id?: string;
+  updated_at: string;
+}
+
+export interface BillingSubscriptionResponse {
+  org_id: number;
+  package_code: string;
+  trial_ends_at?: string;
+  configured: boolean;
+  status?: EntitlementStatus;
+  subscription?: BillingSubscription;
+}
+
+export interface BillingPrice {
+  price_id: string;
+  package_code: string;
+  billing_interval: "month" | "year";
+}
+
+export interface BillingPricesResponse {
+  prices: BillingPrice[] | null;
+  environment: string;
+  client_token: string;
+}
+
+export interface BillingCheckoutResult {
+  transaction_id?: string;
+  client_token?: string;
+  environment?: string;
+  pending: boolean;
+  proration?: string;
+  package_code: string;
 }
 
 export interface PaperStatus {
@@ -1300,6 +1486,9 @@ export interface ScreenerPerpsResponse {
 export interface ScreenerPerpsQuery {
   venue?: string;
   base?: string;
+  // Fraction, e.g. 0.10 for 10% APR (internal/screener/basis.go
+  // PerpFilters.MinCarryAPR) — callers taking a percent input from the
+  // operator must divide by 100 before passing it here.
   min_carry_apr?: number;
   limit?: number;
 }
@@ -1466,6 +1655,61 @@ export const api = {
         current_password: currentPassword,
         new_password: newPassword,
       }),
+  },
+  // me() is the same handler as auth.me() (GET /api/v1/me is an alias of
+  // GET /api/v1/auth/me, internal/api/auth.go handleMe) — a named
+  // top-level entry point per the T-081/T-082 wire shape (role,
+  // platform_admin, org, org_role, risk_ack_required, entitlements).
+  me: () => get<Me>("/api/v1/me"),
+  riskAck: {
+    // POST /api/v1/me/risk-ack {version} — version must equal the
+    // backend's current RiskAckVersion or this 409s with
+    // data.required_version (billing.md §1.4); callers should source it
+    // from the 403's required_version / me.risk_ack_version, not a
+    // hardcoded constant.
+    accept: (version: string) =>
+      post<{ org_id: number; risk_ack_version: string; risk_ack_at: string }>(
+        "/api/v1/me/risk-ack",
+        { version },
+      ),
+  },
+  org: {
+    get: () => get<OrgGetResponse>("/api/v1/org"),
+    members: () =>
+      get<{ members: OrgMember[] | null; seats_max: number }>(
+        "/api/v1/org/members",
+      ),
+    // No email-invite endpoint exists: POST /org/members takes an
+    // existing account's user_id (orgapi.go handleOrgMemberAdd) and
+    // /api/v1/users (email-based account creation) is platform-admin
+    // only. Self-service e-mail invites land with T-085.
+    addMember: (userId: string, role: OrgRole) =>
+      post<{ org_id: number; user_id: string; role: OrgRole }>(
+        "/api/v1/org/members",
+        { user_id: userId, role },
+      ),
+    // {id} in these two routes is the member's user_id, not a row id.
+    setMemberRole: (userId: string, role: OrgRole) =>
+      post<{ user_id: string; role: OrgRole }>(
+        `/api/v1/org/members/${encodeURIComponent(userId)}/role`,
+        { role },
+      ),
+    removeMember: (userId: string) =>
+      del<{ status: string }>(
+        `/api/v1/org/members/${encodeURIComponent(userId)}`,
+      ),
+  },
+  billing: {
+    subscription: () =>
+      get<BillingSubscriptionResponse>("/api/v1/billing/subscription"),
+    prices: () => get<BillingPricesResponse>("/api/v1/billing/prices"),
+    checkout: (priceId: string) =>
+      post<BillingCheckoutResult>("/api/v1/billing/checkout", {
+        price_id: priceId,
+      }),
+    portal: () => get<{ url: string }>("/api/v1/billing/portal"),
+    cancel: () =>
+      post<{ status: string; effective: string }>("/api/v1/billing/cancel"),
   },
   users: {
     list: async () =>

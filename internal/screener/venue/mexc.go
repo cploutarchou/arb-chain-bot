@@ -31,6 +31,13 @@ import (
 //     minVol, state 0 enabled|1 delivery|2 completed|3 offline|4 pause,
 //     apiAllowed
 //   - currency/chain status: /api/v3/capital/config/getall needs a key.
+//   - contract in-band rate limit: the contract API answers HTTP 200 with
+//     {"code":510,"msg":"Requests are too frequent"} instead of a 429
+//     (error-code table: 510 "Excessive frequency of requests",
+//     https://mexcdevelop.github.io/apidocs/contract_v1_en/#error-code,
+//     2026-08-27; no Retry-After is published). contractEnvelope() maps
+//     it to InBandRateLimit, counts it as rate_limited and pauses the
+//     venue gate for mexcInBandPause.
 //   - fees: UNVERIFIED from primary (promos vary; research §6.6 spot
 //     taker 0.05 %, USDT-M taker 0.02 %) → Verified=false.
 //
@@ -50,6 +57,10 @@ type mexcCollector struct {
 const (
 	mexcSpotBase = "https://api.mexc.com"
 	mexcPerpBase = "https://contract.mexc.com"
+	// mexcInBandCode is the contract API's in-body "too frequent" code.
+	mexcInBandCode = 510
+	// mexcInBandPause is our back-off for it: 5× the 2 s bulk window.
+	mexcInBandPause = 10 * time.Second
 )
 
 func newMEXC(opts Options) *mexcCollector {
@@ -89,7 +100,35 @@ type mexcContractEnvelope[T any] struct {
 	Success bool   `json:"success"`
 	Code    int    `json:"code"`
 	Message string `json:"message"`
-	Data    T      `json:"data"`
+	// Msg is the key the 510 answer actually uses (observed; the docs'
+	// error table shows the code and description only).
+	Msg  string `json:"msg"`
+	Data T      `json:"data"`
+}
+
+func (e mexcContractEnvelope[T]) text() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Msg
+}
+
+// contractEnvelope GETs one contract-API endpoint and applies the
+// envelope contract: code 510 → InBandRateLimit (gate paused, counted);
+// any other !success → plain error.
+func contractEnvelope[T any](ctx context.Context, c *mexcCollector, path string, out *mexcContractEnvelope[T]) error {
+	if err := c.c.getJSON(ctx, 1, c.perpBase, path, nil, out); err != nil {
+		return err
+	}
+	if out.Code == mexcInBandCode {
+		e := &InBandRateLimit{Venue: screener.VenueMEXC, Path: path, Code: out.Code, Msg: out.text(), Pause: mexcInBandPause}
+		c.gate.observeInBand(e)
+		return e
+	}
+	if !out.Success {
+		return fmt.Errorf("mexc: %s: code %d: %s", path, out.Code, out.text())
+	}
+	return nil
 }
 
 type mexcContract struct {
@@ -110,11 +149,8 @@ func (c *mexcCollector) fetchInstruments(ctx context.Context) ([]Instrument, err
 		return nil, err
 	}
 	var fut mexcContractEnvelope[[]mexcContract]
-	if err := c.c.getJSON(ctx, 1, c.perpBase, "/api/v1/contract/detail", nil, &fut); err != nil {
+	if err := contractEnvelope(ctx, c, "/api/v1/contract/detail", &fut); err != nil {
 		return nil, err
-	}
-	if !fut.Success {
-		return nil, fmt.Errorf("mexc: contract/detail: code %d: %s", fut.Code, fut.Message)
 	}
 	out := make([]Instrument, 0, len(spot.Symbols)+len(fut.Data))
 	for _, s := range spot.Symbols {
@@ -183,11 +219,8 @@ func (c *mexcCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 		return nil, err
 	}
 	var env mexcContractEnvelope[[]mexcTicker]
-	if err := c.c.getJSON(ctx, 1, c.perpBase, "/api/v1/contract/ticker", nil, &env); err != nil {
+	if err := contractEnvelope(ctx, c, "/api/v1/contract/ticker", &env); err != nil {
 		return nil, err
-	}
-	if !env.Success {
-		return nil, fmt.Errorf("mexc: contract/ticker: code %d: %s", env.Code, env.Message)
 	}
 	symbols := make([]string, 0, len(inst))
 	for s, in := range inst {
@@ -197,11 +230,8 @@ func (c *mexcCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 	}
 	for _, s := range c.rr.pick(symbols) {
 		var f mexcContractEnvelope[mexcFunding]
-		if err := c.c.getJSON(ctx, 1, c.perpBase, "/api/v1/contract/funding_rate/"+url.PathEscape(s), nil, &f); err != nil {
+		if err := contractEnvelope(ctx, c, "/api/v1/contract/funding_rate/"+url.PathEscape(s), &f); err != nil {
 			return nil, err
-		}
-		if !f.Success {
-			return nil, fmt.Errorf("mexc: funding_rate/%s: code %d: %s", s, f.Code, f.Message)
 		}
 		c.rr.set(f.Data.Symbol, fundingInfo{Rate: f.Data.FundingRate.Decimal, IntervalH: f.Data.CollectCycle,
 			NextAt: time.UnixMilli(f.Data.NextSettleTime), At: c.now()})

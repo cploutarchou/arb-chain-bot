@@ -88,8 +88,9 @@ type Collector interface {
 	// Fees returns the regular-tier taker fees and whether they are
 	// verified against the official fee page.
 	Fees() Fees
-	// RateLimited returns how many 429/418/403 responses this venue's
-	// gate has observed since construction.
+	// RateLimited returns how many rate-limit answers (HTTP 429/418/403,
+	// or an in-band code such as MEXC's 510 inside an HTTP 200) this
+	// venue's gate has observed since construction.
 	RateLimited() int
 }
 
