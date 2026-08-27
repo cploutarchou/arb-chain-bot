@@ -127,6 +127,12 @@ const post = <T>(path: string, body?: unknown) =>
     method: "POST",
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+const put = <T>(path: string, body?: unknown) =>
+  request<T>(path, {
+    method: "PUT",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 // ---- shapes (mirroring the Go API; decimals stay strings) ----------------
 
@@ -1141,6 +1147,300 @@ export interface CampaignRun {
   actor?: string;
 }
 
+// ---- Scanner Suite (T-065..T-072, docs/design/scanner-suite.md §7) --------
+// Every bps/price/liquidity/PnL/APR value is a decimal string, rendered
+// verbatim — the frontend never recomputes a spread, a fee, or a carry
+// number. Public market data only; nothing here ever signs a request or
+// resolves an exchange credential.
+
+export interface ScreenerVenueStatus {
+  id: string;
+  name: string;
+  enabled: boolean;
+  online: boolean;
+  last_poll_at?: string;
+  poll_ms: number;
+  spot_pairs: number;
+  perp_contracts: number;
+  rate_limited: boolean;
+  error?: string;
+}
+
+export interface ScreenerStatusView {
+  venues: ScreenerVenueStatus[] | null;
+  pairs_tracked: number;
+  spreads_per_sec: number;
+  poll_interval_s: number;
+  updated_at: string;
+}
+
+// "open" | "closed" | "unknown" — unknown means the venue requires an API
+// key to answer (never inferred from another source, per SKILL.md).
+export type ScreenerNetworkState = "open" | "closed" | "unknown";
+
+export interface ScreenerNetworks {
+  buy_withdraw: ScreenerNetworkState;
+  sell_deposit: ScreenerNetworkState;
+  reason?: string;
+}
+
+export interface ScreenerSpreadRow {
+  base: string;
+  quote: string;
+  buy_venue: string;
+  sell_venue: string;
+  buy_ask: string;
+  buy_ask_qty: string;
+  sell_bid: string;
+  sell_bid_qty: string;
+  spread_bps_gross: string;
+  spread_bps_net: string;
+  liquidity_quote: string;
+  lifetime_s: number;
+  first_seen_at: string;
+  buy_age_ms: number;
+  sell_age_ms: number;
+  buy_fee_bps: string;
+  sell_fee_bps: string;
+  networks: ScreenerNetworks;
+}
+
+export interface ScreenerSpreadsResponse {
+  rows: ScreenerSpreadRow[] | null;
+  total: number;
+  generated_at: string;
+  model: string;
+}
+
+// ScreenerSpreadsQuery mirrors the §7 query params exactly (wire names).
+// `base` is the one narrowing param the backend documents; the filter
+// card's bases_allow/bases_deny (below) are a client-side convention on
+// top of it — bases_allow is sent as this csv `base`, bases_deny is
+// applied to the fetched rows in the browser since §7 has no deny slot.
+export interface ScreenerSpreadsQuery {
+  min_spread_bps?: number;
+  min_liquidity?: number;
+  min_lifetime_s?: number;
+  buy?: string[];
+  sell?: string[];
+  quote?: string;
+  base?: string;
+  limit?: number;
+}
+
+function screenerSpreadsQuery(q: ScreenerSpreadsQuery): string {
+  const p = new URLSearchParams();
+  if (q.min_spread_bps !== undefined) p.set("min_spread_bps", String(q.min_spread_bps));
+  if (q.min_liquidity !== undefined) p.set("min_liquidity", String(q.min_liquidity));
+  if (q.min_lifetime_s !== undefined) p.set("min_lifetime_s", String(q.min_lifetime_s));
+  if (q.buy?.length) p.set("buy", q.buy.join(","));
+  if (q.sell?.length) p.set("sell", q.sell.join(","));
+  if (q.quote) p.set("quote", q.quote);
+  if (q.base) p.set("base", q.base);
+  if (q.limit !== undefined) p.set("limit", String(q.limit));
+  return p.toString();
+}
+
+// ScreenerFilterSet is the filter-card's own shape — saved/loaded as a
+// named template. Superset of ScreenerSpreadsQuery: bases_allow maps to
+// the `base` query param, bases_deny is client-side only (see above).
+export interface ScreenerFilterSet {
+  buy_venues?: string[];
+  sell_venues?: string[];
+  quote?: string;
+  min_spread_bps?: number;
+  min_liquidity?: number;
+  min_lifetime_s?: number;
+  bases_allow?: string[];
+  bases_deny?: string[];
+}
+
+export interface ScreenerTemplate {
+  id: string;
+  name: string;
+  filters: ScreenerFilterSet;
+}
+
+export interface ScreenerPerpRow {
+  venue: string;
+  base: string;
+  quote: string;
+  spot_mid: string;
+  perp_mark: string;
+  perp_index: string;
+  basis_bps: string;
+  funding_rate: string;
+  predicted_funding_rate: string;
+  funding_interval_h: number;
+  next_funding_at: string;
+  carry_apr_gross: string;
+  carry_apr_net: string;
+  spot_fee_bps: string;
+  perp_fee_bps: string;
+  age_ms: number;
+  // hold_days_assumed is not in §7's row shape but is referenced by the
+  // task copy ("30-day hold assumption") — render the note only when the
+  // backend actually sends it, never a hardcoded day count.
+  hold_days_assumed?: number;
+}
+
+export interface ScreenerPerpsResponse {
+  rows: ScreenerPerpRow[] | null;
+  generated_at: string;
+}
+
+export interface ScreenerPerpsQuery {
+  venue?: string;
+  base?: string;
+  min_carry_apr?: number;
+  limit?: number;
+}
+
+export interface ScreenerFundingPoint {
+  at: string;
+  rate: string;
+}
+
+export interface ScreenerFundingSeries {
+  venue: string;
+  base: string;
+  points: ScreenerFundingPoint[] | null;
+}
+
+export interface ScreenerFundingResponse {
+  series: ScreenerFundingSeries[] | null;
+}
+
+export interface ScreenerCalculatorOverrideFees {
+  buy_fee_bps?: string;
+  sell_fee_bps?: string;
+}
+
+export interface ScreenerCalculatorRequest {
+  base: string;
+  quote: string;
+  buy_venue: string;
+  sell_venue: string;
+  size_quote: string;
+  transfer_fee_quote?: string;
+  override_fees?: ScreenerCalculatorOverrideFees;
+}
+
+export interface ScreenerCalculatorResult {
+  buy_ask: string;
+  sell_bid: string;
+  size_base: string;
+  gross: string;
+  fees_buy: string;
+  fees_sell: string;
+  transfer_fee: string;
+  net: string;
+  net_bps: string;
+  liquidity_ok: boolean;
+}
+
+export interface ScreenerVenueSettings {
+  enabled: boolean;
+  spot_taker_bps: string;
+  perp_taker_bps: string;
+  perps_enabled: boolean;
+}
+
+export interface ScreenerPaperSettings {
+  balances: Record<string, Record<string, string>>;
+}
+
+export interface ScreenerSettingsDoc {
+  poll_interval_s: number;
+  min_liquidity_quote: string;
+  venues: Record<string, ScreenerVenueSettings>;
+  paper: ScreenerPaperSettings;
+}
+
+export interface ScreenerSettingsSnapshot {
+  version: number;
+  created_at: string;
+  created_by?: string;
+  settings: ScreenerSettingsDoc;
+  field_timing: Record<string, string>;
+}
+
+export type ScreenerRuleKind = "spread" | "carry" | "basis";
+
+export interface ScreenerRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: ScreenerRuleKind;
+  min_spread_bps?: string;
+  min_carry_apr?: string;
+  min_liquidity_quote: string;
+  min_lifetime_s: number;
+  buy_venues: string[];
+  sell_venues: string[];
+  quotes: string[];
+  bases_allow: string[];
+  bases_deny: string[];
+  cooldown_s: number;
+  telegram: boolean;
+  // Opt-in automatic PAPER execution (design §4) — LIVE stays disabled by
+  // design regardless of this flag; it only ever books to the paper ledger.
+  auto_paper: boolean;
+  paper_size_quote: string;
+}
+
+export type ScreenerRuleInput = Omit<ScreenerRule, "id">;
+
+export interface ScreenerEvent {
+  id: string;
+  rule_id: string;
+  kind: string;
+  opened_at: string;
+  closed_at?: string;
+  lifetime_s: number;
+  base: string;
+  quote: string;
+  buy_venue: string;
+  sell_venue: string;
+  peak_net_bps: string;
+  telegram_sent: boolean;
+  paper_execution_id?: string;
+}
+
+export interface ScreenerAutoPaperRuleSummary {
+  rule_id: string;
+  alerts: number;
+  executed: number;
+  skipped: Record<string, number>;
+  net_pnl_quote: string;
+  hit_rate: string;
+  mean_lifetime_s: number;
+}
+
+// ScreenerAutoPaperPosition: §7 elides the position row shape
+// ("positions: [...]") — every field beyond id is optional and an
+// unrecognized backend field still renders via the index signature,
+// mirroring the Report interface's forward-compat convention above.
+export interface ScreenerAutoPaperPosition {
+  id: string;
+  rule_id?: string;
+  strategy?: string;
+  base?: string;
+  quote?: string;
+  buy_venue?: string;
+  sell_venue?: string;
+  status?: string;
+  opened_at?: string;
+  closed_at?: string;
+  net_pnl_quote?: string;
+  [field: string]: unknown;
+}
+
+export interface ScreenerAutoPaperResponse {
+  positions: ScreenerAutoPaperPosition[] | null;
+  summary: { per_rule: ScreenerAutoPaperRuleSummary[] | null };
+}
+
 // ---- endpoint groups -----------------------------------------------------
 
 export const api = {
@@ -1195,6 +1495,63 @@ export const api = {
   },
   scanner: {
     status: () => get<ScannerStatus>("/api/v1/scanner/status"),
+  },
+  // Scanner Suite (T-065..T-072): cross-venue spot screener, perpetuals/
+  // funding monitor, calculator, alert rules, automatic PAPER execution.
+  // Reads need screener:view (VIEWER+); mutations need screener:config
+  // (ADMIN) + CSRF + parent_version where versioned (design §7).
+  screener: {
+    status: () => get<ScreenerStatusView>("/api/v1/screener/status"),
+    spreads: (q: ScreenerSpreadsQuery) =>
+      get<ScreenerSpreadsResponse>(`/api/v1/screener/spreads?${screenerSpreadsQuery(q)}`),
+    perpetuals: (q: ScreenerPerpsQuery) => {
+      const p = new URLSearchParams();
+      if (q.venue) p.set("venue", q.venue);
+      if (q.base) p.set("base", q.base);
+      if (q.min_carry_apr !== undefined) p.set("min_carry_apr", String(q.min_carry_apr));
+      if (q.limit !== undefined) p.set("limit", String(q.limit));
+      return get<ScreenerPerpsResponse>(`/api/v1/screener/perpetuals?${p.toString()}`);
+    },
+    funding: (base: string, venues: string[] = [], hours = 72) => {
+      const p = new URLSearchParams();
+      if (base) p.set("base", base);
+      if (venues.length) p.set("venues", venues.join(","));
+      p.set("hours", String(hours));
+      return get<ScreenerFundingResponse>(`/api/v1/screener/funding?${p.toString()}`);
+    },
+    calculator: (req: ScreenerCalculatorRequest) =>
+      post<ScreenerCalculatorResult>("/api/v1/screener/calculator", req),
+    settings: {
+      current: () => get<ScreenerSettingsSnapshot>("/api/v1/screener/settings"),
+      // parent_version required (T-058 optimistic concurrency), same
+      // convention as api.platform.apply / api.config.apply above.
+      apply: (settings: ScreenerSettingsDoc, parentVersion: number) =>
+        post<ScreenerSettingsSnapshot>("/api/v1/screener/settings", {
+          settings,
+          parent_version: parentVersion,
+        }),
+    },
+    rules: {
+      list: async () => (await get<{ rules: ScreenerRule[] | null }>("/api/v1/screener/rules")).rules ?? [],
+      create: (rule: ScreenerRuleInput) => post<{ rule: ScreenerRule }>("/api/v1/screener/rules", rule).then((r) => r.rule),
+      update: (id: string, rule: ScreenerRuleInput) =>
+        put<{ rule: ScreenerRule }>(`/api/v1/screener/rules/${encodeURIComponent(id)}`, rule).then((r) => r.rule),
+      remove: (id: string) => del<{ status: string }>(`/api/v1/screener/rules/${encodeURIComponent(id)}`),
+    },
+    events: (ruleId = "", limit = 100) => {
+      const p = new URLSearchParams();
+      if (ruleId) p.set("rule_id", ruleId);
+      p.set("limit", String(limit));
+      return get<{ events: ScreenerEvent[] | null }>(`/api/v1/screener/events?${p.toString()}`);
+    },
+    autoPaper: () => get<ScreenerAutoPaperResponse>("/api/v1/screener/auto-paper"),
+    templates: {
+      list: async () =>
+        (await get<{ templates: ScreenerTemplate[] | null }>("/api/v1/screener/templates")).templates ?? [],
+      create: (name: string, filters: ScreenerFilterSet) =>
+        post<{ template: ScreenerTemplate }>("/api/v1/screener/templates", { name, filters }).then((r) => r.template),
+      remove: (id: string) => del<{ status: string }>(`/api/v1/screener/templates/${encodeURIComponent(id)}`),
+    },
   },
   opportunities: {
     recent: (limit = 20) =>

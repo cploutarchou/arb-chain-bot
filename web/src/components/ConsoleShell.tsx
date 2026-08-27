@@ -7,6 +7,7 @@ import { usePoll, type PollState } from "@/lib/usePoll";
 import { connectHub, type HubMessage } from "@/lib/ws";
 import { useAuth, can } from "@/lib/auth";
 import { Button, ConfirmDialog } from "@/components/ui";
+import { MoonIcon, NavIcon, SunIcon } from "@/components/icons";
 
 // Full navigation per SKILL.md §31, grouped per the UX audit's five-group
 // IA (console-ux-audit.md §2). Sections without a page yet render as
@@ -69,7 +70,129 @@ const GROUPS: NavGroup[] = [
       { label: "Users & Security", href: "/settings#users" },
     ],
   },
+  // Scanner Suite (T-065..T-072, docs/design/scanner-suite.md §5): cross-
+  // venue spot screener, perpetuals/funding monitor, spreads calculator,
+  // alert rules, automatic PAPER execution — public market data only.
+  {
+    title: "Scanner Suite",
+    items: [
+      { label: "Screener", href: "/screener" },
+      { label: "Perpetuals", href: "/perpetuals" },
+      { label: "Funding", href: "/funding" },
+      { label: "Calculator", href: "/calculator" },
+      { label: "Alert Rules", href: "/scanner-alerts" },
+      { label: "Auto-Paper", href: "/auto-paper" },
+    ],
+  },
 ];
+
+// GROUP_STORAGE_KEY persists which nav groups are collapsed, per
+// operator browser (arbitragescanner-style icon sidebar, design §0 item
+// 6 / §5). Reading/writing localStorage is wrapped in try/catch — a
+// private-mode or quota failure degrades to "always expanded", never a
+// crash.
+const GROUP_STORAGE_KEY = "arb.nav.collapsed-groups";
+
+function loadCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(GROUP_STORAGE_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as unknown;
+    return Array.isArray(arr) ? new Set(arr.filter((v): v is string => typeof v === "string")) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedGroups(groups: Set<string>) {
+  try {
+    localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify([...groups]));
+  } catch {
+    // Private mode / quota exceeded — the toggle still works for this
+    // page load, it just won't persist across a reload.
+  }
+}
+
+// useCollapsedGroups: state loads from localStorage in an effect (never
+// during render — that would be a hydration mismatch between server and
+// client markup), defaults to fully expanded, and never actually
+// collapses the group containing the current page so the active link is
+// always reachable without an extra click.
+function useCollapsedGroups(activeGroupTitle: string | undefined) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setCollapsed(loadCollapsedGroups());
+  }, []);
+  const toggle = (title: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      saveCollapsedGroups(next);
+      return next;
+    });
+  };
+  const isCollapsed = (title: string) => collapsed.has(title) && title !== activeGroupTitle;
+  return { isCollapsed, toggle };
+}
+
+// useThemeToggle: light/dark persisted in localStorage as data-theme on
+// <html> (globals.css §"theme tokens" — :root is light by default,
+// :root[data-theme="dark"] and the prefers-color-scheme media query both
+// carry the dark values). No explicit choice yet: this only reads state
+// for the toggle's own icon/aria-pressed, it does not write an attribute
+// — the CSS media query stays authoritative until the operator picks a
+// side. try/catch around every localStorage call (private mode/quota).
+function useThemeToggle() {
+  const [theme, setThemeState] = useState<"light" | "dark">("dark");
+  useEffect(() => {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem("arb.theme");
+    } catch {
+      stored = null;
+    }
+    if (stored === "light" || stored === "dark") {
+      setThemeState(stored);
+      document.documentElement.setAttribute("data-theme", stored);
+      return;
+    }
+    const prefersDark =
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        : true;
+    setThemeState(prefersDark ? "dark" : "light");
+  }, []);
+  const toggle = () => {
+    setThemeState((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try {
+        localStorage.setItem("arb.theme", next);
+      } catch {
+        // Private mode / quota exceeded — the attribute still applies
+        // for the remainder of this session.
+      }
+      return next;
+    });
+  };
+  return { theme, toggle };
+}
+
+function ThemeToggle() {
+  const { theme, toggle } = useThemeToggle();
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      className="rounded border border-[var(--border)] p-1.5 text-[var(--text-dim)] hover:text-[var(--text)]"
+    >
+      {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+    </button>
+  );
+}
 
 // modeCopy maps the operational mode to its persistent-banner text and
 // tone, per the audit's status vocabulary (§4.1). PAPER=ok(green),
@@ -317,59 +440,77 @@ function RestartBanner() {
 // the sidebar collapses to a top bar with a hamburger revealing this
 // same nav as a full-height overlay, closing on nav or outside-tap).
 function NavContent({ active, role, onNavigate }: { active: string; role?: string; onNavigate?: () => void }) {
+  const activeGroupTitle = GROUPS.find((g) => g.items.some((i) => i.label === active))?.title;
+  const { isCollapsed, toggle } = useCollapsedGroups(activeGroupTitle);
   return (
     <>
       <nav className="flex-1 space-y-3 overflow-y-auto text-[13px]">
-        {GROUPS.map((group) => (
-          <div key={group.title}>
-            <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
-              {group.title}
+        {GROUPS.map((group) => {
+          const collapsedNow = isCollapsed(group.title);
+          return (
+            <div key={group.title}>
+              <button
+                type="button"
+                onClick={() => toggle(group.title)}
+                aria-expanded={!collapsedNow}
+                className="mb-1 flex w-full items-center justify-between rounded px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)] hover:text-[var(--text)]"
+              >
+                <span>{group.title}</span>
+                <span aria-hidden className={`transition-transform ${collapsedNow ? "-rotate-90" : ""}`}>
+                  ▾
+                </span>
+              </button>
+              {!collapsedNow && (
+                <div className="space-y-0.5">
+                  {group.items.map((item) => {
+                    // Audit Log is visible to OPERATOR/ADMIN only (backend
+                    // PermViewAudit); annotate rather than silently 403 a
+                    // VIEWER who clicks through.
+                    const restrictedForViewer = item.label === "Audit Log" && role === "VIEWER";
+                    if (item.href && !restrictedForViewer) {
+                      return (
+                        <Link
+                          key={item.label}
+                          href={item.href}
+                          onClick={onNavigate}
+                          className={`flex items-center gap-2 rounded px-2 py-1 ${
+                            active === item.label
+                              ? "bg-[var(--bg-raised)] text-[var(--text)]"
+                              : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
+                          }`}
+                        >
+                          <NavIcon label={item.label} />
+                          {item.label}
+                        </Link>
+                      );
+                    }
+                    return (
+                      <span
+                        key={item.label}
+                        title={restrictedForViewer ? "Requires OPERATOR or ADMIN" : item.note ?? "Not implemented yet"}
+                        className="flex cursor-not-allowed items-center gap-2 rounded px-2 py-1 text-[var(--text-dim)] opacity-40"
+                      >
+                        <NavIcon label={item.label} />
+                        {item.label}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <div className="space-y-0.5">
-              {group.items.map((item) => {
-                // Audit Log is visible to OPERATOR/ADMIN only (backend
-                // PermViewAudit); annotate rather than silently 403 a
-                // VIEWER who clicks through.
-                const restrictedForViewer = item.label === "Audit Log" && role === "VIEWER";
-                if (item.href && !restrictedForViewer) {
-                  return (
-                    <Link
-                      key={item.label}
-                      href={item.href}
-                      onClick={onNavigate}
-                      className={`block rounded px-2 py-1 ${
-                        active === item.label
-                          ? "bg-[var(--bg-raised)] text-[var(--text)]"
-                          : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-                      }`}
-                    >
-                      {item.label}
-                    </Link>
-                  );
-                }
-                return (
-                  <span
-                    key={item.label}
-                    title={restrictedForViewer ? "Requires OPERATOR or ADMIN" : item.note ?? "Not implemented yet"}
-                    className="block cursor-not-allowed rounded px-2 py-1 text-[var(--text-dim)] opacity-40"
-                  >
-                    {item.label}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
       <Link
         href="/settings"
         onClick={onNavigate}
-        className={`mt-3 block rounded px-2 py-1 text-[13px] ${
+        className={`mt-3 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
           active === "Settings"
             ? "bg-[var(--bg-raised)] text-[var(--text)]"
             : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
         }`}
       >
+        <NavIcon label="Settings" />
         Settings
       </Link>
     </>
@@ -388,15 +529,18 @@ export function ConsoleShell({ children, active }: { children: ReactNode; active
           overlay; the desktop sidebar below is hidden at this width. */}
       <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 md:hidden">
         <span className="text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</span>
-        <button
-          type="button"
-          aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
-          aria-expanded={mobileOpen}
-          onClick={() => setMobileOpen((v) => !v)}
-          className="rounded border border-[var(--border)] px-2 py-1 text-[13px] text-[var(--text)]"
-        >
-          {mobileOpen ? "Close ✕" : "Menu ☰"}
-        </button>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <button
+            type="button"
+            aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen((v) => !v)}
+            className="rounded border border-[var(--border)] px-2 py-1 text-[13px] text-[var(--text)]"
+          >
+            {mobileOpen ? "Close ✕" : "Menu ☰"}
+          </button>
+        </div>
       </div>
       {mobileOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
@@ -411,8 +555,11 @@ export function ConsoleShell({ children, active }: { children: ReactNode; active
         </div>
       )}
 
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 md:flex">
-        <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</div>
+      <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 md:flex">
+        <div className="mb-2 flex items-center justify-between px-2">
+          <span className="text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</span>
+          <ThemeToggle />
+        </div>
         <div className="px-2">
           <ModeBanner status={modeState.status} configured={modeState.configured} />
         </div>
