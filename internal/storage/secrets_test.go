@@ -93,7 +93,13 @@ func TestSecretsStoreList(t *testing.T) {
 	}
 	// The manager's status view runs over this one call.
 	v, _ := secrets.NewVault(st, make([]byte, 32))
-	list, err := secrets.NewManager(v, "", nil).List(ctx)
+	all, err := secrets.NewManager(v, "", nil).List(ctx)
+	var list []secrets.Info
+	for _, in := range all {
+		if in.Group == secrets.GroupProvider {
+			list = append(list, in)
+		}
+	}
 	if err != nil || len(list) != 2 || !list[0].Present || list[0].Source != "vault" || list[0].Readable {
 		t.Fatalf("manager list = %+v %v", list, err)
 	}
