@@ -36,7 +36,7 @@ var DefaultLimitToleranceBps = decimal.NewFromInt(20)
 func legRNG(seed int64, key string, leg int) *rand.Rand {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(key))
-	_, _ = h.Write([]byte{byte(leg)})
+	_, _ = h.Write([]byte{byte(leg)}) //nolint:gosec // leg is 1..3 by construction
 	return rand.New(rand.NewSource(seed ^ int64(h.Sum64()))) //nolint:gosec // simulation jitter, not crypto
 }
 
