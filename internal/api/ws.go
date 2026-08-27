@@ -23,7 +23,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			if origin == "" {
 				return true // non-browser client with a valid session cookie
 			}
-			return origin == s.cfg.AllowedOrigin || origin == "https://"+r.Host || origin == "http://"+r.Host
+			// platform.allowed_origin is hot (D7); the same-host clauses are
+			// unconditional so a bad value can never lock a same-origin
+			// console out.
+			return origin == s.AllowedOrigin() || origin == "https://"+r.Host || origin == "http://"+r.Host
 		},
 	}
 	conn, err := up.Upgrade(w, r, nil)

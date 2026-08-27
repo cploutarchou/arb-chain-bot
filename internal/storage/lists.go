@@ -95,6 +95,36 @@ func (s *Store) ListCycles(ctx context.Context, sessionID string, limit int) ([]
 	return out, rows.Err()
 }
 
+// ListCyclesByTriangle returns a triangle's settled cycles newest-first
+// (BL-26's "recent cycles" panel).
+func (s *Store) ListCyclesByTriangle(ctx context.Context, triangleID string, limit int) ([]CycleRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 20
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT c.id, c.session_id, c.opportunity_id, c.outcome,
+		       c.pnl_amount::text, c.pnl_asset, c.slippage_bps::text,
+		       c.started_at, c.settled_at
+		FROM paper_cycles c
+		JOIN opportunities o ON o.id = c.opportunity_id
+		WHERE o.triangle_id = $1
+		ORDER BY c.started_at DESC LIMIT $2`, triangleID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CycleRow
+	for rows.Next() {
+		var r CycleRow
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.OpportunityID, &r.Outcome,
+			&r.PnLAmount, &r.PnLAsset, &r.SlippageBps, &r.StartedAt, &r.SettledAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // OrderRow is one simulated order (with its fill columns inline).
 type OrderRow struct {
 	ID       string  `json:"id"`
@@ -126,6 +156,47 @@ func (s *Store) ListOrders(ctx context.Context, cycleID string) ([]OrderRow, err
 		var r OrderRow
 		if err := rows.Scan(&r.ID, &r.CycleID, &r.LegNo, &r.MarketID, &r.Side,
 			&r.Status, &r.Qty, &r.Filled, &r.AvgPrice, &r.Fee, &r.FeeAsset); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RiskEventRow is one persisted risk event (BL-31): a circuit-breaker
+// transition or a risk-rejected opportunity.
+type RiskEventRow struct {
+	ID            string    `json:"id"`
+	TS            time.Time `json:"ts"`
+	Kind          string    `json:"kind"`
+	Subject       *string   `json:"subject,omitempty"`
+	LimitName     *string   `json:"limit_name,omitempty"`
+	Observed      *string   `json:"observed,omitempty"`
+	Threshold     *string   `json:"threshold,omitempty"`
+	Action        *string   `json:"action,omitempty"`
+	BreakerState  *string   `json:"breaker_state,omitempty"`
+	CorrelationID *string   `json:"correlation_id,omitempty"`
+}
+
+// ListRiskEvents returns risk_events rows newest-first within [from, to).
+func (s *Store) ListRiskEvents(ctx context.Context, from, to time.Time, limit int) ([]RiskEventRow, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT id, ts, kind, subject, limit_name, observed, threshold, action, breaker_state, correlation_id
+		FROM risk_events
+		WHERE ts >= $1 AND ts < $2
+		ORDER BY ts DESC LIMIT $3`, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RiskEventRow
+	for rows.Next() {
+		var r RiskEventRow
+		if err := rows.Scan(&r.ID, &r.TS, &r.Kind, &r.Subject, &r.LimitName, &r.Observed,
+			&r.Threshold, &r.Action, &r.BreakerState, &r.CorrelationID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -7,14 +7,20 @@ import (
 )
 
 // readModel adapts engine state to the API's read groups. Every method
-// is nil-safe before readiness and answers honest emptiness.
+// is nil-safe before readiness and answers honest emptiness. The
+// message-rate sampler now lives on the Engine (BL-18 review P2-1):
+// readModel only ever reads it, so any number of concurrent pollers
+// (multiple browser tabs, web + Telegram) see the same value instead of
+// each stealing part of the previous poller's delta window.
 type readModel struct {
 	e *Engine
 	s *strategy.Service
 }
 
 // NewReadModel wires the adapter (exported for component assembly).
-func NewReadModel(e *Engine, s *strategy.Service) readModel { return readModel{e: e, s: s} }
+func NewReadModel(e *Engine, s *strategy.Service) readModel {
+	return readModel{e: e, s: s}
+}
 
 func (r readModel) RecentOpportunities(limit int) any {
 	return r.e.RecentOpportunities(limit)
@@ -116,12 +122,21 @@ func (r readModel) Health() any {
 	feed := r.e.feed
 	r.e.mu.RUnlock()
 	if feed != nil {
-		out["feed"] = map[string]int64{
-			"frames":     feed.Stats.Frames.Load(),
-			"reconnects": feed.Stats.Reconnects.Load(),
-			"api_errors": feed.Stats.APIErrors.Load(),
-			"resyncs":    feed.Stats.Resyncs.Load(),
-			"seq_gaps":   feed.Stats.SeqGaps.Load(),
+		frames := feed.Stats.Frames.Load()
+		var msgsPerSec float64
+		if rate := r.e.currentMsgRate(); rate != nil {
+			msgsPerSec, _ = rate.current()
+		}
+		out["feed"] = map[string]any{
+			"frames":       frames,
+			"reconnects":   feed.Stats.Reconnects.Load(),
+			"api_errors":   feed.Stats.APIErrors.Load(),
+			"resyncs":      feed.Stats.Resyncs.Load(),
+			"seq_gaps":     feed.Stats.SeqGaps.Load(),
+			"msgs_per_sec": msgsPerSec,
+		}
+		if window := r.e.currentLatency(); window != nil {
+			out["feed"].(map[string]any)["latency_ms"] = window.Snapshot()
 		}
 		if feed.Books != nil {
 			now := time.Now()
@@ -140,6 +155,26 @@ func (r readModel) Health() any {
 	}
 	if st.Paper != nil {
 		out["paper"] = st.Paper
+	}
+	// BL-18: queue depths (outbox persistence, paper's inbound event
+	// channel) — the engine-derived half; recorder queue depth and
+	// process/DB stats are assembled at the API layer, which has no
+	// engine dependency to reach them.
+	queues := map[string]any{}
+	if ob := r.e.currentOutbox(); ob != nil {
+		queues["outbox"] = map[string]any{
+			"depth": ob.Depth(), "capacity": ob.Capacity(),
+			"dropped": ob.Dropped(), "written": ob.Written(),
+		}
+	}
+	r.e.mu.RLock()
+	pap := r.e.pap
+	r.e.mu.RUnlock()
+	if pap != nil {
+		queues["paper"] = map[string]any{"depth": pap.QueueDepth(), "capacity": pap.QueueCapacity()}
+	}
+	if len(queues) > 0 {
+		out["queues"] = queues
 	}
 	return out
 }

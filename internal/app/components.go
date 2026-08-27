@@ -2,19 +2,29 @@ package app
 
 import (
 	"context"
-	"log/slog"
-	"time"
-
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/api"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/campaign"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 	"github.com/cploutarchou/arb-chain-bot/internal/metrics"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
+	"github.com/cploutarchou/arb-chain-bot/internal/paper"
+	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
+	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
+	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 	"github.com/cploutarchou/arb-chain-bot/internal/telegram"
@@ -42,6 +52,15 @@ const (
 func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Component {
 	var others []Component
 	var engine *Engine
+	var supervisor *Supervisor
+	var botRunning atomic.Bool
+	// bot/push/telegramAllow back GET /api/v1/telegram/status (BL-21);
+	// nil (no token or empty allowlist) reports enabled:false honestly.
+	var bot *telegram.Bot
+	var push *telegram.PushSink
+	var telegramAllow *allowSet
+	var telegramReason atomic.Value // string: why the bot is not running (T-059 §4.2)
+	telegramReason.Store("")
 
 	// Persistence is optional in dev (empty DSN = in-memory only). A
 	// configured-but-unreachable database is a hard failure at boot:
@@ -63,6 +82,32 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	}
 
 	stratSvc := buildStrategy(log, store)
+	platformSvc, err := buildPlatform(log, store, cfg)
+	if err != nil {
+		// P2-4: matches the storage.Open hard-failure shape above — a
+		// document that failed to load must not silently become an
+		// env-reseeded MemoryStore, discarding whatever was persisted.
+		log.Error("platform settings load failed; refusing to start without a validated settings document", "error", err)
+		return []Component{ComponentFunc{ComponentName: "platform-settings", Fn: func(context.Context) error { return err }}}
+	}
+	if store != nil {
+		// API-profile fallback catalog; overridden below by engineCatalog
+		// (preferred) when this profile actually runs an engine.
+		platformSvc.Catalog = storage.Catalog{S: store}
+	}
+
+	// platform.log_level is hot (T-059 D6): the process-wide LevelVar
+	// follows the document from here on; ARB_LOG_LEVEL seeded v1 only.
+	platformSvc.Subscribe(func(snap platform.Snapshot) {
+		if err := SetLogLevel(snap.Settings.Platform.LogLevel); err != nil {
+			log.Warn("platform.log_level not applied", "error", err)
+		}
+	})
+
+	// Secrets vault (T-060): vault-first, env-fallback resolution for the
+	// two registry entries. A missing/invalid ARB_SECRET_KEY closes the
+	// vault; the platform keeps running on env-provided secrets.
+	secretsMgr := buildSecrets(log, store, cfg)
 
 	// Metrics are always built (near-zero idle cost); a registration
 	// failure logs and the platform runs unobserved rather than not at all.
@@ -100,26 +145,52 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	}
 	notify.RegisterAlways(center)
 
-	// AI advisor: provider per config. It is an analyst off the hot
-	// path; absence just leaves the routes and commands reporting so.
-	var aiSvc *ai.Service
-	if adv := buildAdvisor(cfg, log); adv != nil {
-		aiSvc = &ai.Service{
-			Advisor: adv, Strategy: stratSvc,
-			Notify: notify.Notify, Log: log, IDGen: newULID,
+	// AI advisor (T-059 D4): the Service always exists, behind an
+	// ai.Switch holding a possibly-nil provider, so an enable at runtime
+	// takes effect without a redeploy. The platform-settings subscriber
+	// rebuilds the provider through buildAdvisor (resolving the key via
+	// the secrets chain) on every swap; a key written to the vault
+	// applies immediately.
+	aiSwitch := &ai.Switch{}
+	aiSvc := &ai.Service{
+		Advisor: aiSwitch, Strategy: stratSvc,
+		Notify: notify.Notify, Log: log, IDGen: newULID,
+		Limits: func() ai.Budget {
+			b := platformSvc.Current().Settings.AI.Budget
+			return ai.Budget{MaxAnalysesPerDay: b.MaxAnalysesPerDay, MaxOutputTokens: b.MaxOutputTokens}
+		},
+	}
+	if store != nil {
+		aiSvc.Store = store.AI()
+	}
+	if mtr != nil {
+		if err := mtr.RegisterAI(aiSvc.Requests, aiSvc.Failures); err != nil {
+			log.Error("ai metrics registration failed", "error", err)
 		}
-		if store != nil {
-			aiSvc.Store = store.AI()
+	}
+	aiState := &aiRuntime{}
+	applier := &aiApplier{log: log, sw: aiSwitch, state: aiState, src: secretsMgr}
+	// Boot: resolve synchronously (Current() takes no lock) so the status
+	// route and the scheduler see a built advisor before Run starts.
+	applier.apply(platformSvc.Current().Settings.AI, applier.next(platformSvc.Current().Settings.AI))
+	// Swaps: the subscriber runs INSIDE the platform writer lock, so it
+	// must not do the vault round trip itself. It compares the ai section
+	// with the last one applied and, only when it changed, hands the
+	// rebuild to a goroutine; a generation counter drops stale results
+	// (P3-1/P3-3).
+	platformSvc.Subscribe(func(snap platform.Snapshot) { applier.request(snap.Settings.AI, false) })
+	// A key written to (or removed from) the vault re-resolves the
+	// advisor at once — applies:"immediately" is literally true. The
+	// Telegram token is read once at boot (D5) and is not re-applied.
+	secretsMgr.OnChange = func(name string) {
+		if name == "anthropic_api_key" {
+			applier.request(platformSvc.Current().Settings.AI, true)
 		}
-		if mtr != nil {
-			if err := mtr.RegisterAI(aiSvc.Requests, aiSvc.Failures); err != nil {
-				log.Error("ai metrics registration failed", "error", err)
-			}
-		}
-		log.Info("ai advisor enabled", "provider", adv.Name(), "model", adv.Model())
 	}
 
 	var reportGen *reporting.Generator
+	var campaigns *campaign.Runner
+	var replays *replay.Runner
 
 	includeEngine := p == ProfileFull || p == ProfileScanner
 	if includeEngine {
@@ -129,15 +200,25 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		engine.Metrics = mtr
 		engine.Notifier = notify
 		engine.Center = center
-		others = append(others, engine)
+		// The engine is no longer an app.Component in its own right: the
+		// supervisor built below re-enters Engine.Run across restarts
+		// (T-057 D4 — one stable *Engine value, never replaced). Every
+		// existing seam that closes over `engine` (recorderProxy,
+		// paperProxy, ScannerStatus, Reads, engine.Hub, AIInput,
+		// telegramServices) keeps working unchanged.
+		platformSvc.Catalog = engineCatalog{engine} // preferred over the storage fallback set above
 
-		if aiSvc != nil {
-			others = append(others, &ai.Scheduler{
-				Service:  aiSvc,
-				InputFor: engine.AIInput,
-				Log:      log,
-			})
-		}
+		// Always appended (D4): the cadence follows ai.schedule at every
+		// wake, and a disabled advisor makes each fire a cheap skip.
+		others = append(others, &ai.Scheduler{
+			Service:  aiSvc,
+			InputFor: engine.AIInput,
+			Log:      log,
+			Cadence: func() ai.Cadence {
+				c := platformSvc.Current().Settings.AI.Schedule
+				return ai.Cadence{HourlyMinutes: c.HourlyMinutes, DailyHours: c.DailyHours, WeeklyHours: c.WeeklyHours}
+			},
+		})
 
 		// Daily/weekly reports: detailed version persisted (when the DB
 		// is on), concise digest through the notification router.
@@ -152,23 +233,72 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		others = append(others, &reporting.Scheduler{Generator: reportGen, Log: log})
 
+		// §80 campaign runner: in-process replacement for `make campaign`;
+		// needs persisted market metadata and the stream table.
+		if store != nil {
+			campaigns = &campaign.Runner{
+				Sources: store, Store: store,
+				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
+			}
+			others = append(others, campaigns)
+
+			// Console-driven replays (BL-17): one baseline backtest.Run
+			// against a recording, optionally pinned to a persisted
+			// strategy version — the console's "replay this recording
+			// through the CURRENT (or a specific) strategy" button.
+			replays = &replay.Runner{
+				Sources: store, Strategy: stratSvc, Store: store,
+				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
+			}
+			others = append(others, replays)
+		}
+
+		// Telegram allowlist: one live set (T-057), fed by the platform
+		// settings document — env is a first-boot seed only (D5). Both
+		// Bot.Allowed and PushSink.Targets read the SAME set, so
+		// revoking a user takes effect for commands and pushes together
+		// (updating only one would leave a revoked user still receiving
+		// alerts).
+		allow := &allowSet{}
+		allow.Set(platformSvc.Current().Settings.Telegram.Allowlist)
+		allow.SetDisabled(platformSvc.Current().Settings.Telegram.Disabled)
+		platformSvc.Subscribe(func(snap platform.Snapshot) {
+			// telegram.disabled is hot too (T-059 §4.2): commands and
+			// pushes go quiet together through the one shared set.
+			allow.Set(snap.Settings.Telegram.Allowlist)
+			allow.SetDisabled(snap.Settings.Telegram.Disabled)
+		})
+		telegramAllow = allow
+
 		// Telegram control surface: only with a token, a non-empty
-		// allow-list, and an engine to control.
-		if cfg.TelegramToken != "" && len(cfg.TelegramAllowlist) > 0 {
-			allow := make(map[int64]bool, len(cfg.TelegramAllowlist))
-			for _, id := range cfg.TelegramAllowlist {
-				allow[id] = true
+		// allow-list, and an engine to control. The allowlist that
+		// gates construction is the SETTINGS document's (v1 == Seed(cfg)
+		// on a fresh install, so behavior matches today exactly); an
+		// empty boot allowlist never builds the bot at all — the
+		// honest caveat field_timing surfaces (design §1.3). The token
+		// resolves through the secrets chain ONCE, here: a token written
+		// to the vault later applies on the next process restart (D5),
+		// which the secrets API reports as applies:"process_restart".
+		tokenCtx, tokenCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		telegramToken, tokenSource, _ := secretsMgr.Get(tokenCtx, "telegram_bot_token")
+		tokenCancel()
+		switch {
+		case telegramToken == "":
+			telegramReason.Store("no token configured")
+		case len(allow.Members()) == 0:
+			telegramReason.Store("allowlist empty at boot")
+		}
+		if telegramToken != "" && len(allow.Members()) > 0 {
+			client := telegram.NewClient("https://api.telegram.org/bot" + telegramToken)
+			bot = &telegram.Bot{
+				Client:   client,
+				Allowed:  allow.Allowed,
+				Services: telegramServices{e: engine, n: notify, c: center, s: stratSvc, ai: aiSvc, rep: reportGen},
+				Log:      log,
+				Audit:    telegramAudit(log, store),
 			}
-			client := telegram.NewClient("https://api.telegram.org/bot" + cfg.TelegramToken)
-			bot := &telegram.Bot{
-				Client:    client,
-				Allowlist: allow,
-				Services:  telegramServices{e: engine, n: notify, c: center, s: stratSvc, ai: aiSvc, rep: reportGen},
-				Log:       log,
-				Audit:     telegramAudit(log, store),
-			}
-			push := &telegram.PushSink{
-				Client: client, ChatIDs: cfg.TelegramAllowlist,
+			push = &telegram.PushSink{
+				Client: client, Targets: allow.IDs,
 				Log: log, OnDrop: notify.CountDrop,
 			}
 			notify.Register(push)
@@ -178,10 +308,47 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 					log.Error("telegram metrics registration failed", "error", err)
 				}
 			}
-			log.Info("telegram bot enabled", "allowlisted_users", len(cfg.TelegramAllowlist))
-		} else if cfg.TelegramToken != "" {
-			log.Warn("ARB_TELEGRAM_TOKEN set but ARB_TELEGRAM_ALLOWLIST empty; bot disabled (allow-list is mandatory)")
+			botRunning.Store(true)
+			log.Info("telegram bot enabled", "allowlisted_users", len(allow.Members()), "token_source", tokenSource)
+		} else if telegramToken != "" {
+			log.Warn("telegram token configured but the platform settings allowlist is empty; bot disabled (allow-list is mandatory)")
 		}
+		telegramToken = "" //nolint:ineffassign // drop the reference as soon as the client holds it
+
+		// Supervisor re-enters Engine.Run across a restart (T-057
+		// §2.2-§2.6); it is what BuildComponents appends where it used
+		// to append the engine directly.
+		supervisor = &Supervisor{
+			Engine:   engine,
+			Settings: platformSvc,
+			Recorder: engine.Recorder,
+			Paper:    engine.Paper,
+			Grace:    cfg.ShutdownGrace,
+			Log:      log,
+			Notify: func(sev notification.Severity, key, title, body string) {
+				notify.Notify(notification.Event{Severity: sev, Key: key, Title: title, Body: body})
+			},
+			Audit:          sourceAudit(log, store, "system"),
+			Strategy:       stratSvc,
+			RunningWorkers: engine.RunningWorkers,
+			Ready:          func() bool { return engine.Status().Ready },
+			SessionID:      engine.SessionID,
+			// P2-2: carries the pause decision into the engine's own
+			// boot sequence rather than relying on a post-hoc re-Pause()
+			// that has nothing to act on while s.Paper() is still nil
+			// mid-bootstrap.
+			SetPaperPaused: engine.SetPaperPaused,
+		}
+		if store != nil {
+			supervisor.EndPaperSession = store.EndPaperSession
+		}
+		if campaigns != nil {
+			supervisor.Campaigns = campaigns
+		}
+		if replays != nil {
+			supervisor.Replays = replays
+		}
+		others = append(others, supervisor)
 	}
 
 	if p == ProfileFull || p == ProfileAPI {
@@ -191,7 +358,9 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		info := api.BuildInfo{Components: names}
 		apiServer := api.NewServer(cfg, log, info)
-		apiServer.Auth = buildAuth(cfg, log, store)
+		authMgr, userAdmin := buildAuth(cfg, log, store)
+		apiServer.Auth = authMgr
+		apiServer.Users = userAdmin
 		apiServer.Strategy = stratSvc
 		hub := realtime.NewHub(256)
 		apiServer.Hub = hub
@@ -221,17 +390,122 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		apiServer.AuditAction = webAudit(log, store)
 		apiServer.Store = store
 		apiServer.Reports = reportGen
+		apiServer.Platform = platformSvc
+		apiServer.PlatformCatalog = platformSvc.Catalog
+		apiServer.BotRunning = func() bool { return botRunning.Load() }
+		apiServer.Telegram = telegramStatusView(bot, push, telegramAllow, botRunning.Load, func() string {
+			r, _ := telegramReason.Load().(string)
+			return r
+		})
+		apiServer.Secrets = secretsMgr
+		apiServer.AIStatus = func() api.AIRuntimeStatus {
+			st := aiState.get()
+			u := aiSvc.Usage()
+			return api.AIRuntimeStatus{
+				Enabled: st.Enabled, Running: st.Running, Reason: st.Reason,
+				Provider: st.Provider, Model: st.Model, KeySource: st.KeySource,
+				AnalysesToday: u.AnalysesToday, MaxPerDay: u.MaxPerDay, LastAnalysis: u.LastAnalysis,
+			}
+		}
+		// platform.allowed_origin is hot (D7): the websocket origin check
+		// reads the atomic the subscriber updates.
+		platformSvc.Subscribe(func(snap platform.Snapshot) {
+			apiServer.SetAllowedOrigin(snap.Settings.Platform.AllowedOrigin)
+		})
+		// The API profile has no engine, so it reports the CONFIGURED
+		// mode; engine profiles report the RUNNING one (below).
+		apiServer.Mode = func() string { return string(platformSvc.Current().Settings.Platform.Mode) }
 		if engine != nil {
 			apiServer.ScannerStatus = func() any { return engine.Status() }
 			apiServer.Reads = NewReadModel(engine, stratSvc)
+			apiServer.Triangles = NewTriangleReader(engine)
 			engine.Hub = hub
-			if cfg.Mode == config.ModePaper {
-				apiServer.Paper = paperProxy{engine}
+			apiServer.Mode = func() string { return string(engine.Mode()) }
+			// Wired unconditionally (T-059 §2.3): paperProxy is nil-safe
+			// (Running() false, Pause/Resume no-ops) and gating on the
+			// boot mode would 404 the paper routes after a switch into
+			// PAPER until a redeploy.
+			apiServer.Paper = paperProxy{engine}
+			apiServer.Recorder = recorderProxy{engine}
+		}
+		if supervisor != nil {
+			apiServer.Restart = restartProxy{supervisor}
+			// "health" moves out of Engine.Run into the wiring (design
+			// §2.6) so its snapshot can include supervisor state, which
+			// the engine cannot see; "scanner"/"recordings" stay
+			// engine-scoped (overwrite-on-restart is correct for them,
+			// registered inside Engine.Run itself).
+			healthSnapshot := func() map[string]any {
+				data := map[string]any{
+					// T-059 §2.3: the console banner shows the RUNNING mode
+					// and annotates a differing configured one.
+					"mode": map[string]any{
+						"running":    string(engine.Mode()),
+						"configured": string(platformSvc.Current().Settings.Platform.Mode),
+					},
+					"restart": supervisor.Status(),
+					"engine":  engine.Status(),
+				}
+				return data
 			}
+			hub.RegisterTopic("health", func() (json.RawMessage, error) {
+				return json.Marshal(healthSnapshot())
+			})
+			supervisor.OnState = func(RestartStatus) { _ = hub.Publish("health", healthSnapshot()) }
+		}
+		if campaigns != nil {
+			hub.RegisterTopic("campaigns", func() (json.RawMessage, error) {
+				runs, err := campaigns.List(context.Background(), 50)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]any{"runs": runs})
+			})
+			campaigns.Publish = func(data any) { _ = hub.Publish("campaigns", data) }
+			apiServer.Campaigns = campaigns
+		}
+		if replays != nil {
+			hub.RegisterTopic("replays", func() (json.RawMessage, error) {
+				runs, err := replays.List(context.Background(), 50)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]any{"runs": runs})
+			})
+			replays.Publish = func(data any) { _ = hub.Publish("replays", data) }
+			apiServer.Replays = replays
 		}
 		return append([]Component{apiServer}, others...)
 	}
 	return others
+}
+
+// recorderProxy defers to the engine's recording control, which exists
+// only after metadata bootstrap; calls before readiness fail loudly
+// rather than start a session nobody tracks.
+type recorderProxy struct{ e *Engine }
+
+var errRecorderNotReady = errors.New("recorder: engine not bootstrapped yet")
+
+func (p recorderProxy) StartSession() (string, error) {
+	if c := p.e.Recorder(); c != nil {
+		return c.StartSession()
+	}
+	return "", errRecorderNotReady
+}
+
+func (p recorderProxy) Stop() (string, error) {
+	if c := p.e.Recorder(); c != nil {
+		return c.Stop()
+	}
+	return "", marketdata.ErrRecorderIdle
+}
+
+func (p recorderProxy) Status() marketdata.RecorderStatus {
+	if c := p.e.Recorder(); c != nil {
+		return c.Status()
+	}
+	return marketdata.RecorderStatus{}
 }
 
 // paperProxy defers to the engine's paper controller, which exists only
@@ -258,24 +532,171 @@ func (p paperProxy) Running() bool {
 	return false
 }
 
-// buildAdvisor selects the AI provider. Keys come from the environment
-// only and never leave the process except in the provider's auth header.
-func buildAdvisor(cfg config.Bootstrap, log *slog.Logger) ai.Advisor {
-	switch cfg.AIProvider {
-	case "fake":
-		return ai.Fake{}
-	case "", "anthropic":
-		if cfg.AnthropicAPIKey == "" {
-			if cfg.AIProvider == "anthropic" {
-				log.Warn("ARB_AI_PROVIDER=anthropic but ANTHROPIC_API_KEY unset; advisor disabled")
-			}
-			return nil
-		}
-		return ai.NewAnthropic(cfg.AnthropicAPIKey, cfg.AIModel)
-	default:
-		log.Warn("unknown ARB_AI_PROVIDER; advisor disabled", "provider", cfg.AIProvider)
-		return nil
+// Reset delegates to Engine.ResetPaper (BL-10), translating the paper
+// package's own "not idle" sentinel into the API layer's at this
+// boundary — the api package stays free of a direct dependency on
+// internal/paper.
+func (p paperProxy) Reset(ctx context.Context) error {
+	err := p.e.ResetPaper(ctx)
+	if errors.Is(err, paper.ErrActive) {
+		return api.ErrPaperNotIdle
 	}
+	return err
+}
+
+// aiRuntime is the advisor's current runtime state for the status
+// route: what the document asks for versus what is installed.
+type aiRuntime struct {
+	p atomic.Pointer[aiRuntimeState]
+}
+
+type aiRuntimeState struct {
+	Enabled, Running                   bool
+	Reason, Provider, Model, KeySource string
+}
+
+func (a *aiRuntime) set(st aiRuntimeState) { a.p.Store(&st) }
+
+// aiApplier serialises advisor rebuilds: one mutex guards the last
+// requested ai section, the generation counter, and the paired
+// aiSwitch/aiState stores, so the status view never describes a
+// different advisor than the one running. buildAdvisor (the secrets
+// round trip) runs outside every lock.
+type aiApplier struct {
+	log   *slog.Logger
+	sw    *ai.Switch
+	state *aiRuntime
+	src   secrets.SecretSource
+
+	mu      sync.Mutex
+	last    platform.AISettings
+	hasLast bool
+	gen     uint64 // last generation requested
+	applied uint64 // last generation stored
+}
+
+// next records settings as the latest request and returns its
+// generation. Callers then build outside the lock and hand the result
+// to apply, which drops it when a newer generation has already landed.
+func (a *aiApplier) next(settings platform.AISettings) uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.last, a.hasLast = settings, true
+	a.gen++
+	return a.gen
+}
+
+// request schedules a rebuild unless the ai section is unchanged since
+// the last one (force bypasses the comparison: the key changed, not the
+// document). AISettings has no reference fields, so == is a deep compare.
+func (a *aiApplier) request(settings platform.AISettings, force bool) {
+	a.mu.Lock()
+	if !force && a.hasLast && a.last == settings {
+		a.mu.Unlock()
+		return
+	}
+	a.last, a.hasLast = settings, true
+	a.gen++
+	gen := a.gen
+	a.mu.Unlock()
+	go a.apply(settings, gen)
+}
+
+func (a *aiApplier) apply(settings platform.AISettings, gen uint64) {
+	adv, st := buildAdvisor(settings, a.log, a.src)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if gen < a.applied {
+		return // a newer request already landed; keep it
+	}
+	a.applied = gen
+	a.sw.Set(adv)
+	a.state.set(st)
+	if adv != nil {
+		a.log.Info("ai advisor enabled", "provider", adv.Name(), "model", adv.Model(), "key_source", st.KeySource)
+	} else {
+		a.log.Info("ai advisor idle", "reason", st.Reason)
+	}
+}
+
+func (a *aiRuntime) get() aiRuntimeState {
+	if p := a.p.Load(); p != nil {
+		return *p
+	}
+	return aiRuntimeState{Reason: "not configured yet"}
+}
+
+// buildAdvisor selects the AI provider from the ai.* settings section
+// (T-059 §4.1), resolving the key through the secrets chain (vault
+// first, env fallback — T-060). The key never leaves the process except
+// in the provider's auth header and is never logged. A nil advisor with
+// a reason is the honest "enabled but idle" state the status route and
+// the apply-time warning report.
+func buildAdvisor(settings platform.AISettings, log *slog.Logger, src secrets.SecretSource) (ai.Advisor, aiRuntimeState) {
+	st := aiRuntimeState{Enabled: settings.Enabled, Provider: settings.Provider, Model: settings.Model}
+	if !settings.Enabled {
+		st.Reason = "disabled in settings"
+		return nil, st
+	}
+	switch settings.Provider {
+	case "fake":
+		st.Running = true
+		return ai.Fake{}, st
+	case "anthropic":
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		key, source, ok := src.Get(ctx, "anthropic_api_key")
+		cancel()
+		if !ok {
+			st.Reason = "no anthropic_api_key"
+			return nil, st
+		}
+		adv := ai.NewAnthropic(key, settings.Model)
+		adv.MaxTokens = settings.Budget.MaxOutputTokens
+		st.Running, st.KeySource = true, source
+		return adv, st
+	default:
+		// Unreachable through Validate; kept so a stored document from a
+		// future provider list never panics an older binary.
+		log.Warn("unknown ai.provider; advisor idle", "provider", settings.Provider)
+		st.Reason = "provider " + settings.Provider + " not built"
+		return nil, st
+	}
+}
+
+// buildSecrets opens the vault (T-060 §3.2 boot policy): ARB_SECRET_KEY
+// is read inside internal/secrets, never through config.Bootstrap. An
+// unset key logs at WARN and leaves env-provided secrets working; an
+// invalid key logs at ERROR with the same outcome (the vault refuses to
+// start rather than run under a key nobody can rotate). Without
+// persistence there is nowhere durable to write, so the vault stays
+// closed with that reason rather than silently losing writes on the
+// next process restart.
+func buildSecrets(log *slog.Logger, store *storage.Store, cfg config.Bootstrap) *secrets.Manager {
+	env := secrets.Env{
+		"anthropic_api_key":  cfg.AnthropicAPIKey,
+		"telegram_bot_token": cfg.TelegramToken,
+	}
+	key, err := secrets.KeyFromEnv()
+	switch {
+	case errors.Is(err, secrets.ErrNoKey):
+		log.Warn("secrets vault disabled: ARB_SECRET_KEY unset; env-provided secrets still work")
+		return secrets.NewManager(nil, "ARB_SECRET_KEY unset", env)
+	case err != nil:
+		log.Error("secrets vault disabled: ARB_SECRET_KEY invalid; env-provided secrets still work", "error", err)
+		return secrets.NewManager(nil, err.Error(), env)
+	}
+	if store == nil {
+		log.Warn("secrets vault disabled: ARB_DATABASE_URL unset (nowhere durable to write); env-provided secrets still work")
+		return secrets.NewManager(nil, "ARB_DATABASE_URL unset: the vault needs persistence", env)
+	}
+	vault, err := secrets.NewVault(store.Secrets(), key)
+	if err != nil {
+		log.Error("secrets vault disabled", "error", err)
+		return secrets.NewManager(nil, err.Error(), env)
+	}
+	vault.Log = log
+	log.Info("secrets vault open", "key_id", vault.KeyID())
+	return secrets.NewManager(vault, "", env)
 }
 
 // notificationConfig converts the strategy payload's notification slice.
@@ -325,10 +746,161 @@ func telegramAudit(log *slog.Logger, store *storage.Store) func(actor, action, e
 	return sourceAudit(log, store, "telegram")
 }
 
+// telegramStatusView builds the func api.Server.Telegram reads on every
+// GET /api/v1/telegram/status request (BL-21). bot/push/allow may each
+// be nil (no token configured, or an empty allowlist held the bot back
+// per field_timing's caveat); the view reports that honestly rather
+// than 404ing — "not configured" is itself the answer. The token is
+// never read here.
+func telegramStatusView(bot *telegram.Bot, push *telegram.PushSink, allow *allowSet, enabled func() bool, reason func() string) func() api.TelegramStatusView {
+	return func() api.TelegramStatusView {
+		view := api.TelegramStatusView{Enabled: enabled()}
+		if allow != nil {
+			ids := allow.Members()
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+			view.Allowlist = ids
+			view.Disabled = allow.Disabled()
+		}
+		switch {
+		case view.Disabled:
+			view.Reason = "disabled in settings"
+		case !view.Enabled && reason != nil:
+			view.Reason = reason()
+		}
+		if bot != nil {
+			st := bot.Status()
+			view.BotUsername = st.BotUsername
+			view.Messages, view.Errors = st.Messages, st.Errors
+			view.LastPollOK, view.LastPollError = st.LastPollOK, st.LastPollError
+			view.LastGetMeOK, view.LastGetMeError = st.LastGetMeOK, st.LastGetMeError
+			if !st.LastPollAt.IsZero() {
+				view.LastPollAt = &st.LastPollAt
+			}
+			if !st.LastGetMeAt.IsZero() {
+				view.LastGetMeAt = &st.LastGetMeAt
+			}
+		}
+		if push != nil {
+			st := push.Status()
+			view.PushesSent, view.PushErrors = st.Pushed, st.Errors
+			if !st.LastPushAt.IsZero() {
+				view.LastPushedAt = &st.LastPushAt
+			}
+		}
+		return view
+	}
+}
+
+// allowSet is the one live Telegram allowlist both telegram.Bot.Allowed
+// and telegram.PushSink.Targets read (T-057 §1.5): updating only one of
+// the two copies the pre-T-057 wiring kept would leave a revoked user
+// still receiving pushes.
+//
+// disabled (T-059 §4.2, telegram.disabled) mutes both reads together:
+// Allowed() returns false and IDs() returns nil, so commands and pushes
+// go quiet as one — the exact invariant the shared set protects.
+type allowSet struct {
+	p        atomic.Pointer[map[int64]bool]
+	disabled atomic.Bool
+}
+
+func (a *allowSet) Set(ids []int64) {
+	m := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	a.p.Store(&m)
+}
+
+// SetDisabled applies telegram.disabled (hot).
+func (a *allowSet) SetDisabled(v bool) { a.disabled.Store(v) }
+
+// Disabled reports the mute state.
+func (a *allowSet) Disabled() bool { return a.disabled.Load() }
+
+func (a *allowSet) Allowed(id int64) bool {
+	if a.disabled.Load() {
+		return false
+	}
+	if m := a.p.Load(); m != nil {
+		return (*m)[id]
+	}
+	return false
+}
+
+func (a *allowSet) IDs() []int64 {
+	if a.disabled.Load() {
+		return nil
+	}
+	m := a.p.Load()
+	if m == nil {
+		return nil
+	}
+	out := make([]int64, 0, len(*m))
+	for id := range *m {
+		out = append(out, id)
+	}
+	return out
+}
+
+// Members returns the configured allowlist regardless of the mute
+// state (for the status view; never used for delivery decisions).
+func (a *allowSet) Members() []int64 {
+	m := a.p.Load()
+	if m == nil {
+		return nil
+	}
+	out := make([]int64, 0, len(*m))
+	for id := range *m {
+		out = append(out, id)
+	}
+	return out
+}
+
+// restartProxy adapts *Supervisor onto api.RestartController, classifying
+// Supervisor.Request's sentinel errors into the design §2.5 refusal
+// codes so internal/api never needs to import internal/app (which
+// already imports internal/api to build the Server — a cycle).
+type restartProxy struct{ sup *Supervisor }
+
+func (p restartProxy) Request(actor, reason string, stopRecording bool) api.RestartRequestResult {
+	err := p.sup.Request(RestartRequest{Actor: actor, Reason: reason, StopRecording: stopRecording})
+	if err == nil {
+		return api.RestartRequestResult{Accepted: true}
+	}
+	code := "restart_failed"
+	switch {
+	case errors.Is(err, ErrCampaignRunning):
+		code = "campaign_running"
+	case errors.Is(err, ErrReplayRunning):
+		code = "replay_running"
+	case errors.Is(err, ErrRecordingActive):
+		code = "recording_active"
+	case errors.Is(err, ErrRestartInProgress):
+		code = "restart_in_progress"
+	}
+	return api.RestartRequestResult{Accepted: false, Code: code, Message: err.Error()}
+}
+
+func (p restartProxy) Status() api.RestartStatus {
+	st := p.sup.Status()
+	return api.RestartStatus{
+		State:           string(st.State),
+		SettingsVersion: st.SettingsVersion,
+		PendingVersion:  st.PendingVersion,
+		RequestedBy:     st.RequestedBy,
+		RequestedAt:     st.RequestedAt,
+		ReadyAt:         st.ReadyAt,
+		Restarts:        st.Restarts,
+		PendingReasons:  st.PendingReasons,
+		Error:           st.Error,
+	}
+}
+
 // webAudit carries the caller's IP and correlation ID into the audit row
 // (audit S-008) — web is the surface where those forensics exist.
-func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity, ip, correlationID string) {
-	return func(actor, action, entity, ip, correlationID string) {
+func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity, ip, correlationID string, after []byte) {
+	return func(actor, action, entity, ip, correlationID string, after []byte) {
 		if store == nil {
 			log.Info("audit event (memory-only)", "actor", actor, "action", action,
 				"entity", entity, "source", "web", "ip", ip, "correlation_id", correlationID)
@@ -338,7 +910,7 @@ func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity
 		defer cancel()
 		if err := store.InsertAuditEvent(ctx, storage.AuditRow{
 			ID: newULID(), Actor: actor, Source: "web",
-			Action: action, Entity: entity, IP: ip, CorrelationID: correlationID,
+			Action: action, Entity: entity, After: after, IP: ip, CorrelationID: correlationID,
 		}); err != nil {
 			log.Error("audit insert failed", "source", "web", "error", err)
 		}
@@ -384,13 +956,70 @@ func buildStrategy(log *slog.Logger, store *storage.Store) *strategy.Service {
 	return svc
 }
 
+// buildPlatform wires the versioned platform-settings service (T-057):
+// DB-backed rows when persistence is enabled, in-memory otherwise. Load
+// seeds version 1 from platform.Seed(cfg) when the table is empty, and
+// logs when it is not — the env symbol/asset/balance/allowlist
+// variables are first-boot seeds only from then on (D5).
+//
+// P2-4: a Load failure against a configured database used to be
+// swallowed — silently swapping in a fresh MemoryStore re-seeded from
+// the environment, discarding whatever was actually persisted (wrong
+// venues/symbols/fees/balances, and any operator writes since the
+// database became unreachable, would be lost with no trace beyond a log
+// line). That is exactly the "silently running without the persistence
+// the operator asked for would be a lie" policy this file already
+// enforces for storage.Open failing outright (see the store == nil
+// branch above); Load failing must fail the SAME way, not differently
+// just because it happens one step later.
+func buildPlatform(log *slog.Logger, store *storage.Store, cfg config.Bootstrap) (*platform.Service, error) {
+	var st platform.Store
+	var audit func(context.Context, platform.AuditEvent)
+	if store != nil {
+		st = store.PlatformSettings()
+		audit = func(ctx context.Context, ev platform.AuditEvent) {
+			row := storage.AuditRow{
+				ID: newULID(), Actor: ev.Actor, Source: ev.Source,
+				Action: ev.Action, Entity: ev.Entity, EntityID: ev.EntityID,
+				Before: ev.Before, After: ev.After,
+			}
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := store.InsertAuditEvent(ctx, row); err != nil {
+				log.Error("platform settings audit insert failed", "action", ev.Action, "error", err)
+			}
+		}
+	} else {
+		st = platform.NewMemoryStore()
+	}
+	return newPlatformService(log, st, audit, cfg)
+}
+
+// newPlatformService is buildPlatform's storage-agnostic core, split out
+// so a Store.Load failure (P2-4) can be unit tested against a fake
+// platform.Store instead of requiring a real, deliberately-broken
+// database.
+func newPlatformService(log *slog.Logger, st platform.Store, audit func(context.Context, platform.AuditEvent), cfg config.Bootstrap) (*platform.Service, error) {
+	svc := platform.NewService(st, log, audit)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := svc.Load(ctx, cfg); err != nil {
+		return nil, fmt.Errorf("app: platform settings load failed: %w", err)
+	}
+	return svc, nil
+}
+
 // buildAuth wires auth stores: pgx-backed when persistence is enabled
 // (sessions survive restarts), in-memory otherwise. The bootstrap admin
 // from the environment is upserted either way (dev convenience;
-// production users are managed through the console).
-func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *auth.Manager {
+// production users are managed through the console). It also returns
+// the users & roles admin service (BL-11) over the same backing store,
+// so console user management works identically with or without a
+// database.
+func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*auth.Manager, *auth.AdminService) {
 	var users auth.UserStore
 	var sessions auth.SessionStore
+	var admin auth.AdminStore
 
 	bootstrapAdmin := func(add func(auth.User) error) {
 		if cfg.AdminEmail == "" || cfg.AdminPassword == "" {
@@ -402,7 +1031,7 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 			log.Error("bootstrap admin hash failed", "error", err)
 			return
 		}
-		u := auth.User{ID: "admin-bootstrap", Email: cfg.AdminEmail, PasswordHash: hash, Role: auth.RoleAdmin}
+		u := auth.User{ID: "admin-bootstrap", Email: cfg.AdminEmail, PasswordHash: hash, Role: auth.RoleAdmin, CreatedAt: time.Now().UTC()}
 		if err := add(u); err != nil {
 			log.Error("bootstrap admin store failed", "error", err)
 			return
@@ -412,7 +1041,7 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 
 	if store != nil {
 		as := store.Auth()
-		users, sessions = as, as
+		users, sessions, admin = as, as, as
 		bootstrapAdmin(func(u auth.User) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -420,10 +1049,10 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 		})
 	} else {
 		mem := auth.NewMemoryStore()
-		users, sessions = mem, mem
+		users, sessions, admin = mem, mem, mem
 		bootstrapAdmin(func(u auth.User) error { mem.AddUser(u); return nil })
 	}
-	return &auth.Manager{
+	mgr := &auth.Manager{
 		Users:    users,
 		Sessions: sessions,
 		Throttle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
@@ -433,4 +1062,12 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) *au
 		TTL:        12 * time.Hour,
 		Now:        time.Now,
 	}
+	adminSvc := &auth.AdminService{
+		Store: admin, Sessions: sessions, Now: time.Now, IDGen: newULID,
+		// P3-13: self-service password change had no throttle at all,
+		// unlike login — a stolen session cookie could otherwise
+		// brute-force the current password with no rate limit.
+		PasswordThrottle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
+	}
+	return mgr, adminSvc
 }

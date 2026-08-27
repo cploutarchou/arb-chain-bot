@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -584,6 +585,85 @@ func TestClientErrorsNeverContainToken(t *testing.T) {
 	}
 }
 
+// TestBotStatusReflectsGetMeAndPoll covers BL-21: probeGetMe on Run
+// entry records success/username, and the poll loop records success on
+// its first iteration — all without ever exposing the token.
+func TestBotStatusReflectsGetMeAndPoll(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/botTEST/getMe", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"id":42,"username":"arb_ops_bot"}}`))
+	})
+	mux.HandleFunc("/botTEST/getUpdates", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bot := &Bot{
+		Client:      NewClient(srv.URL + "/botTEST"),
+		Allowlist:   map[int64]bool{},
+		Services:    &fakeServices{},
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		PollTimeout: time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	go func() { _ = bot.Run(ctx) }()
+
+	deadline := time.After(400 * time.Millisecond)
+	for {
+		st := bot.Status()
+		if st.LastGetMeOK && st.BotUsername == "arb_ops_bot" && st.LastPollOK {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("status never reflected getMe+poll success: %+v", st)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	st := bot.Status()
+	if st.LastGetMeAt.IsZero() || st.LastPollAt.IsZero() {
+		t.Fatalf("timestamps not set: %+v", st)
+	}
+	if st.LastGetMeError != "" || st.LastPollError != "" {
+		t.Fatalf("unexpected error strings: %+v", st)
+	}
+}
+
+// TestBotStatusRecordsGetMeFailureHonestly covers the unreachable/
+// misconfigured-token case: no handler for getMe means probeGetMe fails,
+// and Status must say so rather than reporting stale success.
+func TestBotStatusRecordsGetMeFailureHonestly(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/botTEST/getUpdates", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bot := &Bot{
+		Client:      NewClient(srv.URL + "/botTEST"),
+		Services:    &fakeServices{},
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		PollTimeout: time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_ = bot.Run(ctx)
+
+	st := bot.Status()
+	if st.LastGetMeOK {
+		t.Fatal("getMe against a 404 must not report ok")
+	}
+	if st.LastGetMeError == "" {
+		t.Fatal("getMe failure must record an error string")
+	}
+	if strings.Contains(st.LastGetMeError, "TEST") {
+		t.Fatalf("token leaked into status error: %s", st.LastGetMeError)
+	}
+}
+
 // Acceptance (audit CR-P1-4): the router delivers while Run is starting;
 // lazy init must create exactly one queue so no push is lost to an
 // orphan channel (run with -race).
@@ -605,4 +685,61 @@ func TestPushSinkConcurrentDeliverAndRunRaceFree(t *testing.T) {
 	wg.Wait()
 	cancel()
 	<-done
+}
+
+// TestPushSinkStatusTracksSuccessAndFailure covers BL-21's push counters:
+// successful deliveries increment Pushed, failed ones increment Errors,
+// and LastPushAt advances either way.
+func TestPushSinkStatusTracksSuccessAndFailure(t *testing.T) {
+	var fail atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/botTEST/sendMessage", func(w http.ResponseWriter, _ *http.Request) {
+		if fail.Load() {
+			_, _ = w.Write([]byte(`{"ok":false,"description":"boom"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := &PushSink{
+		Client: NewClient(srv.URL + "/botTEST"), ChatIDs: []int64{1},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- p.Run(ctx) }()
+
+	p.Deliver(notification.Delivery{Event: notification.Event{Key: "k1", Title: "ok"}})
+	waitFor(t, func() bool { return p.Status().Pushed == 1 })
+
+	fail.Store(true)
+	p.Deliver(notification.Delivery{Event: notification.Event{Key: "k2", Title: "fails"}})
+	waitFor(t, func() bool { return p.Status().Errors == 1 })
+
+	cancel()
+	<-done
+	st := p.Status()
+	if st.Pushed != 1 || st.Errors != 1 {
+		t.Fatalf("status = %+v", st)
+	}
+	if st.LastPushAt.IsZero() {
+		t.Fatal("LastPushAt never set")
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		if cond() {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("condition never became true")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 }

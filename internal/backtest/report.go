@@ -149,6 +149,34 @@ func (c *Campaign) Flags(asset string) []string {
 	return flags
 }
 
+// severityPrefixes maps the §80 verdict line prefixes (report.go's own
+// Flags text, checked verbatim above) to a bounded severity the console
+// can render without string-matching prose itself (BL-05b). Order does
+// not matter: prefixes are mutually exclusive by construction.
+var severityPrefixes = []struct {
+	prefix   string
+	severity string
+}{
+	{"PROFITABLE ONLY UNDER PERFECT CONDITIONS", "bad"},
+	{"BASELINE UNPROFITABLE", "bad"},
+	{"NO CYCLES EXECUTED", "bad"},
+	{"NO BASELINE SCENARIO", "bad"},
+	{"EDGE FRAGILE", "warn"},
+	{"BASELINE ONLY", "warn"},
+}
+
+// FlagSeverity classifies one §80 verdict line ("bad"/"warn"/"ok") so the
+// frontend renders tone from a backend-emitted field instead of grepping
+// for phrases (BL-05b).
+func FlagSeverity(flag string) string {
+	for _, sp := range severityPrefixes {
+		if strings.HasPrefix(flag, sp.prefix) {
+			return sp.severity
+		}
+	}
+	return "ok"
+}
+
 // Markdown renders the §80 report for one start asset.
 func (c *Campaign) Markdown(asset string) string {
 	var b strings.Builder

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
@@ -34,11 +35,13 @@ export default function OpportunitiesPage() {
         <Await state={history} what="opportunity history">
           {(h) => (
             <Table
-              head={["Detected", "Triangle", "Status", "Reason", "Input", "Net profit", "Net bps", "Quality", "Cfg"]}
+              head={["Detected", "Triangle", "Status", "Reason", "Input", "Net profit", "Net bps", "Quality", "Cfg", ""]}
               empty="persisted opportunities for this filter"
               rows={(h.opportunities ?? []).map((o) => [
                 fmtTime(o.detected_at),
-                o.triangle_id,
+                <Link key="t" href={`/triangles/${encodeURIComponent(o.triangle_id)}`} className="text-[var(--accent)] underline">
+                  {o.triangle_id}
+                </Link>,
                 <Badge key="s" tone={o.status === "QUALIFIED" ? "ok" : o.status === "REJECTED" ? "dim" : "warn"}>
                   {o.status}
                 </Badge>,
@@ -48,6 +51,9 @@ export default function OpportunitiesPage() {
                 o.net_return_bps ?? "—",
                 o.data_quality ?? "—",
                 o.config_version ?? "—",
+                <Link key="v" href={`/opportunities/${encodeURIComponent(o.id)}`} className="text-[var(--accent)] underline">
+                  detail
+                </Link>,
               ])}
             />
           )}

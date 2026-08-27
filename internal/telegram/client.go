@@ -162,6 +162,21 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, kb 
 	return c.call(ctx, "sendMessage", params, nil)
 }
 
+// BotIdentity is getMe's result: who the bot is, never the token itself.
+type BotIdentity struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+}
+
+// GetMe verifies the token is live and returns the bot's own identity
+// (BL-21: connectivity probe for the Telegram status route — the token
+// never appears in the result or in any error this returns).
+func (c *Client) GetMe(ctx context.Context) (BotIdentity, error) {
+	var id BotIdentity
+	err := c.call(ctx, "getMe", url.Values{}, &id)
+	return id, err
+}
+
 // AnswerCallback acks a button tap (with optional toast text).
 func (c *Client) AnswerCallback(ctx context.Context, callbackID, text string) error {
 	params := url.Values{}

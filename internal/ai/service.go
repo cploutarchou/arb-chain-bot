@@ -79,14 +79,85 @@ type Service struct {
 	Now      func() time.Time
 	// Timeout bounds one provider call (default 60s).
 	Timeout time.Duration
+	// Limits, when set, is read at every RunAnalysis for the daily cap
+	// (settings-expansion §4.1). The counter is per process and per UTC
+	// day — not persisted, so a process restart resets it.
+	Limits func() Budget
 
 	once     sync.Once
 	mu       sync.Mutex
 	analyses []AnalysisResult // ring, newest last
 	recs     map[string]*Recommendation
+	dayKey   string // UTC date of the current daily counter
+	dayCount int
+	lastAt   time.Time
 
 	requests atomic.Int64
 	failures atomic.Int64
+}
+
+// ErrBudgetExhausted is returned when MaxAnalysesPerDay has been reached
+// for the current UTC day. Like ErrAdvisorDisabled it is a skip, not a
+// failure: logged at INFO, never counted or alerted.
+var ErrBudgetExhausted = errors.New("ai: daily analysis budget exhausted")
+
+// Usage is the advisor's runtime status line for the console.
+type Usage struct {
+	AnalysesToday int        `json:"analyses_today"`
+	MaxPerDay     int        `json:"max_per_day"` // 0 = uncapped
+	LastAnalysis  *time.Time `json:"last_analysis,omitempty"`
+}
+
+// Usage reports today's counter (UTC), the cap in force, and the last
+// successful analysis time.
+func (s *Service) Usage() Usage {
+	s.init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := Usage{}
+	if s.dayKey == s.Now().UTC().Format("2006-01-02") {
+		u.AnalysesToday = s.dayCount
+	}
+	if s.Limits != nil {
+		u.MaxPerDay = s.Limits().MaxAnalysesPerDay
+	}
+	if !s.lastAt.IsZero() {
+		at := s.lastAt
+		u.LastAnalysis = &at
+	}
+	return u
+}
+
+// reserveBudget increments today's counter under the cap, resetting on
+// UTC-day rollover. Returns false when the cap is reached.
+func (s *Service) reserveBudget() bool {
+	max := 0
+	if s.Limits != nil {
+		max = s.Limits().MaxAnalysesPerDay
+	}
+	today := s.Now().UTC().Format("2006-01-02")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dayKey != today {
+		s.dayKey, s.dayCount = today, 0
+	}
+	if max > 0 && s.dayCount >= max {
+		return false
+	}
+	s.dayCount++
+	return true
+}
+
+// releaseBudget hands back a slot reserveBudget took when the call was
+// never made (advisor switched off in between). A day rollover since
+// the reservation makes the release a no-op.
+func (s *Service) releaseBudget() {
+	today := s.Now().UTC().Format("2006-01-02")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dayKey == today && s.dayCount > 0 {
+		s.dayCount--
+	}
 }
 
 const analysesCap = 32
@@ -117,11 +188,22 @@ func (s *Service) Failures() int64 { return s.failures.Load() }
 // caller may ignore (scheduled runs do).
 func (s *Service) RunAnalysis(ctx context.Context, in Input) (AnalysisResult, error) {
 	s.init()
-	s.requests.Add(1)
+	// Disabled is not a failure (D4): return before the request counter,
+	// the failure counter and the notifier are touched.
+	if sw, ok := s.Advisor.(interface{ Enabled() bool }); ok && !sw.Enabled() {
+		return AnalysisResult{}, ErrAdvisorDisabled
+	}
+	// The prompt is built BEFORE a budget slot is taken: a malformed
+	// input is a failure, not a consumed analysis.
 	prompt, err := buildPrompt(in)
 	if err != nil {
 		return AnalysisResult{}, s.fail("prompt build failed", err)
 	}
+	if !s.reserveBudget() {
+		s.Log.Info("ai analysis skipped: daily budget exhausted", "kind", string(in.Kind))
+		return AnalysisResult{}, ErrBudgetExhausted
+	}
+	s.requests.Add(1)
 	s.Log.Info("ai analysis starting",
 		"kind", string(in.Kind), "model", s.Advisor.Model(),
 		"prompt_version", PromptVersion, "config_version", in.ConfigVersion)
@@ -129,6 +211,12 @@ func (s *Service) RunAnalysis(ctx context.Context, in Input) (AnalysisResult, er
 	callCtx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
 	raw, err := s.Advisor.Analyze(callCtx, prompt)
+	if errors.Is(err, ErrAdvisorDisabled) {
+		// Switched off between the check above and the call: still a
+		// skip, not a failure, and the slot goes back to the budget.
+		s.releaseBudget()
+		return AnalysisResult{}, ErrAdvisorDisabled
+	}
 	if err != nil {
 		return AnalysisResult{}, s.fail("provider call failed", err)
 	}
@@ -164,6 +252,7 @@ func (s *Service) RunAnalysis(ctx context.Context, in Input) (AnalysisResult, er
 	}
 
 	s.mu.Lock()
+	s.lastAt = now
 	s.analyses = append(s.analyses, res)
 	if len(s.analyses) > analysesCap {
 		s.analyses = s.analyses[len(s.analyses)-analysesCap:]
@@ -390,6 +479,12 @@ func splitPath(p string) []string {
 // performance, weekly parameter review). A failed run alerts and waits
 // for the next tick; it never stops the loop and never touches the
 // trading path.
+//
+// Cadence, when set, is read at every wake (settings-expansion §4.1), so
+// a cadence change applies without a restart: a re-armable timer loop
+// replaces the three fixed tickers. A zero cadence disarms that kind.
+// Hourly/Daily/Weekly are the fallback when Cadence is nil (tests and
+// callers that predate the settings document).
 type Scheduler struct {
 	Service *Service
 	// InputFor builds the typed summary at fire time.
@@ -399,41 +494,103 @@ type Scheduler struct {
 	Hourly time.Duration // defaults: 1h / 24h / 7d
 	Daily  time.Duration
 	Weekly time.Duration
+
+	Cadence func() Cadence
+	// Wake bounds how long the loop sleeps before re-reading Cadence
+	// (default 1 minute), so a shortened cadence takes effect within
+	// that bound rather than only after the previously-armed interval.
+	Wake time.Duration
+
+	// now is the clock (tests inject a fake to drive minute-scale
+	// cadences without waiting); nil = time.Now.
+	now func() time.Time
+}
+
+func (s *Scheduler) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 func (s *Scheduler) Name() string { return "ai-scheduler" }
 
+// intervals resolves the three cadences in force right now; 0 = off.
+func (s *Scheduler) intervals() [3]time.Duration {
+	if s.Cadence != nil {
+		c := s.Cadence()
+		return [3]time.Duration{
+			time.Duration(c.HourlyMinutes) * time.Minute,
+			time.Duration(c.DailyHours) * time.Hour,
+			time.Duration(c.WeeklyHours) * time.Hour,
+		}
+	}
+	h, d, w := s.Hourly, s.Daily, s.Weekly
+	if h <= 0 {
+		h = time.Hour
+	}
+	if d <= 0 {
+		d = 24 * time.Hour
+	}
+	if w <= 0 {
+		w = 7 * 24 * time.Hour
+	}
+	return [3]time.Duration{h, d, w}
+}
+
 func (s *Scheduler) Run(ctx context.Context) error {
-	if s.Hourly <= 0 {
-		s.Hourly = time.Hour
+	kinds := [3]AnalysisKind{KindHourlyHealth, KindDailyPerformance, KindWeeklyParameters}
+	wake := s.Wake
+	if wake <= 0 {
+		wake = time.Minute
 	}
-	if s.Daily <= 0 {
-		s.Daily = 24 * time.Hour
+	// last[i] is when kind i last fired (or the loop start), so the first
+	// fire of each kind lands one full interval after start — the same
+	// phase a ticker had.
+	var last [3]time.Time
+	now := s.clock()
+	for i := range last {
+		last[i] = now
 	}
-	if s.Weekly <= 0 {
-		s.Weekly = 7 * 24 * time.Hour
-	}
-	hourly := time.NewTicker(s.Hourly)
-	daily := time.NewTicker(s.Daily)
-	weekly := time.NewTicker(s.Weekly)
-	defer hourly.Stop()
-	defer daily.Stop()
-	defer weekly.Stop()
+	timer := time.NewTimer(wake)
+	defer timer.Stop()
 	for {
-		var kind AnalysisKind
+		iv := s.intervals()
+		now = s.clock()
+		sleep := wake
+		for i := range kinds {
+			if iv[i] <= 0 {
+				continue
+			}
+			due := last[i].Add(iv[i])
+			if !due.After(now) {
+				last[i] = now
+				if _, err := s.Service.RunAnalysis(ctx, s.InputFor(kinds[i])); err != nil {
+					// Already counted, logged, and alerted by the service
+					// (or a skip: disabled/budget).
+					s.Log.Debug("scheduled analysis did not run; next tick continues", "kind", string(kinds[i]), "reason", err.Error())
+				}
+				now = s.clock()
+				due = last[i].Add(iv[i])
+			}
+			if d := due.Sub(now); d < sleep {
+				sleep = d
+			}
+		}
+		if sleep < 0 {
+			sleep = 0
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(sleep)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-hourly.C:
-			kind = KindHourlyHealth
-		case <-daily.C:
-			kind = KindDailyPerformance
-		case <-weekly.C:
-			kind = KindWeeklyParameters
-		}
-		if _, err := s.Service.RunAnalysis(ctx, s.InputFor(kind)); err != nil {
-			// Already counted, logged, and alerted by the service.
-			s.Log.Debug("scheduled analysis failed; next tick continues", "kind", string(kind))
+		case <-timer.C:
 		}
 	}
 }

@@ -100,6 +100,11 @@ type Bot struct {
 	Log       *slog.Logger
 	// Audit records control actions (source=telegram); nil = log only.
 	Audit func(actor, action, entity string)
+	// Allowed, when set, takes precedence over Allowlist (T-057: the
+	// wiring points it at one live allow-set shared with PushSink.Targets
+	// so revoking a Telegram user takes effect immediately everywhere,
+	// not just here). nil = use Allowlist (tests set the map directly).
+	Allowed func(userID int64) bool
 	// PollTimeout for getUpdates (tests use 0 for immediate returns).
 	PollTimeout time.Duration
 
@@ -110,6 +115,55 @@ type Bot struct {
 
 	msgs atomic.Int64
 	errs atomic.Int64
+
+	// Connectivity tracking (BL-21: GET /api/v1/telegram/status). Poll
+	// success/failure is updated every long-poll iteration; getMe once
+	// per Run (a fresh connectivity probe on every supervised restart).
+	lastPollAt   atomic.Int64 // unix nanos; 0 = never
+	lastPollOK   atomic.Bool
+	lastPollErr  atomic.Value // string
+	lastGetMeAt  atomic.Int64
+	lastGetMeOK  atomic.Bool
+	lastGetMeErr atomic.Value // string
+	botIdentity  atomic.Value // string (username)
+}
+
+// ConnStatus is the Telegram bot connectivity snapshot the console reads
+// (BL-21); the token never appears in it.
+type ConnStatus struct {
+	Messages       int64
+	Errors         int64
+	LastPollAt     time.Time
+	LastPollOK     bool
+	LastPollError  string
+	LastGetMeAt    time.Time
+	LastGetMeOK    bool
+	LastGetMeError string
+	BotUsername    string
+}
+
+func unixOrZero(nanos int64) time.Time {
+	if nanos == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, nanos).UTC()
+}
+
+func stringOf(v *atomic.Value) string {
+	s, _ := v.Load().(string)
+	return s
+}
+
+// Status snapshots connectivity for the console (BL-21).
+func (b *Bot) Status() ConnStatus {
+	return ConnStatus{
+		Messages: b.msgs.Load(), Errors: b.errs.Load(),
+		LastPollAt: unixOrZero(b.lastPollAt.Load()), LastPollOK: b.lastPollOK.Load(),
+		LastPollError: stringOf(&b.lastPollErr),
+		LastGetMeAt:   unixOrZero(b.lastGetMeAt.Load()), LastGetMeOK: b.lastGetMeOK.Load(),
+		LastGetMeError: stringOf(&b.lastGetMeErr),
+		BotUsername:    stringOf(&b.botIdentity),
+	}
 }
 
 type pendingAction struct {
@@ -146,17 +200,21 @@ func (b *Bot) init() {
 // Run long-polls until ctx cancels.
 func (b *Bot) Run(ctx context.Context) error {
 	b.init()
+	b.probeGetMe(ctx)
 	var offset int64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		updates, err := b.Client.GetUpdates(ctx, offset, b.PollTimeout)
+		b.lastPollAt.Store(time.Now().UnixNano())
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			b.errs.Add(1)
+			b.lastPollOK.Store(false)
+			b.lastPollErr.Store(err.Error())
 			b.Log.Warn("telegram poll failed; backing off", "error", err)
 			select {
 			case <-ctx.Done():
@@ -165,6 +223,8 @@ func (b *Bot) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		b.lastPollOK.Store(true)
+		b.lastPollErr.Store("")
 		for _, u := range updates {
 			if u.UpdateID >= offset {
 				offset = u.UpdateID + 1
@@ -172,6 +232,23 @@ func (b *Bot) Run(ctx context.Context) error {
 			b.handleUpdate(ctx, u)
 		}
 	}
+}
+
+// probeGetMe verifies the token is live once per Run (BL-21): a fresh
+// connectivity check on every process start / supervised restart,
+// independent of whether any chat has messaged the bot yet.
+func (b *Bot) probeGetMe(ctx context.Context) {
+	id, err := b.Client.GetMe(ctx)
+	b.lastGetMeAt.Store(time.Now().UnixNano())
+	if err != nil {
+		b.lastGetMeOK.Store(false)
+		b.lastGetMeErr.Store(err.Error())
+		b.Log.Warn("telegram getMe probe failed", "error", err)
+		return
+	}
+	b.lastGetMeOK.Store(true)
+	b.lastGetMeErr.Store("")
+	b.botIdentity.Store(id.Username)
 }
 
 // HandleUpdate processes one update (exported for the fake-API tests).
@@ -190,7 +267,11 @@ func (b *Bot) handleUpdate(ctx context.Context, u Update) {
 }
 
 func (b *Bot) roleFor(userID int64) (auth.Role, bool) {
-	if b.Allowlist[userID] {
+	allowed := b.Allowlist[userID]
+	if b.Allowed != nil {
+		allowed = b.Allowed(userID)
+	}
+	if allowed {
 		return auth.RoleOperator, true
 	}
 	return "", false

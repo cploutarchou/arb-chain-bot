@@ -2,10 +2,17 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 )
+
+// ErrReportNotFound reports an unknown report id (GetReport).
+var ErrReportNotFound = errors.New("storage: report not found")
 
 // Reports adapts the store to reporting.HistorySource.
 type Reports struct{ s *Store }
@@ -175,6 +182,23 @@ func (r *Reports) ListReports(ctx context.Context, kind string, limit int) ([]re
 		out = append(out, rep)
 	}
 	return out, rows.Err()
+}
+
+// GetReport returns one persisted report by id (BL-32 detail view).
+func (r *Reports) GetReport(ctx context.Context, id string) (reporting.Report, error) {
+	var payload []byte
+	err := r.s.Pool.QueryRow(ctx, `SELECT payload FROM reports WHERE id = $1`, id).Scan(&payload)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return reporting.Report{}, ErrReportNotFound
+		}
+		return reporting.Report{}, fmt.Errorf("storage: get report %s: %w", id, err)
+	}
+	var rep reporting.Report
+	if err := rep.UnmarshalPayload(payload); err != nil {
+		return reporting.Report{}, err
+	}
+	return rep, nil
 }
 
 func deref(s *string) string {

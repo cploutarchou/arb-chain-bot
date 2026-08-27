@@ -12,7 +12,7 @@ import (
 func (e *Engine) AIInput(kind ai.AnalysisKind) ai.Input {
 	st := e.Status()
 	in := ai.Input{
-		Kind: kind, At: time.Now().UTC(), Mode: string(e.cfg.Mode),
+		Kind: kind, At: time.Now().UTC(), Mode: string(e.Mode()),
 		// Honest labeling: these counters accumulate since process start;
 		// they are NOT per-analysis-period deltas (audit P3).
 		CountersScope: "cumulative since process start",
