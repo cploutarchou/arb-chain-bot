@@ -31,7 +31,16 @@ type Options struct {
 	TolBps  *decimal.Decimal
 	Seed    int64
 	IDGen   func() string
+	// Entitle, when set, is consulted before every automatic paper
+	// execution (T-082): it resolves the rule's organisation and
+	// answers whether the strategy, the concurrent-position cap and the
+	// size cap allow it. nil = no gating (single-tenant profiles/tests).
+	Entitle EntitlementCheck
 }
+
+// EntitlementCheck answers (reason, ok) for one prospective execution;
+// reason is recorded as the skipped position's detail when !ok.
+type EntitlementCheck func(ctx context.Context, ruleID, strategy string, sizeQuote decimal.Decimal) (reason string, ok bool)
 
 // Executor is the auto-paper engine: one instance per process.
 type Executor struct {
@@ -44,6 +53,8 @@ type Executor struct {
 	tolBps  decimal.Decimal
 	seed    int64
 	idGen   func() string
+
+	entitle EntitlementCheck
 
 	mu       sync.Mutex // serialises executions and balance changes
 	wallets  map[screener.Venue]*reservation.Manager
@@ -73,7 +84,8 @@ func New(svc *screener.Service, ledger Ledger, log *slog.Logger, opts Options) *
 		log = slog.Default()
 	}
 	x := &Executor{svc: svc, ledger: ledger, log: log, waiter: opts.Waiter, latency: DefaultLatency,
-		tolBps: DefaultLimitToleranceBps, seed: opts.Seed, idGen: opts.IDGen, wallets: map[screener.Venue]*reservation.Manager{}}
+		tolBps: DefaultLimitToleranceBps, seed: opts.Seed, idGen: opts.IDGen, wallets: map[screener.Venue]*reservation.Manager{},
+		entitle: opts.Entitle}
 	if x.waiter == nil {
 		x.waiter = simulation.RealWaiter{}
 	}
@@ -104,6 +116,17 @@ func (x *Executor) OnOpen(ctx context.Context, s alerts.Signal, ev screener.Even
 		return
 	}
 	now := s.At
+	// Entitlement preconditions (packages.md §3.2 auto_paper.*): the
+	// rule's organisation may not have the strategy, may be over its
+	// concurrent-position cap, or may cap the per-execution size. The
+	// signal still fired as an alert; only the paper leg is skipped,
+	// recorded as skipped: entitlement.
+	if x.entitle != nil {
+		if reason, ok := x.entitle(ctx, s.Rule.ID, string(s.Strategy), s.Rule.PaperSizeQuote); !ok {
+			x.skip(ctx, s, ev, now, "entitlement", reason)
+			return
+		}
+	}
 	switch s.Strategy {
 	case screener.StrategyCrossVenueSpot:
 		x.executeSpot(ctx, s, ev, now)

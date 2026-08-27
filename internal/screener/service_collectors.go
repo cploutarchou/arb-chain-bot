@@ -18,8 +18,23 @@ type VenueStatus struct {
 	PerpContracts int        `json:"perp_contracts"`
 	RateLimited   int        `json:"rate_limited"`
 	Polls         int64      `json:"polls"`
-	LastError     string     `json:"error,omitempty"`
+	// Restarts counts how many times the self-healing loop (T-079,
+	// Automation.healCollectors) replaced this venue's goroutine because
+	// it had not completed a poll for 5 × poll_interval_s.
+	Restarts  int64  `json:"restarts"`
+	LastError string `json:"error,omitempty"`
 }
+
+// StaleRestarter is the optional CollectorRunner extension the
+// Automation loop uses for self-healing: RestartStale replaces every
+// venue loop whose last completed poll (or start) is older than maxAge
+// and returns the venues it restarted. venue.Poller implements it.
+type StaleRestarter interface {
+	RestartStale(now time.Time, maxAge time.Duration) []Venue
+}
+
+// StaleAfterPolls is the self-healing threshold in poll intervals.
+const StaleAfterPolls = 5
 
 // CollectorRunner is what venue.Poller implements; the Service only
 // needs start/stop/status.

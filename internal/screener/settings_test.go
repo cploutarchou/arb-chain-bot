@@ -16,8 +16,8 @@ func TestDefaultsValidates(t *testing.T) {
 	}
 	for id := range KnownVenues {
 		v, ok := def.Venues[id]
-		if !ok || !v.Enabled {
-			t.Fatalf("Defaults() venue %s not enabled", id)
+		if !ok || v.Enabled == tier2Venues[id] { // Tier-1 on, Tier-2 opt-in (T-075)
+			t.Fatalf("Defaults() venue %s enabled=%v", id, v.Enabled)
 		}
 	}
 	if !def.Venues[VenueBybit].PerpTakerBps.Equal(d("5.5")) {

@@ -120,7 +120,26 @@ never inferred. The vault's exchange group remains unread.
   in docs/research/screener-endpoints.md), transfer fee not included
   unless the calculator is given one; the row says "no-transfer model".
 - Liquidity = min over the two sides of top-of-book qty × price, in
-  quote currency.
+  quote currency. When either side's collector publishes no sizes
+  (Gate's bulk ticker) the row carries `liquidity_quote: null,
+  liquidity_unknown: true`; an unknown is never shown as 0 and never
+  compared with a minimum. Such rows are hidden by default
+  (`include_unknown_liquidity=1` shows them) and the evaluator /
+  executor skip them as `LIQUIDITY_UNKNOWN`.
+- Asset-identity guard (`internal/screener/guard.go`, one function for
+  the table, the alert evaluator and the paper executor): a lane is
+  `suspect` when the two venues' mids differ by more than
+  `settings.max_plausible_spread_bps` (default 2000 = 20 %, 100..100000,
+  hot) — `suspect_reason: spread_exceeds_max_plausible` — or, with ≥ 3
+  venues quoting the pair, when either side's mid is more than 50 % from
+  the cross-venue median — `price_deviates_from_median`. The same ticker
+  on two venues is not necessarily the same asset (live 2026-08-27: VON
+  gate→mexc "1 922 997 909 779 bps", TROLL, XTER); suspect rows are
+  hidden by default (`include_suspect=1` shows them, flagged), have no
+  lifetime, and are skipped as `SUSPECT_MISMATCH` by the evaluator and
+  executor. Nothing is persisted; the verdict is recomputed per request.
+- Quote assets are exact: USDT, USDC, FDUSD and USD are distinct quotes
+  and are never merged; `?quote=` accepts a comma list.
 - Lifetime = seconds since the spread first exceeded the row's filter
   threshold without dropping below it.
 - Data age per side; rows older than 3 × poll interval are greyed.
@@ -184,18 +203,28 @@ the rest of the API. Reads need `screener:view` (VIEWER+), mutations
 ```
 GET  /screener/status
   { venues: [{id, name, enabled, online, last_poll_at, poll_ms,
-              spot_pairs, perp_contracts, rate_limited, error?}],
+              spot_pairs, perp_contracts, rate_limited, polls, restarts, error?}],
     pairs_tracked, spreads_per_sec, poll_interval_s, updated_at }
+  restarts: how many times the self-healing check replaced the venue's
+  collector goroutine (no completed poll for 5 × poll_interval_s).
 
 GET  /screener/spreads?min_spread_bps=&min_liquidity=&min_lifetime_s=
-      &buy=binance,okx&sell=&quote=USDT&base=&limit=200
+      &buy=binance,okx&sell=&quote=USDT,USDC&base=&limit=200
+      &include_suspect=0|1&include_unknown_liquidity=0|1
+  min_liquidity defaults to settings.min_liquidity_quote; quote is an
+  exact comma list (USDT/USDC/FDUSD/USD never merged); suspect and
+  unknown-liquidity lanes are excluded unless the include flag is 1.
   { rows: [{ base, quote, buy_venue, sell_venue,
              buy_ask, buy_ask_qty, sell_bid, sell_bid_qty,
-             spread_bps_gross, spread_bps_net, liquidity_quote,
+             spread_bps_gross, spread_bps_net,
+             liquidity_quote: "decimal" | null, liquidity_unknown: bool,
+             suspect: bool, suspect_reason?: "spread_exceeds_max_plausible"|"price_deviates_from_median",
              lifetime_s, first_seen_at, buy_age_ms, sell_age_ms,
              buy_fee_bps, sell_fee_bps,
              networks: { buy_withdraw: "open|closed|unknown", sell_deposit: "...", reason? } }],
-    total, generated_at, model: "no-transfer, top-of-book" }
+    total, excluded: { suspect, liquidity_unknown },
+    filters: { min_liquidity, include_suspect, include_unknown_liquidity, max_plausible_spread_bps },
+    generated_at, model: "no-transfer, top-of-book" }
 
 GET  /screener/perpetuals?venue=&base=&min_carry_apr=&limit=
   { rows: [{ venue, base, quote, spot_mid, perp_mark, perp_index,
@@ -214,6 +243,7 @@ POST /screener/calculator
 GET  /screener/settings            { version, created_at, settings, field_timing }
 POST /screener/settings            { parent_version, settings }        (ADMIN)
   settings = { poll_interval_s, min_liquidity_quote,
+               max_plausible_spread_bps,        (default 2000; 100..100000; hot)
                venues: { <id>: { enabled, spot_taker_bps, perp_taker_bps, perps_enabled } },
                paper: { balances: { <venue>: { <asset>: "decimal" } } } }
 
@@ -233,6 +263,21 @@ GET  /screener/events?rule_id=&limit=      alert history
                telegram_sent, paper_execution_id? }] }
 
 GET  /screener/auto-paper          { positions: [...], summary: { per_rule: [{rule_id, alerts, executed, skipped: {reason: n}, net_pnl_quote, hit_rate, mean_lifetime_s}] } }
+
+GET  /screener/reports?limit=      nightly paper reports (T-078), screener:view
+  { reports: [{ id, period_start, period_end, period_label: "day"|"cumulative",
+                strategy, rule_id ("" = per strategy), n, net_pnl_quote,
+                gate_passed, gate_total, created_at }],
+    last_run?: { day, started_at, duration_ms, reports[], errors[]?, dir? },
+    next_run_utc, generated_at }
+GET  /screener/reports/{id}        { report: { …summary fields, payload: { window, stats (strategy-models §7),
+                                     gate: [{item, name, status: "pass"|"fail", reason}], gate_passed, gate_total,
+                                     generated_at, data_age_ms, model, notes[], files }, md } }
+POST /screener/reports/run         generate now for the previous UTC day + cumulative   (ADMIN, CSRF, audited)
+  → { run: { day, started_at, duration_ms, reports[], errors[]? } }
+  Files: <ARB_RECORDING_DIR>/screener-reports/<YYYY-MM-DD>/<strategy>[__<rule>]__<day|cumulative>.{md,json};
+  rows in screener_reports (migration 000012); one Telegram summary per run
+  (measurement wording, fixed footer). Scheduled daily at 00:05 UTC.
 
 GET  /screener/templates           { templates: [{id, name, filters}] }   (per user)
 POST /screener/templates / DELETE /screener/templates/{id}

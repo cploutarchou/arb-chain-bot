@@ -83,8 +83,8 @@ func TestScreenerStatusHonestAboutCollectors(t *testing.T) {
 	if env.Data.Collectors != "not_started" {
 		t.Fatalf("collectors = %q, want not_started", env.Data.Collectors)
 	}
-	if len(env.Data.Venues) != 6 {
-		t.Fatalf("venues = %d, want 6", len(env.Data.Venues))
+	if len(env.Data.Venues) != len(screener.OrderedVenues) {
+		t.Fatalf("venues = %d, want %d (every known venue, enabled or not)", len(env.Data.Venues), len(screener.OrderedVenues))
 	}
 	for _, v := range env.Data.Venues {
 		if v.Online {
@@ -110,6 +110,9 @@ func TestScreenerSpreadsReadOverPopulatedBook(t *testing.T) {
 	})
 
 	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	// The book's liquidity is 200 quote; the default min_liquidity is
+	// settings.min_liquidity_quote (500), so the same request WITHOUT
+	// the parameter hides both lanes — asserted first.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/screener/spreads", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -119,10 +122,27 @@ func TestScreenerSpreadsReadOverPopulatedBook(t *testing.T) {
 	}
 	var env struct {
 		Data struct {
-			Total int                  `json:"total"`
-			Rows  []screener.SpreadRow `json:"rows"`
+			Total   int                  `json:"total"`
+			Rows    []screener.SpreadRow `json:"rows"`
+			Filters struct {
+				MinLiquidity string `json:"min_liquidity"`
+			} `json:"filters"`
 		} `json:"data"`
 	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.Total != 0 || env.Data.Filters.MinLiquidity != "500" {
+		t.Fatalf("default request: total = %d (want 0), min_liquidity = %q (want 500)", env.Data.Total, env.Data.Filters.MinLiquidity)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/screener/spreads?min_liquidity=0", nil)
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("spreads = %d: %s", rec.Code, rec.Body.String())
+	}
+	env.Data.Rows = nil
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}

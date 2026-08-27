@@ -1195,7 +1195,12 @@ export interface ScreenerSpreadRow {
   sell_bid_qty: string;
   spread_bps_gross: string;
   spread_bps_net: string;
-  liquidity_quote: string;
+  /** null when either venue publishes no top-of-book size (liquidity_unknown). */
+  liquidity_quote: string | null;
+  liquidity_unknown: boolean;
+  /** Asset-identity guard: same ticker, different asset; excluded unless include_suspect=1. */
+  suspect: boolean;
+  suspect_reason?: string;
   lifetime_s: number;
   first_seen_at: string;
   buy_age_ms: number;

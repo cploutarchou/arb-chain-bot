@@ -74,7 +74,7 @@ type PaperSettings struct {
 }
 
 var (
-	maxFeeBps = decimal.NewFromInt(100)
+	maxFeeBps = decimal.NewFromInt(200)
 )
 
 // Clone returns a deep copy; no caller can mutate a stored version
@@ -160,7 +160,20 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 	VenueBitget:  {spotBps: "10", perpBps: "6"},
 	VenueGate:    {spotBps: "20", perpBps: "5"},
 	VenueMEXC:    {spotBps: "5", perpBps: "2"},
+	// T-075 Tier-2 (docs/research/venues/<venue>.md §fees): KuCoin and
+	// Kraken verified from primary; HTX and Coinbase UNVERIFIED placeholders.
+	// Coinbase's UNVERIFIED regular-tier taker is 1.20 % (120 bps); the fee
+	// cap is 200 bps to admit it.
+	VenueKuCoin:   {spotBps: "10", perpBps: "6"},
+	VenueHTX:      {spotBps: "20", perpBps: "6"},
+	VenueKraken:   {spotBps: "80", perpBps: "5"},
+	VenueCoinbase: {spotBps: "120", perpBps: "5"},
 }
+
+// tier2Venues start disabled (T-075: opt-in until a 30-min soak with zero
+// 429/418 per docs/design/scanner-suite.md / venue-connector SKILL step 5).
+// Coinbase has no retail perps (docs/research/venues/coinbase.md §3).
+var tier2Venues = map[Venue]bool{VenueKuCoin: true, VenueHTX: true, VenueKraken: true, VenueCoinbase: true}
 
 // Defaults returns the first-boot document: all six target venues
 // enabled with placeholder regular-tier taker fees (spot/perp) "to be
@@ -171,7 +184,7 @@ func Defaults() Settings {
 	for _, id := range OrderedVenues {
 		f := defaultVenueFees[id]
 		venues[id] = VenueSettings{
-			Enabled: true, PerpsEnabled: true,
+			Enabled: !tier2Venues[id], PerpsEnabled: id != VenueCoinbase,
 			SpotTakerBps: decimal.RequireFromString(f.spotBps),
 			PerpTakerBps: decimal.RequireFromString(f.perpBps),
 		}

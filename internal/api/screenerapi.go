@@ -13,6 +13,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/entitlements"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 )
 
@@ -73,6 +74,13 @@ func (s *Server) screenerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/screener/events", view(s.handleScreenerEvents))
 	mux.HandleFunc("GET /api/v1/screener/auto-paper", view(s.handleScreenerAutoPaper))
 
+	// T-078 nightly reports: reads are screener:view; the on-demand run
+	// is ADMIN (screener:config) + CSRF + audit like every other
+	// screener mutation. 503 when no generator runs in this profile.
+	mux.HandleFunc("GET /api/v1/screener/reports", view(s.handleScreenerReportsList))
+	mux.HandleFunc("GET /api/v1/screener/reports/{id}", view(s.handleScreenerReportGet))
+	mux.HandleFunc("POST /api/v1/screener/reports/run", config(s.handleScreenerReportsRun))
+
 	// Templates are per-user (design §7's route table tags them
 	// "(per user)", NOT "(ADMIN)" the way every other mutation in this
 	// group is tagged) — any caller who can view the screener may save
@@ -117,6 +125,7 @@ func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
 			row["rate_limited"] = st.RateLimited > 0
 			row["rate_limited_count"] = st.RateLimited
 			row["polls"] = st.Polls
+			row["restarts"] = st.Restarts
 			row["error"] = st.LastError
 		}
 		venues = append(venues, row)
@@ -422,6 +431,19 @@ func (s *Server) handleScreenerSettingsApply(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	principal, _ := PrincipalFrom(r.Context())
+	// rules.min_refresh_s and venues.screener_max (packages.md §3.2).
+	if s.writeEntitlementError(w, r, principal.Ent().CheckRefresh(body.Settings.PollIntervalS)) {
+		return
+	}
+	enabled := make([]string, 0, len(body.Settings.Venues))
+	for id, vs := range body.Settings.Venues {
+		if vs.Enabled {
+			enabled = append(enabled, string(id))
+		}
+	}
+	if s.writeEntitlementError(w, r, principal.Ent().CheckVenues(enabled)) {
+		return
+	}
 	snap, err := s.Screener.ApplyExpect(r.Context(), principal.UserID, "web", body.Settings, *body.ParentVersion)
 	if err != nil {
 		s.writeScreenerError(w, r, err)
@@ -463,6 +485,15 @@ func (s *Server) handleScreenerRuleCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	principal, _ := PrincipalFrom(r.Context())
+	existing, err := s.Screener.Rules.ListRules(r.Context())
+	if err != nil {
+		s.log.Error("screener rules list failed", "error", err)
+		WriteError(w, http.StatusInternalServerError, "rules_list_failed", "listing rules failed", correlationID(r))
+		return
+	}
+	if s.writeEntitlementError(w, r, principal.Ent().CheckRuleCount(len(existing))) || !s.enforceRule(w, r, principal.Ent(), rule) {
+		return
+	}
 	created, err := s.Screener.Rules.InsertRule(r.Context(), rule, principal.UserID)
 	if err != nil {
 		s.log.Error("screener rule create failed", "error", err)
@@ -484,6 +515,9 @@ func (s *Server) handleScreenerRuleUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	principal, _ := PrincipalFrom(r.Context())
+	if !s.enforceRule(w, r, principal.Ent(), rule) {
+		return
+	}
 	updated, err := s.Screener.Rules.UpdateRule(r.Context(), rule, principal.UserID)
 	if err != nil {
 		s.writeScreenerError(w, r, err)
@@ -491,6 +525,37 @@ func (s *Server) handleScreenerRuleUpdate(w http.ResponseWriter, r *http.Request
 	}
 	s.audit(r, principal.UserID, "screener.rule.update", "screener_rule:"+rule.ID)
 	WriteData(w, http.StatusOK, map[string]any{"rule": updated})
+}
+
+// enforceRule applies the packages.md §3.2 rule-level entitlements:
+// kind, venues (fixed set / count), cooldown floor, Telegram channel,
+// and — when the rule asks for automatic paper execution — the
+// strategy list and the decimal size cap. Writes the 403 itself.
+func (s *Server) enforceRule(w http.ResponseWriter, r *http.Request, ent entitlements.Entitlements, rule screener.Rule) bool {
+	venues := make([]string, 0, len(rule.BuyVenues)+len(rule.SellVenues))
+	for _, v := range rule.BuyVenues {
+		venues = append(venues, string(v))
+	}
+	for _, v := range rule.SellVenues {
+		venues = append(venues, string(v))
+	}
+	checks := []error{
+		ent.CheckRuleKind(string(rule.Kind)),
+		ent.CheckVenues(venues),
+		ent.CheckCooldown(rule.CooldownS),
+	}
+	if rule.Telegram {
+		checks = append(checks, ent.CheckChannel("telegram"))
+	}
+	if rule.AutoPaper {
+		checks = append(checks, ent.CheckAutoPaper(string(rule.EffectiveStrategy()), rule.PaperSizeQuote))
+	}
+	for _, err := range checks {
+		if s.writeEntitlementError(w, r, err) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleScreenerRuleDelete(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +578,19 @@ func (s *Server) handleScreenerEvents(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "events_list_failed", "listing events failed", correlationID(r))
 		return
 	}
-	WriteData(w, http.StatusOK, map[string]any{"events": events})
+	// history.retention_days: rows older than the package depth are
+	// invisible through the API (packages.md §3.2); they are not
+	// deleted here (30-day grace on downgrade belongs to the retention
+	// job).
+	principal, _ := PrincipalFrom(r.Context())
+	cutoff := principal.Ent().RetentionCutoff(time.Now().UTC())
+	visible := make([]screener.Event, 0, len(events))
+	for _, e := range events {
+		if !e.OpenedAt.Before(cutoff) {
+			visible = append(visible, e)
+		}
+	}
+	WriteData(w, http.StatusOK, map[string]any{"events": visible, "retention_days": principal.Ent().History.RetentionDays})
 }
 
 // handleScreenerAutoPaper serves the T-071 executor's read model
@@ -577,6 +654,15 @@ func (s *Server) handleScreenerTemplateCreate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	principal, _ := PrincipalFrom(r.Context())
+	existing, err := s.Screener.Templates.ListTemplates(r.Context(), principal.UserID)
+	if err != nil {
+		s.log.Error("screener templates list failed", "error", err)
+		WriteError(w, http.StatusInternalServerError, "templates_list_failed", "listing templates failed", correlationID(r))
+		return
+	}
+	if s.writeEntitlementError(w, r, principal.Ent().CheckTemplateCount(len(existing))) {
+		return
+	}
 	tpl := screener.Template{ID: newScreenerID("tpl"), UserID: principal.UserID, Name: body.Name, Filters: body.Filters}
 	created, err := s.Screener.Templates.InsertTemplate(r.Context(), tpl)
 	if err != nil {
