@@ -24,6 +24,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -94,6 +95,18 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		// API-profile fallback catalog; overridden below by engineCatalog
 		// (preferred) when this profile actually runs an engine.
 		platformSvc.Catalog = storage.Catalog{S: store}
+	}
+
+	// screener.Service (T-067/T-068, docs/design/scanner-suite.md §2):
+	// the Scanner Suite backend core. Collectors (T-066) are not wired
+	// here — the book starts and stays empty until they land, which GET
+	// /screener/status reports honestly. Built unconditionally (like
+	// platformSvc above) so every profile can serve the read routes;
+	// only the API profile actually attaches it to a Server below.
+	screenerSvc, err := buildScreener(log, store)
+	if err != nil {
+		log.Error("screener settings load failed; refusing to start without a validated settings document", "error", err)
+		return []Component{ComponentFunc{ComponentName: "screener-settings", Fn: func(context.Context) error { return err }}}
 	}
 
 	// platform.log_level is hot (T-059 D6): the process-wide LevelVar
@@ -398,6 +411,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			return r
 		})
 		apiServer.Secrets = secretsMgr
+		apiServer.Screener = screenerSvc
 		apiServer.AIStatus = func() api.AIRuntimeStatus {
 			st := aiState.get()
 			u := aiSvc.Usage()
@@ -1005,6 +1019,58 @@ func newPlatformService(log *slog.Logger, st platform.Store, audit func(context.
 	defer cancel()
 	if _, err := svc.Load(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("app: platform settings load failed: %w", err)
+	}
+	return svc, nil
+}
+
+// buildScreener wires the Scanner Suite backend core (T-067/T-068):
+// DB-backed settings/rules/events/templates/funding rows when
+// persistence is enabled, in-memory otherwise (mirrors buildPlatform
+// exactly, down to the P2-4 hard-failure-on-load-error policy — a
+// settings document that failed to load must not silently become a
+// re-seeded MemoryStore, discarding whatever was persisted). Unlike
+// platform.Seed, screener.Defaults() takes no bootstrap env — the
+// document's v1 seed is fixed, so this takes no cfg.
+func buildScreener(log *slog.Logger, store *storage.Store) (*screener.Service, error) {
+	var (
+		st        screener.SettingsStore
+		rules     screener.RuleStore
+		events    screener.EventStore
+		templates screener.TemplateStore
+		funding   screener.FundingStore
+		audit     func(context.Context, screener.AuditEvent)
+	)
+	if store != nil {
+		st = store.ScreenerSettings()
+		rules = store.ScreenerRules()
+		events = store.ScreenerEvents()
+		templates = store.ScreenerTemplates()
+		funding = store.ScreenerFunding()
+		audit = func(ctx context.Context, ev screener.AuditEvent) {
+			row := storage.AuditRow{
+				ID: newULID(), Actor: ev.Actor, Source: ev.Source,
+				Action: ev.Action, Entity: ev.Entity, EntityID: ev.EntityID,
+				Before: ev.Before, After: ev.After,
+			}
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := store.InsertAuditEvent(ctx, row); err != nil {
+				log.Error("screener settings audit insert failed", "action", ev.Action, "error", err)
+			}
+		}
+	} else {
+		st = screener.NewMemoryStore()
+		rules = screener.NewMemoryRuleStore()
+		events = screener.NewMemoryEventStore()
+		templates = screener.NewMemoryTemplateStore()
+		funding = screener.NewMemoryFundingStore()
+	}
+	svc := screener.NewService(screener.NewBook(), st, log, audit)
+	svc.Rules, svc.Events, svc.Templates, svc.Funding = rules, events, templates, funding
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := svc.Load(ctx); err != nil {
+		return nil, fmt.Errorf("app: screener settings load failed: %w", err)
 	}
 	return svc, nil
 }

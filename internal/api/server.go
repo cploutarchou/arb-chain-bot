@@ -22,6 +22,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
@@ -114,6 +115,12 @@ type Server struct {
 	// AIStatus, when set, backs GET /api/v1/ai/status and the
 	// "warnings" field on a platform-settings apply.
 	AIStatus func() AIRuntimeStatus
+	// Screener, when set, backs the Scanner Suite routes (T-067/T-068:
+	// spreads/perpetuals/funding/calculator/settings/rules/events/
+	// templates/auto-paper). nil (no engine profile runs it yet) 503s
+	// those routes rather than 404ing — the subsystem exists in this
+	// build, it just is not wired in this profile.
+	Screener *screener.Service
 
 	// allowedOrigin is platform.allowed_origin (hot, D7): the websocket
 	// origin check reads it through an atomic accessor because the
@@ -289,6 +296,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.platformRoutes(mux)
 	s.secretsRoutes(mux)
 	s.telegramRoutes(mux)
+	s.screenerRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):
 		// metric names and label values map the platform's internals.
