@@ -89,11 +89,11 @@ func TestSecretsUnknownAndInvalidAndVaultUnavailable(t *testing.T) {
 	cookie, csrf := login(t, mux, "admin@example.test", "admin-pw")
 	body := `{"value":"` + testSecretValue + `"}`
 
-	rec := doSecret(t, mux, http.MethodPut, "/api/v1/secrets/binance_api_key", cookie, csrf, body)
+	rec := doSecret(t, mux, http.MethodPut, "/api/v1/secrets/kraken_api_key", cookie, csrf, body)
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "unknown_secret") {
 		t.Fatalf("unknown name = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := doSecret(t, mux, http.MethodDelete, "/api/v1/secrets/binance_api_key", cookie, csrf, ""); rec.Code != http.StatusNotFound {
+	if rec := doSecret(t, mux, http.MethodDelete, "/api/v1/secrets/kraken_api_key", cookie, csrf, ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown delete = %d", rec.Code)
 	}
 	rec = doSecret(t, mux, http.MethodPut, "/api/v1/secrets/anthropic_api_key", cookie, csrf, `{"value":"short"}`)
@@ -129,7 +129,7 @@ func TestSecretsUnknownAndInvalidAndVaultUnavailable(t *testing.T) {
 		} `json:"data"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
-	if env.Data.VaultConfigured || env.Data.Reason == "" || env.Data.KeyID != "" || len(env.Data.Secrets) != 2 {
+	if env.Data.VaultConfigured || env.Data.Reason == "" || env.Data.KeyID != "" || len(env.Data.Secrets) != len(secrets.Known) {
 		t.Fatalf("closed vault GET = %+v", env.Data)
 	}
 	if strings.Contains(rec.Body.String(), "env-telegram-token") {
