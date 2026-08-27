@@ -27,6 +27,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/alerts"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/report"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/venue"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
@@ -141,6 +142,10 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	// two registry entries. A missing/invalid ARB_SECRET_KEY closes the
 	// vault; the platform keeps running on env-provided secrets.
 	secretsMgr := buildSecrets(log, store, cfg)
+	// Tenancy + entitlements + billing (T-081..T-083): pgx-backed when
+	// persistence is on; without a database every account acts in the
+	// platform organisation and billing is unconfigured.
+	tenant := buildTenancy(log, store, secretsMgr, cfg)
 
 	// Metrics are always built (near-zero idle cost); a registration
 	// failure logs and the platform runs unobserved rather than not at all.
@@ -168,16 +173,29 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	// ledger is migration 000011 (screener_paper_*) when persistence is
 	// on, in-memory otherwise; it never touches paper_cycles nor places
 	// a real order (execution.LiveExecutor stays disabled).
+	var screenerReports *report.Generator
 	if p == ProfileFull || p == ProfileAPI {
 		var ledger paperexec.Ledger = paperexec.NewMemoryLedger()
 		if store != nil {
 			ledger = store.ScreenerPaper()
 		}
 		evaluator := alerts.New(screenerSvc, notify.Notify, log)
-		executor := paperexec.New(screenerSvc, ledger, log, paperexec.Options{Seed: 1, IDGen: newULID})
+		executor := paperexec.New(screenerSvc, ledger, log, paperexec.Options{Seed: 1, IDGen: newULID, Entitle: tenant.paperEntitle(ledger)})
 		evaluator.OnOpen(executor.OnOpen)
 		screenerSvc.SetAutoPaper(executor)
 		others = append(others, screener.NewAutomation(screenerSvc, executor, evaluator))
+
+		// T-078: nightly (00:05 UTC) and on-demand paper reports per
+		// strategy / rule over the same ledger; files under
+		// <ARB_RECORDING_DIR>/screener-reports/<date>/, rows in
+		// screener_reports (migration 000012), one Telegram summary.
+		var reportStore report.Store = report.NewMemoryStore()
+		if store != nil {
+			reportStore = store.ScreenerReports()
+		}
+		screenerReports = &report.Generator{Svc: screenerSvc, Ledger: ledger, Store: reportStore, Notify: notify.Notify,
+			Dir: cfg.RecordingDir, Log: log, IDGen: newULID, Seed: 1}
+		others = append(others, &report.Scheduler{Gen: screenerReports})
 	}
 
 	// The alert center records every delivery (routing controls channels,
@@ -451,7 +469,12 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			return r
 		})
 		apiServer.Secrets = secretsMgr
+		apiServer.Tenancy = tenant.store
+		apiServer.Entitlements = tenant.resolver
+		apiServer.Billing = tenant.billing
+		apiServer.RiskAckVersion = RiskDisclosureVersion
 		apiServer.Screener = screenerSvc
+		apiServer.ScreenerReports = screenerReports
 		apiServer.AIStatus = func() api.AIRuntimeStatus {
 			st := aiState.get()
 			u := aiSvc.Usage()
@@ -727,8 +750,10 @@ func buildAdvisor(settings platform.AISettings, log *slog.Logger, src secrets.Se
 // next process restart.
 func buildSecrets(log *slog.Logger, store *storage.Store, cfg config.Bootstrap) *secrets.Manager {
 	env := secrets.Env{
-		"anthropic_api_key":  cfg.AnthropicAPIKey,
-		"telegram_bot_token": cfg.TelegramToken,
+		"anthropic_api_key":     cfg.AnthropicAPIKey,
+		"telegram_bot_token":    cfg.TelegramToken,
+		"paddle_api_key":        cfg.PaddleAPIKey,
+		"paddle_webhook_secret": cfg.PaddleWebhookSecret,
 	}
 	key, err := secrets.KeyFromEnv()
 	switch {

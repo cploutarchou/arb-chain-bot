@@ -65,7 +65,15 @@ type Bootstrap struct {
 
 	// AI advisor (optional; empty key disables the advisor)
 	AnthropicAPIKey string
-	AIModel         string
+	// Paddle Billing (T-083). The API key and webhook secret are env
+	// fallbacks for the secrets vault (registry: paddle_api_key,
+	// paddle_webhook_secret); the client token is public (Paddle.js) and
+	// PaddleEnv is "sandbox" (default) or "production".
+	PaddleAPIKey        string
+	PaddleWebhookSecret string
+	PaddleClientToken   string
+	PaddleEnv           string
+	AIModel             string
 	// AIProvider selects the implementation: "anthropic" (default when
 	// the key is set), "fake" (deterministic; dev/tests), "" = disabled.
 	AIProvider string
@@ -81,24 +89,28 @@ type Bootstrap struct {
 // safe defaults; invalid values return an error rather than a guess.
 func Load() (Bootstrap, error) {
 	b := Bootstrap{
-		Mode:            Mode(getenv("ARB_MODE", string(ModeMarketData))),
-		HTTPAddr:        getenv("ARB_HTTP_ADDR", ":8080"),
-		MetricsAddr:     getenv("ARB_METRICS_ADDR", ""),
-		DatabaseURL:     os.Getenv("ARB_DATABASE_URL"),
-		LogLevel:        getenv("ARB_LOG_LEVEL", "info"),
-		ShutdownGrace:   15 * time.Second,
-		RecordingDir:    getenv("ARB_RECORDING_DIR", "recordings"),
-		ReplaySession:   os.Getenv("ARB_REPLAY_SESSION"),
-		Symbols:         splitList(getenv("ARB_SYMBOLS", "BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT")),
-		StartingAssets:  splitList(getenv("ARB_STARTING_ASSETS", "USDT,USDC")),
-		PaperBalance:    getenv("ARB_PAPER_BALANCE", "10000"),
-		TelegramToken:   os.Getenv("ARB_TELEGRAM_TOKEN"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		AIModel:         getenv("ARB_AI_MODEL", "claude-sonnet-5"),
-		AIProvider:      os.Getenv("ARB_AI_PROVIDER"),
-		AllowedOrigin:   getenv("ARB_ALLOWED_ORIGIN", "http://localhost:3000"),
-		AdminEmail:      os.Getenv("ARB_ADMIN_EMAIL"),
-		AdminPassword:   os.Getenv("ARB_ADMIN_PASSWORD"),
+		Mode:                Mode(getenv("ARB_MODE", string(ModeMarketData))),
+		HTTPAddr:            getenv("ARB_HTTP_ADDR", ":8080"),
+		MetricsAddr:         getenv("ARB_METRICS_ADDR", ""),
+		DatabaseURL:         os.Getenv("ARB_DATABASE_URL"),
+		LogLevel:            getenv("ARB_LOG_LEVEL", "info"),
+		ShutdownGrace:       15 * time.Second,
+		RecordingDir:        getenv("ARB_RECORDING_DIR", "recordings"),
+		ReplaySession:       os.Getenv("ARB_REPLAY_SESSION"),
+		Symbols:             splitList(getenv("ARB_SYMBOLS", "BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT")),
+		StartingAssets:      splitList(getenv("ARB_STARTING_ASSETS", "USDT,USDC")),
+		PaperBalance:        getenv("ARB_PAPER_BALANCE", "10000"),
+		TelegramToken:       os.Getenv("ARB_TELEGRAM_TOKEN"),
+		AnthropicAPIKey:     os.Getenv("ANTHROPIC_API_KEY"),
+		PaddleAPIKey:        os.Getenv("PADDLE_API_KEY"),
+		PaddleWebhookSecret: os.Getenv("PADDLE_WEBHOOK_SECRET"),
+		PaddleClientToken:   os.Getenv("PADDLE_CLIENT_TOKEN"),
+		PaddleEnv:           os.Getenv("PADDLE_ENV"),
+		AIModel:             getenv("ARB_AI_MODEL", "claude-sonnet-5"),
+		AIProvider:          os.Getenv("ARB_AI_PROVIDER"),
+		AllowedOrigin:       getenv("ARB_ALLOWED_ORIGIN", "http://localhost:3000"),
+		AdminEmail:          os.Getenv("ARB_ADMIN_EMAIL"),
+		AdminPassword:       os.Getenv("ARB_ADMIN_PASSWORD"),
 	}
 	if !b.Mode.Valid() {
 		return Bootstrap{}, fmt.Errorf("config: invalid ARB_MODE %q", b.Mode)
@@ -144,6 +156,18 @@ func (b Bootstrap) Redacted() Bootstrap {
 	c.DatabaseURL = maskDSN(c.DatabaseURL)
 	if c.TelegramToken != "" {
 		c.TelegramToken = "***"
+	}
+	if c.PaddleAPIKey != "" {
+		c.PaddleAPIKey = "***"
+	}
+	if c.PaddleWebhookSecret != "" {
+		c.PaddleWebhookSecret = "***"
+	}
+	// Public by design (Paddle.js), but masked anyway: the redaction
+	// test treats every *Token field as secret-looking and nothing
+	// needs it in a log line.
+	if c.PaddleClientToken != "" {
+		c.PaddleClientToken = "***"
 	}
 	if c.AnthropicAPIKey != "" {
 		c.AnthropicAPIKey = "***"

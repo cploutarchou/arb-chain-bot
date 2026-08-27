@@ -1,0 +1,100 @@
+{
+  "$id": "https://arb-chain-bot/schemas/entitlements.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "package_code", "venues", "rules", "alerts",
+               "auto_paper", "api", "history", "seats", "support", "execution"],
+  "properties": {
+    "schema_version":  { "const": 1 },
+    "package_code":    { "type": "string", "enum": ["watch", "signal", "operator", "desk", "institution"] },
+    "venues": {
+      "type": "object", "additionalProperties": false,
+      "required": ["screener_max", "screener_tiers", "screener_fixed", "triangular_max", "dex_enabled", "perps_enabled"],
+      "properties": {
+        "screener_max":    { "type": "integer", "minimum": 0, "description": "-1 = unlimited" },
+        "screener_tiers":  { "type": "array", "items": { "type": "string", "enum": ["tier1", "tier2", "dex"] } },
+        "screener_fixed":  { "type": "array", "items": { "type": "string" }, "description": "non-empty = venue set is locked to these ids (Watch)" },
+        "triangular_max":  { "type": "integer", "minimum": 0 },
+        "dex_enabled":     { "type": "boolean" },
+        "perps_enabled":   { "type": "boolean" }
+      }
+    },
+    "rules": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_active", "templates_max", "min_refresh_s", "kinds"],
+      "properties": {
+        "max_active":    { "type": "integer", "minimum": 0 },
+        "templates_max": { "type": "integer", "minimum": 0, "description": "-1 = unlimited" },
+        "min_refresh_s": { "type": "integer", "minimum": 2, "description": "lowest screener refresh interval the tenant may select" },
+        "kinds":         { "type": "array", "items": { "type": "string", "enum": ["spread", "carry", "basis", "funding", "triangular"] } }
+      }
+    },
+    "alerts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["channels", "per_day", "telegram_destinations_max", "min_cooldown_s"],
+      "properties": {
+        "channels":                  { "type": "array", "items": { "type": "string", "enum": ["web", "telegram", "email", "webhook"] } },
+        "per_day":                   { "type": "integer", "minimum": 0 },
+        "telegram_destinations_max": { "type": "integer", "minimum": 0 },
+        "min_cooldown_s":            { "type": "integer", "minimum": 1 }
+      }
+    },
+    "auto_paper": {
+      "type": "object", "additionalProperties": false,
+      "required": ["strategies", "max_open_positions", "ledgers_max", "max_size_quote"],
+      "properties": {
+        "strategies":         { "type": "array", "items": { "type": "string", "enum": ["cross_venue_spot", "carry", "futures_futures", "funding_harvest", "triangular"] } },
+        "max_open_positions": { "type": "integer", "minimum": 0 },
+        "ledgers_max":        { "type": "integer", "minimum": 1 },
+        "max_size_quote":     { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$", "description": "decimal string; per-execution paper size cap in quote currency" }
+      }
+    },
+    "api": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "scopes", "rate_per_min", "burst", "keys_max", "streaming"],
+      "properties": {
+        "enabled":      { "type": "boolean" },
+        "scopes":       { "type": "array", "items": { "type": "string", "enum": ["read", "rules:write", "templates:write", "paper:write"] } },
+        "rate_per_min": { "type": "integer", "minimum": 0 },
+        "burst":        { "type": "integer", "minimum": 0 },
+        "keys_max":     { "type": "integer", "minimum": 0 },
+        "streaming":    { "type": "boolean", "description": "WebSocket feed of spreads/events" }
+      }
+    },
+    "history": {
+      "type": "object", "additionalProperties": false,
+      "required": ["retention_days", "export_formats", "export_scheduled", "reports"],
+      "properties": {
+        "retention_days":   { "type": "integer", "minimum": 1, "description": "1 = 24 h (Watch)" },
+        "export_formats":   { "type": "array", "items": { "type": "string", "enum": ["csv", "parquet"] } },
+        "export_scheduled": { "type": "boolean" },
+        "reports":          { "type": "string", "enum": ["samples", "weekly", "nightly", "nightly_compare", "custom"] }
+      }
+    },
+    "seats": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max", "roles"],
+      "properties": {
+        "max":   { "type": "integer", "minimum": 1 },
+        "roles": { "type": "array", "items": { "type": "string", "enum": ["owner", "admin", "operator", "viewer", "custom"] } }
+      }
+    },
+    "support": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tier", "response_hours"],
+      "properties": {
+        "tier":           { "type": "string", "enum": ["community", "email", "priority", "desk", "named"] },
+        "response_hours": { "type": "integer", "minimum": 0, "description": "business hours; 0 = no commitment" }
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["paper", "live"],
+      "properties": {
+        "paper": { "const": true },
+        "live":  { "const": false, "description": "Hard-coded false in every package. Not an entitlement — see §7." }
+      }
+    },
+    "white_label": { "type": "boolean", "default": false }
+  }
+}
