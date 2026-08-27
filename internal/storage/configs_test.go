@@ -193,3 +193,75 @@ func TestQualitySamples(t *testing.T) {
 		t.Fatalf("rank = %+v", scored)
 	}
 }
+
+// TestQualitySamplesForTriangle is the review P2-3 regression:
+// QualitySamplesForTriangle must return the SAME numbers
+// QualitySamples computes for one triangle (scoped at the query level,
+// not filtered client-side), never leak a SECOND triangle's cycles into
+// the scoped result, and report ok=false — not a zero-filled Sample —
+// for a triangle with no evidence in the window.
+func TestQualitySamplesForTriangle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO exchanges (id, name) VALUES ('binance','binance') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tri := range []string{"tri-q", "tri-other"} {
+		if _, err := s.Pool.Exec(ctx, `
+			INSERT INTO triangles (id, exchange_id, starting_asset, legs, canonical_key)
+			VALUES ($1,'binance','USDT','[]'::jsonb,$1) ON CONFLICT DO NOTHING`, tri); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO opportunities (id, exchange_id, triangle_id, status, starting_asset, starting_amount, legs, detected_at)
+		VALUES
+		('op-q','binance','tri-q','QUALIFIED','USDT',1000,'[]'::jsonb, now() - interval '1 hour'),
+		('op-other','binance','tri-other','QUALIFIED','USDT',1000,'[]'::jsonb, now() - interval '1 hour')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO paper_sessions (id, mode, started_at, starting_balances, config_version, seed)
+		VALUES ('sess-q','PAPER', now(), '{}'::jsonb, 1, 1) ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO paper_cycles (id, session_id, opportunity_id, outcome, pnl_amount, pnl_asset, slippage_bps, started_at, settled_at)
+		VALUES
+		('cyc-q1','sess-q','op-q','ALL_FILLED', 2.5,'USDT',-1.2, now() - interval '50 minutes', now() - interval '49 minutes'),
+		('cyc-q2','sess-q','op-q','TIMEOUT',   -0.8,'USDT',NULL, now() - interval '40 minutes', now() - interval '39 minutes'),
+		('cyc-other1','sess-q','op-other','ALL_FILLED', 100,'USDT',-5, now() - interval '45 minutes', now() - interval '44 minutes')`); err != nil {
+		t.Fatal(err)
+	}
+
+	from, to := time.Now().Add(-24*time.Hour), time.Now()
+	sm, ok, err := s.QualitySamplesForTriangle(ctx, "tri-q", from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true: tri-q has cycles in the window")
+	}
+	if sm.TriangleID != "tri-q" || sm.Cycles != 2 || sm.Successes != 1 {
+		t.Fatalf("scoped sample = %+v, want the SAME counts QualitySamples computes for tri-q (2 cycles, 1 success) — not tri-other's leaking in", sm)
+	}
+	if !sm.NetPnL.Equal(decimal.RequireFromString("1.7")) {
+		t.Fatalf("net = %s, want 1.7 (2.5 - 0.8, NOT including tri-other's 100)", sm.NetPnL)
+	}
+	if sm.EdgeWindows != 1 || sm.WindowHours != 25 {
+		t.Fatalf("edge/windows = %d/%d", sm.EdgeWindows, sm.WindowHours)
+	}
+	if sm.SlippageSamples != 1 || !sm.AvgSlippageBps.Equal(decimal.RequireFromString("-1.2")) {
+		t.Fatalf("slippage = samples=%d avg=%s", sm.SlippageSamples, sm.AvgSlippageBps)
+	}
+
+	// Unknown triangle: honest absence, not a zero-filled Sample.
+	_, ok, err = s.QualitySamplesForTriangle(ctx, "tri-ghost", from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("a triangle with no evidence in the window must report ok=false")
+	}
+}

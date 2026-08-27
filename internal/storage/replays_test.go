@@ -89,3 +89,44 @@ func TestReplayRunUpsertGetListRoundTrip(t *testing.T) {
 		t.Fatalf("unknown id = %v", err)
 	}
 }
+
+// TestReplayRunOwnerHeartbeatRoundTrip covers migration 000009's
+// owner_id/heartbeat_at columns (review P3(h)): a row with both set
+// round-trips exactly, and a row with neither (the pre-migration shape,
+// or a row this test never stamped) comes back as an honest zero value,
+// not an error — jobrun.Reclaimable treats that zero as "always
+// reclaimable", so the NULL round trip matters for correctness, not
+// just plumbing.
+func TestReplayRunOwnerHeartbeatRoundTrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	hb := t0.Add(5 * time.Second)
+	stamped := replay.Run{
+		ID: "rp-hb", Recording: "REC1", Request: replay.Request{Recording: "REC1"},
+		Status: replay.StatusRunning, Total: 1, CreatedAt: t0,
+		OwnerID: "owner-abc123", HeartbeatAt: hb,
+	}
+	if err := s.UpsertReplayRun(ctx, stamped); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetReplayRun(ctx, "rp-hb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OwnerID != "owner-abc123" || !got.HeartbeatAt.Equal(hb) {
+		t.Fatalf("owner/heartbeat round trip = %+v, want owner=owner-abc123 heartbeat=%v", got, hb)
+	}
+
+	bare := replay.Run{ID: "rp-nohb", Recording: "REC1", Request: replay.Request{Recording: "REC1"}, Status: replay.StatusQueued, Total: 1, CreatedAt: t0}
+	if err := s.UpsertReplayRun(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	got2, err := s.GetReplayRun(ctx, "rp-nohb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.OwnerID != "" || !got2.HeartbeatAt.IsZero() {
+		t.Fatalf("unstamped row = %+v, want owner=\"\" heartbeat=zero", got2)
+	}
+}

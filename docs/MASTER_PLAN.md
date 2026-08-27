@@ -948,6 +948,181 @@ data-flow,security,risk}.md`.
   applied via the `migrate/migrate` image — never the dev-compose DB —
   plus every other package in the module, all passing, none skipped
   except the DB-backed suites when `ARB_TEST_DATABASE_URL` is unset).
+- **Review pass (2026-08-27, commit 6eb524f base): four P2 + ten P3
+  findings fixed, with regression tests.** No arithmetic changed in
+  `internal/risk`, `internal/pricing`, `internal/simulation`,
+  `internal/reservation`, `internal/portfolio`; `web/` untouched (a
+  frontend agent owned it concurrently — its own uncommitted changes
+  were briefly swept into a `git stash`/`pop` cycle by that concurrent
+  session mid-task and recovered file-by-file without touching `web/`).
+  - **P2-1** (`internal/app/latency.go`,`readmodel.go`,`engine.go`):
+    `rateSampler.rate` mutated its delta window on every HTTP poll, so
+    with more than one poller in flight each request could steal part of
+    the previous poller's interval and understate `msgs_per_sec`.
+    Split into `sample()` (single writer — the engine's existing 500ms
+    staleness-sweep ticker in `Run`, which now also drives a new
+    `Engine.msgRate *rateSampler`) and `current()` (any number of
+    read-only callers; `readModel.Health` no longer holds its own
+    sampler). Tests: `internal/app/latency_test.go`,
+    `TestReadModelHealthConcurrentPollersSeeSameRate` in
+    `readmodel_test.go`.
+  - **P2-2** (`internal/app/engine.go`): `shouldPersistRiskReject`
+    refused EVERY call once its cooldown map hit 4096 entries, including
+    a call for a key ALREADY in the map whose cooldown had long expired
+    — `risk_events` would silently stop gaining new rows for triangles
+    still actively rejecting, not just for genuinely new pairs. Fixed:
+    a known key always updates in place (never grows the map); an
+    unseen key at capacity first prunes expired entries, then refuses
+    (logging once, not once per rejection) only if still full. Tests:
+    `TestShouldPersistRiskRejectAtCapStillUpdatesKnownKeys`,
+    `TestShouldPersistRiskRejectAtCapPrunesExpiredEntries`.
+  - **P2-3** (`internal/storage/quality.go`, `internal/api/
+    trianglesapi.go`, migration 000009): `GET /api/v1/triangles/{id}`
+    ran `QualitySamples`'s ALL-triangles, 30-day aggregate on every page
+    view (any viewer) and threw away every row but one. New
+    `Store.QualitySamplesForTriangle(ctx, id, from, to) (quality.Sample,
+    bool, error)`, scoped at the query level (`WHERE o.triangle_id =
+    $1`), `ok=false` (not a zero-filled Sample) for a triangle with no
+    evidence. Also added `paper_cycles_opportunity_idx (opportunity_id,
+    started_at DESC)` — `opportunity_detail.go`'s per-opportunity
+    simulation lookup was a sequential scan without it. Tests:
+    `TestQualitySamplesForTriangle` (DB-backed, proves scoping — seeds a
+    second triangle and confirms its cycles never leak into the scoped
+    result).
+  - **P2-4** (`internal/storage/analytics.go`): `Distributions`'
+    `LIMIT 20000` sample queries had no `ORDER BY`, so a truncated
+    result was an ARBITRARY (and non-reproducible across calls) subset
+    reported as if it were the full population. Added deterministic
+    `ORDER BY` (`detected_at, id` / `started_at, id` / `created_at, id`)
+    and a `Truncated`/`WindowComplete` pair on `Distribution`, computed
+    by querying `cap+1` rows and trimming rather than comparing
+    `len(out) == cap` (so a population landing exactly on the cap is
+    correctly reported complete). `analyticsSampleCap` changed from
+    `const` to `var` so `analytics_test.go` can shrink it and exercise
+    truncation without seeding 20,001 rows. Tests:
+    `TestDistributionsReportTruncation`, plus a `WindowComplete`
+    assertion added to the existing under-cap test.
+  - **P3 items**, all in `internal/storage/analytics.go` unless noted:
+    (a) `by=config_version`/`by=asset` grouped on a nullable column with
+    no `coalesce` — a NULL config_version/pnl_asset 500'd the whole
+    breakdown; now groups under `"unknown"`. (b) `internal/storage/
+    orders_fills.go`: an invalid `next_cursor` 500'd (`query_failed`)
+    instead of 400ing — new `storage.ErrInvalidCursor` sentinel, mapped
+    to 400 `invalid_cursor` in `internal/api/reads.go`. (c) `by=hour`'s
+    key now formats via `to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+    instead of `::text` (driver/locale-dependent rendering). (d) dropped
+    `omitempty` on `Unattributed` (analytics.go) and
+    `LevelsConsumed`/`DepthExhausted` (`internal/api/trianglesapi.go`) —
+    all three are meaningful zeros, not absences. (e)
+    `PnLBreakdownResult.N` for `by=market` counts orders, not cycles like
+    every other dimension — now called out in a `notes` entry rather
+    than left as an undocumented field-meaning shift. (f)
+    `internal/reporting/csv.go`: the CSV-injection defense neutralized
+    ANY cell starting with `-`/`+`, mangling ordinary negative numbers
+    (PnL, drawdown, bps — the common case in a financial report) into
+    text; now skips neutralization for well-formed numbers (a formula
+    can never itself be a valid number) and also covers leading
+    tab/CR per OWASP's fuller trigger set. (g)
+    `internal/api/configapi.go`/`platformapi.go`: `parent_version` is
+    now REQUIRED (400 `parent_version_required`) for the four
+    web-sourced write routes (`POST /config`, `/config/rollback`,
+    `/platform/settings`, `/platform/settings/rollback`) — the web
+    console always has a real version to echo back from its own GET, so
+    omitting it was a silent optimistic-concurrency bypass exactly for
+    the client most likely to race itself (two tabs). Telegram/
+    system/AI callers go through `ApplyAuthorized` directly
+    (`expectedParent=0`), unaffected. (j) `internal/api/replayapi.go`:
+    a non-default `speed` in the request now adds a `notes` entry in
+    the POST/GET response explaining it has no execution effect
+    (previously documented only in a Go doc comment a console developer
+    would never read).
+  - **P3-h, the largest item** (`internal/replay/runner.go`,
+    `internal/campaign/runner.go`, new `internal/jobrun` package,
+    migration 000009): both runners shared four bugs, fixed once in
+    `internal/jobrun` (`Gate`, `Bound`, `ClampLimit`,
+    `Reclaimable`/`NewOwnerID`/`HeartbeatInterval`/`StaleAfter`) and
+    wired identically into each `Runner` so they cannot drift apart
+    again:
+    1. `Start` was reachable before `Run` pinned the lifetime context
+       (nothing enforced the ordering) — a job launched that way ran
+       under `context.Background()`, which a supervised shutdown never
+       cancels. `jobrun.Gate.Await` (2s bound) now makes `Start` refuse
+       with `jobrun.ErrNotStarted` (mapped to 503 `not_ready` in
+       `internal/api/opsapi.go`/`replayapi.go`) instead of silently
+       taking that shape. `Gate.Pin` is idempotent (a later `Run` call
+       re-arms rather than double-closing).
+    2. The in-memory `runs`/`order` maps grew without bound — one entry
+       per run ever started for the process's lifetime.
+       `jobrun.Bound(order, byID, jobrun.RingCap=200)` caps both after
+       every `Start`; the just-started (current, in-flight) run is
+       always the newest entry and can never itself be evicted under
+       the existing single-flight invariant. `update`/`snapshot` made
+       nil-safe defensively (an evicted id would otherwise be a nil-deref
+       panic on the background execute goroutine).
+    3. `List` (and the storage-layer `ListReplayRuns`/`ListCampaignRuns`)
+       collapsed ANY out-of-range `limit` — including "too large", not
+       just "unset" — to the default: `if limit<=0||limit>200{limit=50}`
+       silently ignored a caller asking for up to the documented cap.
+       `jobrun.ClampLimit` clamps over-cap values TO the cap.
+    4. Orphan reconciliation on startup reclaimed ANY "queued"/"running"
+       row not in the fresh process's own (always-empty-at-boot)
+       in-memory map — so two processes sharing one Postgres (a rolling
+       deploy overlap, or an operator running two instances) would each
+       mark the OTHER's still-live run "failed" the moment they started.
+       New `owner_id`/`heartbeat_at` columns (migration 000009) on
+       `campaign_runs`/`replay_runs`; each `Runner` stamps a random
+       per-process `NewOwnerID()` and the current time on every persisted
+       write (`persist()`) plus a dedicated heartbeat goroutine
+       (`jobrun.HeartbeatInterval=10s`) independent of progress
+       callbacks — a replay's own `Progress` only fires at start/finish,
+       so relying on it alone would let a long replay's row go
+       heartbeat-stale for its whole duration. `jobrun.Reclaimable` only
+       reclaims a row whose heartbeat is `jobrun.StaleAfter=50s` (5x the
+       interval) old or absent (a pre-migration row, or one never
+       heartbeated) — never a row with a fresh heartbeat from a
+       DIFFERENT live owner.
+    - **Incidental fix found while testing #4's heartbeat goroutine**:
+      `execute()` in both runners called the terminal status `update()`
+      (Status=done/failed) BEFORE `finish()` cleared `r.current` — a
+      real (if narrow) race where a poller could observe a terminal
+      status via `Get()`/`List()` while `Busy()` still reported true.
+      Reordered so `finish()` runs first in both the success and
+      failure paths.
+    - Tests: `internal/jobrun/jobrun_test.go` (Gate/Bound/ClampLimit/
+      Reclaimable in isolation), `internal/replay/runner_test.go` +
+      `internal/campaign/runner_test.go`
+      (`TestRunnerStartRefusesBeforeRun`,
+      `TestRunnerBoundsInMemoryRunsAndHonoursListLimit`,
+      `TestRunnerReconcileOrphansRespectsLiveOwnerHeartbeat`, plus the
+      pre-existing `TestRunnerFailureIsRecorded`/
+      `TestRunnerConfigVersionResolutionFailureFailsTheRun` updated to
+      start `Run` first now that `Start` enforces the ordering),
+      `internal/storage/replays_test.go` +
+      `internal/storage/campaigns_test.go`
+      (`Test{Replay,Campaign}RunOwnerHeartbeatRoundTrip`, DB-backed —
+      the reclaim LOGIC is unit-tested via `jobrun`'s fake-store-free
+      `Reclaimable`, Postgres only proves the two columns round-trip
+      per review guidance), `internal/api/opsapi_test.go` +
+      `internal/api/replayapi_test.go`
+      (`Test{Campaign,Replay}StartNotReadyIs503`).
+  - migrations: 000009 (`.up.sql`/`.down.sql`, verified `up`→`down`→`up`
+    against a disposable Postgres) adds `paper_cycles_opportunity_idx`
+    and `owner_id`/`heartbeat_at` (+ a partial index on each, `WHERE
+    status IN ('queued','running')`) to `campaign_runs`/`replay_runs`;
+    both 000007 and 000009 now note that their `CREATE INDEX`s take an
+    ACCESS EXCLUSIVE lock (safe today only because compose's `migrate`
+    service always runs before `arbd`, so the affected tables are still
+    empty in every environment this has run against).
+  - acceptance: `gofmt -l cmd internal` clean; `go vet ./...` clean;
+    `golangci-lint run ./...` clean except the SAME pre-existing
+    `internal/simulation/paper.go:144` gosec finding noted above (still
+    untouched, still out of scope); `go test -race ./...` green across
+    the entire repo, including `internal/storage`, `internal/replay`,
+    `internal/campaign`, `internal/jobrun`, `internal/api`, `internal/
+    app`, `internal/reporting` against a disposable Postgres 16
+    container on port 55432 (never 5432) with migrations 000001-000009
+    applied via `psql` inside the container, then removed
+    (`docker rm -f`) — never the dev-compose DB.
 
 ### T-059 Operating mode + provider settings + hot log level
 - status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §2, §4;

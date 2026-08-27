@@ -192,4 +192,55 @@ func TestDistributionsReportSampleSizeAndPercentiles(t *testing.T) {
 	if empty.Edge.N != 0 || empty.Slippage.N != 0 || empty.Latency.N != 0 {
 		t.Fatalf("empty window = %+v", empty)
 	}
+	if empty.Edge.Truncated || !empty.Edge.WindowComplete {
+		t.Fatalf("empty window must be reported complete, not truncated: %+v", empty.Edge)
+	}
+	if res.Edge.Truncated || !res.Edge.WindowComplete {
+		t.Fatalf("a window under the sample cap must be reported complete: %+v", res.Edge)
+	}
+}
+
+// TestDistributionsReportTruncation is the review P2-4 regression:
+// analyticsSampleCap shrunk to below the seeded population must report
+// Truncated=true/WindowComplete=false, N capped at the (shrunk) limit,
+// and — because the underlying query now orders deterministically by
+// (detected_at, id) — the SAME (oldest) subset on every call, not an
+// arbitrary LIMIT-without-ORDER-BY slice that could differ per query.
+func TestDistributionsReportTruncation(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.EnsurePaperSession(ctx, "sess-an", "PAPER", map[string]string{"USDT": "10000"}, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Three samples, deliberately seeded newest-net-return-bps-last so a
+	// correct oldest-first ORDER BY keeps the two SMALLEST edge values
+	// under a cap of 2, not an arbitrary pair.
+	seedAnalyticsCycle(t, s, "op-1", "cyc-1", "tri-a", 1, t0, "10", "1", "10", 10)
+	seedAnalyticsCycle(t, s, "op-2", "cyc-2", "tri-a", 1, t0.Add(time.Minute), "5", "2", "20", 30)
+	seedAnalyticsCycle(t, s, "op-3", "cyc-3", "tri-a", 1, t0.Add(2*time.Minute), "5", "3", "30", 50)
+
+	orig := analyticsSampleCap
+	analyticsSampleCap = 2
+	t.Cleanup(func() { analyticsSampleCap = orig })
+
+	from, to := t0.Add(-time.Hour), t0.Add(time.Hour)
+	first, err := s.Distributions(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Edge.N != 2 || !first.Edge.Truncated || first.Edge.WindowComplete {
+		t.Fatalf("edge distribution at cap=2 = %+v, want n=2 truncated=true window_complete=false", first.Edge)
+	}
+	if first.Edge.Min != "10" || first.Edge.Max != "20" {
+		t.Fatalf("edge distribution kept the wrong subset: min=%s max=%s, want the two OLDEST samples (10, 20)", first.Edge.Min, first.Edge.Max)
+	}
+
+	// Deterministic: a second call returns the identical subset.
+	second, err := s.Distributions(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Edge.Min != first.Edge.Min || second.Edge.Max != first.Edge.Max {
+		t.Fatalf("distribution subset changed across repeated calls: first=%+v second=%+v", first.Edge, second.Edge)
+	}
 }

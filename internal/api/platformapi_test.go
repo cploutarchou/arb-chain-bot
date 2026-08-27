@@ -115,19 +115,19 @@ func TestPlatformWritePermissionsBySection(t *testing.T) {
 	}
 
 	vCookie, vCSRF := login(t, mux, "viewer@example.test", "viewer-pw")
-	if rec := postPlatform(t, mux, vCookie, vCSRF, "/api/v1/platform/settings", map[string]any{"settings": next}); rec.Code != http.StatusForbidden {
+	if rec := postPlatform(t, mux, vCookie, vCSRF, "/api/v1/platform/settings", map[string]any{"settings": next, "parent_version": 1}); rec.Code != http.StatusForbidden {
 		t.Fatalf("viewer write = %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// Operator holds neither exchange:config nor system:config — both
 	// platform-settings permissions are ADMIN-only in the matrix.
 	oCookie, oCSRF := login(t, mux, "op@example.test", "op-pw")
-	if rec := postPlatform(t, mux, oCookie, oCSRF, "/api/v1/platform/settings", map[string]any{"settings": next}); rec.Code != http.StatusForbidden {
+	if rec := postPlatform(t, mux, oCookie, oCSRF, "/api/v1/platform/settings", map[string]any{"settings": next, "parent_version": 1}); rec.Code != http.StatusForbidden {
 		t.Fatalf("operator write = %d: %s", rec.Code, rec.Body.String())
 	}
 
 	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
-	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next}); rec.Code != http.StatusOK {
+	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next, "parent_version": 1}); rec.Code != http.StatusOK {
 		t.Fatalf("admin write = %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := svc.Current().Version; got != 2 {
@@ -135,9 +135,34 @@ func TestPlatformWritePermissionsBySection(t *testing.T) {
 	}
 
 	// Identical payload → 400 no_change (design diverges from configapi's 409).
-	rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next})
+	rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next, "parent_version": 2})
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "no_change") {
 		t.Fatalf("no-change write = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPlatformApplyRollbackRequireParentVersionForWeb is the review
+// P3(g) regression: a web-sourced platform-settings apply/rollback that
+// omits parent_version entirely must fail with 400
+// parent_version_required, not silently skip the optimistic-concurrency
+// check.
+func TestPlatformApplyRollbackRequireParentVersionForWeb(t *testing.T) {
+	_, mux, svc := newPlatformServer(t)
+	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	next := svc.Current().Settings.Clone()
+	v := next.Venues["binance"]
+	v.Fees.TakerBps = decimal.NewFromInt(7)
+	next.Venues["binance"] = v
+
+	rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "parent_version_required") {
+		t.Fatalf("apply without parent_version = %d: %s, want 400 parent_version_required", rec.Code, rec.Body.String())
+	}
+
+	rec = postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings/rollback", map[string]int64{"version": 1})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "parent_version_required") {
+		t.Fatalf("rollback without parent_version = %d: %s, want 400 parent_version_required", rec.Code, rec.Body.String())
 	}
 }
 
@@ -186,14 +211,19 @@ func TestPlatformApplyOptimisticConcurrency(t *testing.T) {
 		t.Fatalf("version must not advance on a stale write, got %d", got)
 	}
 
-	// Omitting parent_version keeps today's unchecked behavior.
+	// review P3(g): omitting parent_version entirely is now a hard 400
+	// (TestPlatformApplyRollbackRequireParentVersionForWeb covers this in
+	// isolation) rather than the old unchecked-apply fallthrough.
 	next2 := svc.Current().Settings.Clone()
 	v2 := next2.Venues["binance"]
 	v2.Fees.TakerBps = decimal.NewFromInt(9)
 	next2.Venues["binance"] = v2
 	rec = postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next2})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("apply without parent_version = %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("apply without parent_version = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if got := svc.Current().Version; got != 2 {
+		t.Fatalf("version must not advance on a rejected apply, got %d", got)
 	}
 }
 
@@ -205,7 +235,7 @@ func TestPlatformRollbackOptimisticConcurrency(t *testing.T) {
 	v := next.Venues["binance"]
 	v.Fees.TakerBps = decimal.NewFromInt(7)
 	next.Venues["binance"] = v
-	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next}); rec.Code != http.StatusOK {
+	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next, "parent_version": 1}); rec.Code != http.StatusOK {
 		t.Fatalf("seed write = %d", rec.Code)
 	}
 	if got := svc.Current().Version; got != 2 {
@@ -277,18 +307,18 @@ func TestPlatformRollback(t *testing.T) {
 	v := next.Venues["binance"]
 	v.Fees.TakerBps = decimal.NewFromInt(7)
 	next.Venues["binance"] = v
-	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next}); rec.Code != http.StatusOK {
+	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings", map[string]any{"settings": next, "parent_version": 1}); rec.Code != http.StatusOK {
 		t.Fatalf("write = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings/rollback", map[string]int64{"version": 1}); rec.Code != http.StatusOK {
+	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings/rollback", map[string]any{"version": 1, "parent_version": 2}); rec.Code != http.StatusOK {
 		t.Fatalf("rollback = %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := svc.Current().Version; got != 3 {
 		t.Fatalf("rollback version = %d, want 3 (append-only)", got)
 	}
 
-	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings/rollback", map[string]int64{"version": 99}); rec.Code != http.StatusNotFound {
+	if rec := postPlatform(t, mux, aCookie, aCSRF, "/api/v1/platform/settings/rollback", map[string]any{"version": 99, "parent_version": 3}); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing version rollback = %d", rec.Code)
 	}
 }

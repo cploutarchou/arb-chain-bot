@@ -114,6 +114,7 @@ type Engine struct {
 	sessionID string          // current paper/persistence session id; rotated by ResetPaper (BL-10)
 	outbox    *storage.Outbox // this run's outbox, nil without persistence (BL-18 queue depth)
 	latency   *latencyWindow  // this run's per-exchange latency samples (BL-18 percentiles)
+	msgRate   *rateSampler    // this run's feed message rate, sampled by the staleness ticker (BL-18, review P2-1)
 	// runToken (P1-1) is bumped, under e.mu, at the top of every Run call;
 	// each call captures its own value and only its OWN deferred cleanup
 	// may act on it, so a stale run's cleanup can never clobber a newer
@@ -133,6 +134,7 @@ type Engine struct {
 	recentOpps        []RecentOpportunity
 	rejectCounts      map[string]int64     // risk reason code → count (AI input)
 	rejectPersistedAt map[string]time.Time // "triangle|reason" → last persisted (BL-31 cooldown)
+	rejectCapLogged   bool                 // review P2-2: log the cooldown-map-at-capacity warning once, not every rejection
 }
 
 // RecentOpportunity is a compact ring entry for /opportunities and the
@@ -193,6 +195,18 @@ const riskRejectCooldown = 60 * time.Second
 
 // shouldPersistRiskReject reports whether this (triangle, reason)
 // rejection is due for a fresh risk_events row.
+//
+// Review P2-2: the earlier shape refused EVERY call once the map hit
+// 4096 entries, including a call for a key ALREADY in the map whose
+// cooldown had long since expired — at cap, risk_events silently
+// stopped receiving new rows for triangles that were still actively
+// rejecting, not just for genuinely new (triangle, reason) pairs. Now:
+// a known key updates in place (never grows the map, so it is never
+// refused by the cap check); only a genuinely UNSEEN key can be
+// refused, and only after pruning entries whose cooldown has already
+// elapsed fails to make room. The cap-refusal case logs once per run,
+// not once per rejection, so a saturated map is visible in the logs
+// without becoming its own flood.
 func (e *Engine) shouldPersistRiskReject(triangleID, reasonCode string, now time.Time) bool {
 	key := triangleID + "|" + reasonCode
 	e.oppMu.Lock()
@@ -200,12 +214,33 @@ func (e *Engine) shouldPersistRiskReject(triangleID, reasonCode string, now time
 	if e.rejectPersistedAt == nil {
 		e.rejectPersistedAt = map[string]time.Time{}
 	}
-	if last, ok := e.rejectPersistedAt[key]; ok && now.Sub(last) < riskRejectCooldown {
-		return false
+	if last, ok := e.rejectPersistedAt[key]; ok {
+		if now.Sub(last) < riskRejectCooldown {
+			return false
+		}
+		// Known key, cooldown elapsed: updating an existing entry does
+		// not grow the map, so this is never subject to the cap below.
+		e.rejectPersistedAt[key] = now
+		return true
 	}
-	// Bounded like rejectCounts: a pathological number of distinct
-	// (triangle, reason) pairs must not grow this map unboundedly.
+	// Unseen key: bounded like rejectCounts. Prune stale entries first
+	// so a burst of genuinely new pairs isn't refused just because
+	// previously-active pairs have since rolled off.
 	if len(e.rejectPersistedAt) >= 4096 {
+		for k, t := range e.rejectPersistedAt {
+			if now.Sub(t) >= riskRejectCooldown {
+				delete(e.rejectPersistedAt, k)
+			}
+		}
+	}
+	if len(e.rejectPersistedAt) >= 4096 {
+		if !e.rejectCapLogged {
+			e.rejectCapLogged = true
+			if e.log != nil {
+				e.log.Warn("engine: risk reject cooldown map at capacity; new distinct (triangle, reason) pairs will not persist to risk_events until entries expire",
+					"cap", 4096)
+			}
+		}
 		return false
 	}
 	e.rejectPersistedAt[key] = now
@@ -472,6 +507,16 @@ func (e *Engine) currentLatency() *latencyWindow {
 	return e.latency
 }
 
+// currentMsgRate exposes this run's feed message-rate sampler (BL-18,
+// review P2-1); nil only before Run's reset block runs. Callers must
+// use its current() method (read-only) — sample() belongs exclusively
+// to the staleness-sweep ticker inside Run.
+func (e *Engine) currentMsgRate() *rateSampler {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.msgRate
+}
+
 func (e *Engine) currentStarts() []exchange.Asset {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -582,6 +627,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.ready = false
 	e.outbox = nil
 	e.latency = &latencyWindow{}
+	e.msgRate = &rateSampler{}
 	// P1-1 (engine.go half): a per-run token so THIS call's deferred
 	// "ready = false" (below) can never clear a LATER run's readiness.
 	// Without it, a run that returns late (e.g. after a slow shutdown
@@ -1052,6 +1098,13 @@ loop:
 					b.EvaluateStaleness(now, maxAge)
 				}
 			}
+			// BL-18 review P2-1: sample the feed's cumulative frame
+			// counter into a rate exactly once per tick, on this single
+			// goroutine. HTTP/Telegram pollers only ever read the last
+			// sampled value (readModel.Health -> currentMsgRate().current()),
+			// so an arbitrary number of concurrent readers can no longer
+			// steal part of the delta window from one another.
+			e.msgRate.sample(now, feed.Stats.Frames.Load())
 		}
 	}
 	cancelRun()

@@ -96,6 +96,13 @@ func (s *Server) readRoutes(mux *http.ServeMux) {
 		}
 		page, err := s.Store.ListOrdersGlobal(r.Context(), f)
 		if err != nil {
+			// review P3(b): a malformed cursor is the CALLER's fault (a
+			// stale/tampered next_cursor), not a server fault — 400, not
+			// the generic 500 every other storage error gets.
+			if errors.Is(err, storage.ErrInvalidCursor) {
+				WriteError(w, http.StatusBadRequest, "invalid_cursor", "cursor is malformed or expired", correlationID(r))
+				return
+			}
 			s.writeListResult(w, r, "orders", nil, err)
 			return
 		}
@@ -109,6 +116,10 @@ func (s *Server) readRoutes(mux *http.ServeMux) {
 		}
 		page, err := s.Store.ListFillsGlobal(r.Context(), f)
 		if err != nil {
+			if errors.Is(err, storage.ErrInvalidCursor) {
+				WriteError(w, http.StatusBadRequest, "invalid_cursor", "cursor is malformed or expired", correlationID(r))
+				return
+			}
 			s.writeListResult(w, r, "fills", nil, err)
 			return
 		}

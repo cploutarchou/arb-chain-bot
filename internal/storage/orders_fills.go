@@ -3,10 +3,18 @@ package storage
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+// ErrInvalidCursor is returned by ListOrdersGlobal/ListFillsGlobal when
+// the caller-supplied cursor does not decode (review P3(b)): a malformed
+// cursor is a CLIENT error (a stale/tampered/hand-built next_cursor
+// value), not a server fault — callers must map it to 400, not the
+// generic 500 every other storage error gets.
+var ErrInvalidCursor = errors.New("storage: invalid cursor")
 
 // ListFilter is the shared filter/pagination request for the global
 // Orders and Fills pages (BL-20): every field empty/zero means
@@ -48,15 +56,15 @@ func encodeCursor(ts time.Time, id string) string {
 func decodeCursor(cursor string) (time.Time, string, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
-		return time.Time{}, "", fmt.Errorf("storage: invalid cursor: %w", err)
+		return time.Time{}, "", fmt.Errorf("%w: %v", ErrInvalidCursor, err)
 	}
 	parts := strings.SplitN(string(raw), "|", 2)
 	if len(parts) != 2 {
-		return time.Time{}, "", fmt.Errorf("storage: invalid cursor shape")
+		return time.Time{}, "", fmt.Errorf("%w: malformed cursor shape", ErrInvalidCursor)
 	}
 	ts, err := time.Parse(time.RFC3339Nano, parts[0])
 	if err != nil {
-		return time.Time{}, "", fmt.Errorf("storage: invalid cursor timestamp: %w", err)
+		return time.Time{}, "", fmt.Errorf("%w: bad timestamp: %v", ErrInvalidCursor, err)
 	}
 	return ts, parts[1], nil
 }

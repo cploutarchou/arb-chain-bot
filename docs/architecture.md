@@ -334,7 +334,25 @@ events; only `internal/notification` talks to Telegram.
   the outbox: a job runner already owns a single background goroutine, so
   there is no hot-path contention to decouple, and the row must be
   visible synchronously enough that a restart's orphan-reconciliation
-  pass (mark any row still "running" as "failed: interrupted") sees it.
+  pass sees it. That pass does NOT mark every row still "queued"/
+  "running" as "failed: interrupted": each row also carries an
+  `owner_id` + `heartbeat_at` (migration 000009, review T-058 P3-h),
+  stamped on every write and re-stamped by a dedicated heartbeat
+  goroutine independent of progress callbacks; reconciliation only
+  reclaims a row whose heartbeat has gone stale (or is absent —
+  pre-migration rows, or one this process never itself started) via
+  `internal/jobrun.Reclaimable` — never a row a DIFFERENT, still-live
+  process is actively updating (two processes sharing one Postgres, a
+  rolling-deploy overlap or an operator running two instances, would
+  otherwise each reclaim the other's active run at boot).
+  `internal/jobrun` is a small shared package (`Gate` for the Start-
+  before-Run lifetime-context race, `Bound`/`ClampLimit` for the
+  in-memory run map's 200-entry ring, `Reclaimable`/`NewOwnerID`/
+  heartbeat constants) both runners use identically so a fix to one
+  cannot drift from the other; each `Runner` keeps its own
+  `execute()`/`persist()`/`List()` around it — not a shared generic
+  Runner, the two job shapes (`replay.Run` vs `campaign.Run`) differ
+  enough that collapsing them would cost more clarity than it buys.
   `risk_events` (breaker transitions and throttled risk rejections, T-058
   BL-31) goes through the outbox instead, because it IS on the hot path
   (`internal/risk`'s breaker callback and the scanner's reject branch).

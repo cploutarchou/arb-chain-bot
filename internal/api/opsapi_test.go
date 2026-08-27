@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/campaign"
+	"github.com/cploutarchou/arb-chain-bot/internal/jobrun"
 	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 )
 
@@ -38,13 +39,17 @@ func (f *fakeRecorder) Status() marketdata.RecorderStatus {
 }
 
 type fakeCampaigns struct {
-	runs []campaign.Run
-	busy bool
+	runs       []campaign.Run
+	busy       bool
+	notStarted bool // review P3(h): simulates Start called before Run pins the lifetime ctx
 }
 
 func (f *fakeCampaigns) Start(req campaign.Request, actor string) (campaign.Run, error) {
 	if f.busy {
 		return campaign.Run{}, campaign.ErrBusy
+	}
+	if f.notStarted {
+		return campaign.Run{}, jobrun.ErrNotStarted
 	}
 	req, err := req.Normalize()
 	if err != nil {
@@ -170,5 +175,21 @@ func TestCampaignRoutes(t *testing.T) {
 	}
 	if rec := getWith(t, mux, vCookie, "/api/v1/campaigns/nope"); rec.Code != http.StatusNotFound {
 		t.Fatalf("get unknown: %d", rec.Code)
+	}
+}
+
+// TestCampaignStartNotReadyIs503 is the review P3(h) regression: the
+// runner refusing because its Run() component has not pinned a lifetime
+// context yet (jobrun.ErrNotStarted) must surface as 503 not_ready, not
+// the generic 400 invalid_request every other Start error gets — it is
+// a transient startup race, not a malformed request.
+func TestCampaignStartNotReadyIs503(t *testing.T) {
+	s, mux := newTestServer(t)
+	s.Campaigns = &fakeCampaigns{notStarted: true}
+	opCookie, opCSRF := login(t, mux, "op@example.test", "op-pw")
+
+	rec := postJSON(t, mux, opCookie, opCSRF, "/api/v1/campaigns", `{"recording":"R","grid":"baseline","seeds":[1]}`)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "not_ready") {
+		t.Fatalf("start while not ready = %d: %s, want 503 not_ready", rec.Code, rec.Body.String())
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -35,10 +36,18 @@ func (r Report) CSVRows() [][]string {
 }
 
 // CSV renders CSVRows as RFC 4180 text/csv bytes. Values whose first
-// character is one of = + - @ are prefixed with a leading apostrophe:
-// report prose (e.g. incident titles, AI summaries) is free text that
-// could otherwise be interpreted as a formula by a spreadsheet importer
-// (CSV-injection defense in depth).
+// character is one of = + - @ (or a leading tab/carriage return, both
+// also formula triggers in some spreadsheet importers) are prefixed
+// with a leading apostrophe UNLESS the whole cell is a well-formed
+// number: report prose (e.g. incident titles, AI summaries) is free
+// text that could otherwise be interpreted as a formula by a
+// spreadsheet importer (CSV-injection defense in depth), but this
+// report is mostly financial data — PnL, drawdown, bps deltas — where a
+// negative or explicitly-positive VALUE starting with -/+ is the common
+// case, not the exception. Mangling "-16.94" into the text "'-16.94"
+// silently breaks numeric sort/sum/formula use of the export for every
+// legitimate negative number it contains (review P3(f)); a formula
+// cannot itself be a valid number, so the two concerns don't overlap.
 func (r Report) CSV() ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
@@ -58,11 +67,21 @@ func (r Report) CSV() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// csvFormulaTriggers are the leading characters (or control bytes) a
+// spreadsheet importer may interpret as "this cell is a formula".
+const csvFormulaTriggers = "=+-@\t\r"
+
 func neutralizeCSVFormula(s string) string {
-	if len(s) > 0 && strings.ContainsRune("=+-@", rune(s[0])) {
-		return "'" + s
+	if len(s) == 0 || !strings.ContainsRune(csvFormulaTriggers, rune(s[0])) {
+		return s
 	}
-	return s
+	// A well-formed number is never a formula, even though it may start
+	// with + or - (e.g. "-16.94", "+5"): leave it alone so it stays
+	// numeric in the exported spreadsheet.
+	if _, err := strconv.ParseFloat(s, 64); err == nil {
+		return s
+	}
+	return "'" + s
 }
 
 // jsonFieldName reads the struct tag "json" name (before any comma
