@@ -35,3 +35,29 @@ edited; only array elements were dropped.
 | mexc | contract_ticker.json | GET https://contract.mexc.com/api/v1/contract/ticker |
 | mexc | contract_detail.json | GET https://contract.mexc.com/api/v1/contract/detail |
 | mexc | funding_rate.json | GET https://contract.mexc.com/api/v1/contract/funding_rate/BTC_USDT |
+
+## T-075 Tier-2 venues (recorded 2026-08-27, same rules: real responses, array elements dropped only)
+
+| venue | file | endpoint |
+|---|---|---|
+| kucoin | symbols.json | GET https://api.kucoin.com/api/v2/symbols |
+| kucoin | allTickers.json | GET https://api.kucoin.com/api/v1/market/allTickers |
+| kucoin | currencies.json | GET https://api.kucoin.com/api/v3/currencies |
+| kucoin | contracts_active.json | GET https://api-futures.kucoin.com/api/v1/contracts/active |
+| kucoin | futures_allTickers.json | GET https://api-futures.kucoin.com/api/v1/allTickers |
+| htx | symbols_v2.json | GET https://api.huobi.pro/v2/settings/common/symbols |
+| htx | tickers.json | GET https://api.huobi.pro/market/tickers |
+| htx | currencies.json | GET https://api.huobi.pro/v2/reference/currencies |
+| htx | swap_contract_info.json | GET https://api.hbdm.com/linear-swap-api/v1/swap_contract_info |
+| htx | batch_merged.json | GET https://api.hbdm.com/linear-swap-ex/market/detail/batch_merged?business_type=swap |
+| htx | swap_batch_funding_rate.json | GET https://api.hbdm.com/linear-swap-api/v1/swap_batch_funding_rate |
+| htx | swap_index.json | GET https://api.hbdm.com/linear-swap-api/v1/swap_index |
+| htx | mark_price_kline.json | GET https://api.hbdm.com/index/market/history/linear_swap_mark_price_kline?contract_code=BTC-USDT&period=1min&size=1 (served for any contract_code) |
+| kraken | AssetPairs.json | GET https://api.kraken.com/0/public/AssetPairs?assetVersion=1 |
+| kraken | Ticker.json | GET https://api.kraken.com/0/public/Ticker?assetVersion=1 |
+| kraken | futures_instruments.json | GET https://futures.kraken.com/derivatives/api/v3/instruments |
+| kraken | futures_tickers.json | GET https://futures.kraken.com/derivatives/api/v3/tickers |
+| kraken | historicalfundingrates.json | GET https://futures.kraken.com/derivatives/api/v4/historicalfundingrates?symbol=PF_XBTUSD (last 6 rows; served for any symbol) |
+| coinbase | products.json | GET https://api.coinbase.com/api/v3/brokerage/market/products?product_type=SPOT |
+| coinbase | product_book_<product_id>.json (36 files) | GET https://api.coinbase.com/api/v3/brokerage/market/product_book?product_id=<product_id>&limit=1 |
+| coinbase | exchange_currencies.json | GET https://api.exchange.coinbase.com/currencies |

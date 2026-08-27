@@ -12,10 +12,11 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 )
 
-// TestSoakLive polls the six venues' REAL public endpoints in-process
-// for SCREENER_SOAK_MINUTES (default 5) and prints per-venue pairs, poll
-// latency, rate-limit hits and errors. Guarded by SCREENER_SOAK=1 so CI
-// never touches the network.
+// TestSoakLive polls EVERY known venue's REAL public endpoints in-process
+// (Tier-2 venues are force-enabled here — the soak is the gate for
+// enabling them by default, T-075) for SCREENER_SOAK_MINUTES (default 5)
+// and prints per-venue pairs, poll latency, rate-limit hits and errors.
+// Guarded by SCREENER_SOAK=1 so CI never touches the network.
 func TestSoakLive(t *testing.T) {
 	if os.Getenv("SCREENER_SOAK") != "1" {
 		t.Skip("set SCREENER_SOAK=1 to run the live soak")
@@ -25,6 +26,10 @@ func TestSoakLive(t *testing.T) {
 		minutes = v
 	}
 	settings := screener.Defaults()
+	for id, vs := range settings.Venues {
+		vs.Enabled = true
+		settings.Venues[id] = vs
+	}
 	book := screener.NewBook()
 	funding := screener.NewMemoryFundingStore()
 	type sample struct {

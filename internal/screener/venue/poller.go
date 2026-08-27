@@ -29,9 +29,21 @@ type Poller struct {
 	mu      sync.Mutex
 	status  map[screener.Venue]*screener.VenueStatus
 	lastFnd map[screener.PerpKey]fundingSeen
+	loops   map[screener.Venue]*venueLoop
+	ctx     context.Context // the Start context; venue loops derive from it
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	running bool
+}
+
+// venueLoop is one venue's goroutine handle: cancelling it (self-heal)
+// unblocks any in-flight HTTP call through its context; done closes
+// when the goroutine has exited. startedAt bounds staleness for a loop
+// that has never completed a poll.
+type venueLoop struct {
+	cancel    context.CancelFunc
+	done      chan struct{}
+	startedAt time.Time
 }
 
 type fundingSeen struct {
@@ -55,8 +67,9 @@ func (p *Poller) Start(ctx context.Context) error {
 	}
 	p.status = map[screener.Venue]*screener.VenueStatus{}
 	p.lastFnd = map[screener.PerpKey]fundingSeen{}
+	p.loops = map[screener.Venue]*venueLoop{}
 	settings := p.Current()
-	ctx, p.cancel = context.WithCancel(ctx)
+	p.ctx, p.cancel = context.WithCancel(ctx)
 	for _, id := range screener.OrderedVenues {
 		vs, ok := settings.Venues[id]
 		st := &screener.VenueStatus{ID: id, Enabled: ok && vs.Enabled}
@@ -64,20 +77,74 @@ func (p *Poller) Start(ctx context.Context) error {
 		if !st.Enabled {
 			continue
 		}
-		opts := p.Opts
-		if opts.FundingCallsPerPoll == 0 {
-			opts.FundingCallsPerPoll = settings.FundingCallsPerPoll
-		}
-		c, err := p.NewCollector(id, opts)
-		if err != nil {
-			st.LastError = err.Error()
-			continue
-		}
-		p.wg.Add(1)
-		go p.loop(ctx, c, st)
+		p.startLoopLocked(id, st, settings, time.Now().UTC())
 	}
 	p.running = true
 	return nil
+}
+
+// startLoopLocked builds a fresh collector for id and launches its
+// goroutine. Requires p.mu.
+func (p *Poller) startLoopLocked(id screener.Venue, st *screener.VenueStatus, settings screener.Settings, now time.Time) {
+	opts := p.Opts
+	if opts.FundingCallsPerPoll == 0 {
+		opts.FundingCallsPerPoll = settings.FundingCallsPerPoll
+	}
+	c, err := p.NewCollector(id, opts)
+	if err != nil {
+		st.LastError = err.Error()
+		return
+	}
+	ctx, cancel := context.WithCancel(p.ctx)
+	vl := &venueLoop{cancel: cancel, done: make(chan struct{}), startedAt: now}
+	p.loops[id] = vl
+	p.wg.Add(1)
+	go func() {
+		defer close(vl.done)
+		p.loop(ctx, c, st)
+	}()
+}
+
+// RestartStale implements screener.StaleRestarter: every enabled venue
+// whose last completed poll (or loop start) is older than maxAge gets
+// its goroutine cancelled and replaced with a fresh collector; the
+// venue's Restarts counter increments and LastError says why. The old
+// goroutine is not waited for synchronously (a wedged HTTP call
+// returns on cancel, but the caller — the automation tick — must not
+// block on it); it exits on its own and the WaitGroup in Stop still
+// covers it.
+func (p *Poller) RestartStale(now time.Time, maxAge time.Duration) []screener.Venue {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.running || maxAge <= 0 {
+		return nil
+	}
+	settings := p.Current()
+	var restarted []screener.Venue
+	for _, id := range screener.OrderedVenues {
+		st, ok := p.status[id]
+		if !ok || !st.Enabled {
+			continue
+		}
+		vl, ok := p.loops[id]
+		if !ok {
+			continue
+		}
+		last := vl.startedAt
+		if st.LastPollAt != nil && st.LastPollAt.After(last) {
+			last = *st.LastPollAt
+		}
+		if now.Sub(last) <= maxAge {
+			continue
+		}
+		vl.cancel()
+		st.Restarts++
+		st.Online = false
+		st.LastError = "restarted: no completed poll for " + now.Sub(last).Truncate(time.Second).String()
+		p.startLoopLocked(id, st, settings, now)
+		restarted = append(restarted, id)
+	}
+	return restarted
 }
 
 // Stop cancels every loop and waits for them to exit.
@@ -92,6 +159,8 @@ func (p *Poller) Stop() {
 	p.mu.Unlock()
 	p.wg.Wait()
 }
+
+var _ screener.StaleRestarter = (*Poller)(nil)
 
 // Running reports whether Start has been called and Stop has not.
 func (p *Poller) Running() bool {
@@ -154,6 +223,11 @@ func (p *Poller) pollOnce(ctx context.Context, c Collector, st *screener.VenueSt
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if ctx.Err() != nil {
+		// Cancelled mid-poll (Stop, or replaced by RestartStale): the
+		// replacement loop owns the status row from here on.
+		return
+	}
 	now := time.Now().UTC()
 	st.LastPollAt = &now
 	st.PollMS = elapsed.Milliseconds()

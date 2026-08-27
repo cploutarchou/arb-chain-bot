@@ -54,7 +54,7 @@ func TestPollerFillsBookAndStatus(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	st := p.Status()
-	if len(st) != 6 {
+	if len(st) != len(screener.OrderedVenues) {
 		t.Fatalf("status rows = %d", len(st))
 	}
 	for _, s := range st {
