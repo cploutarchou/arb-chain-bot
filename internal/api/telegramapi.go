@@ -14,6 +14,11 @@ import (
 type TelegramStatusView struct {
 	Enabled   bool    `json:"enabled"`
 	Allowlist []int64 `json:"allowlist"`
+	// Disabled mirrors telegram.disabled (T-059 §4.2: hot mute); Reason
+	// explains a non-running or muted bot ("disabled in settings" /
+	// "no token configured" / "allowlist empty at boot").
+	Disabled bool   `json:"disabled"`
+	Reason   string `json:"reason,omitempty"`
 
 	BotUsername    string     `json:"bot_username,omitempty"`
 	Messages       int64      `json:"messages"`

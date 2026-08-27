@@ -1,7 +1,9 @@
 // Package platform is the second versioned dynamic-configuration
 // document (T-057, docs/design/platform-settings-and-restart.md and
 // docs/architecture.md §13): venue enablement, symbols, starting assets,
-// per-venue fees, paper starting balances, and the Telegram allowlist.
+// per-venue fees, paper starting balances, and the Telegram allowlist —
+// and, since T-059 (docs/design/settings-expansion.md), the operating
+// mode, log level, allowed console origin, and the AI advisor profile.
 // It is deliberately separate from internal/strategy — see the design
 // doc §1.1 for the RBAC-fails-open, provenance-churn and validation-shape
 // reasons the split is paid for knowingly.
@@ -9,14 +11,13 @@ package platform
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
-	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
-	"github.com/cploutarchou/arb-chain-bot/internal/fees"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
@@ -32,9 +33,46 @@ var CompiledVenues = map[string]bool{
 // decimal (never float64); paper balances are decimal strings end to
 // end so no float ever touches money.
 type Settings struct {
+	Platform PlatformSettings         `json:"platform"`
 	Venues   map[string]VenueSettings `json:"venues"` // key: exchange id, e.g. "binance"
 	Paper    PaperSettings            `json:"paper"`
 	Telegram TelegramSettings         `json:"telegram"`
+	AI       AISettings               `json:"ai"`
+}
+
+// PlatformSettings is the process-level section (T-059 §2/§4.3). Mode is
+// restart-scoped (applied by app.Supervisor on the next engine restart);
+// LogLevel and AllowedOrigin are hot.
+type PlatformSettings struct {
+	Mode          config.Mode `json:"mode"`           // restart: MARKET_DATA|RECORD|PAPER (SHADOW enumerated, not settable)
+	LogLevel      string      `json:"log_level"`      // hot: debug|info|warn|error
+	AllowedOrigin string      `json:"allowed_origin"` // hot: scheme://host[:port]
+}
+
+// AISettings is the advisor profile (T-059 §4.1). Every field is hot:
+// ai.Service/ai.Scheduler always exist behind an ai.Switch, so an enable
+// at runtime takes effect without a restart.
+type AISettings struct {
+	Enabled  bool       `json:"enabled"`
+	Provider string     `json:"provider"` // anthropic | fake
+	Model    string     `json:"model"`
+	Schedule AISchedule `json:"schedule"`
+	Budget   AIBudget   `json:"budget"`
+}
+
+// AISchedule holds the three standing-analysis cadences; 0 disables that
+// cadence.
+type AISchedule struct {
+	HourlyMinutes int `json:"hourly_minutes"` // 0 or 15..1440
+	DailyHours    int `json:"daily_hours"`    // 0 or 1..168
+	WeeklyHours   int `json:"weekly_hours"`   // 0 or 24..720
+}
+
+// AIBudget caps provider usage. MaxAnalysesPerDay is a per-process UTC-day
+// counter (not persisted: a process restart resets it).
+type AIBudget struct {
+	MaxAnalysesPerDay int `json:"max_analyses_per_day"` // 1..96
+	MaxOutputTokens   int `json:"max_output_tokens"`    // 256..8192
 }
 
 // VenueSettings is one venue's configuration.
@@ -67,10 +105,19 @@ type PaperSettings struct {
 	Balances map[string]string `json:"balances"` // asset → decimal string
 }
 
-// TelegramSettings holds the operator allowlist. The bot token stays
-// env-only and is never accepted or displayed here.
+// TelegramSettings holds the operator allowlist and the mute switch. The
+// bot token is never accepted or displayed here (it lives in the secrets
+// vault or the environment, T-060).
+//
+// Disabled is NEGATIVE on purpose (design D3): a document persisted
+// before this field existed unmarshals with the zero value, which must
+// mean "keep delivering". An Enabled bool would silently mute commands
+// and pushes on a document nobody edited — on a channel T-057 classifies
+// as a security control. The same name is used on the wire, in the diff
+// and in field_timing; the API never inverts it into an "enabled" alias.
 type TelegramSettings struct {
 	Allowlist []int64 `json:"allowlist"`
+	Disabled  bool    `json:"disabled"` // hot: mutes commands and pushes together
 }
 
 // Clone returns a deep copy; maps/slices in the tree are the only
@@ -118,6 +165,9 @@ var (
 // the topology dry-run are impure and live in ValidateAgainstCatalog
 // instead (design §1.3/§1.5).
 func (s Settings) Validate() error {
+	if err := s.Platform.validate(); err != nil {
+		return err
+	}
 	if len(s.Venues) == 0 {
 		return fmt.Errorf("platform: at least one venue must be configured")
 	}
@@ -128,6 +178,13 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("platform: venue id %q must be lower-case and non-empty", id)
 		}
 		if !CompiledVenues[id] {
+			// D12: display (VenueTable) is a superset of enforcement
+			// (CompiledVenues). A known-but-unbuilt venue is refused with
+			// the blocking task named; an id nobody has heard of is a
+			// plain validation error.
+			if vp, ok := venueProfile(id); ok {
+				return fmt.Errorf("%w: venue %q cannot be configured: %s", ErrConnectorUnavailable, id, vp.Reason)
+			}
 			return fmt.Errorf("platform: venue %q is not a compiled-in connector", id)
 		}
 		if err := v.validate(id); err != nil {
@@ -137,6 +194,12 @@ func (s Settings) Validate() error {
 			anyEnabled = true
 			for _, a := range v.StartingAssets {
 				allStarting[a] = true
+			}
+			// Folded in from the former ValidatePaperMode (T-059 §2.2):
+			// the mode is now part of the document, so Validate is total
+			// again and the failure lands at apply time, never at restart.
+			if s.Platform.Mode == config.ModePaper && !v.PaperEnabled {
+				return fmt.Errorf("platform: venues.%s is enabled but paper_enabled is false, and platform.mode is PAPER", id)
 			}
 		}
 	}
@@ -148,6 +211,49 @@ func (s Settings) Validate() error {
 	}
 	if err := s.Telegram.validate(); err != nil {
 		return err
+	}
+	if err := s.AI.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p PlatformSettings) validate() error {
+	if err := ValidateMode(p.Mode); err != nil {
+		return err
+	}
+	if err := ValidateLogLevel(p.LogLevel); err != nil {
+		return err
+	}
+	if err := ValidateOrigin(p.AllowedOrigin); err != nil {
+		return err
+	}
+	return nil
+}
+
+var modelRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+func (a AISettings) validate() error {
+	if !AIProviderSettable(a.Provider) {
+		return fmt.Errorf("platform: ai.provider %q must be one of %s", a.Provider, strings.Join(settableProviders(), ", "))
+	}
+	if !modelRE.MatchString(a.Model) {
+		return fmt.Errorf("platform: ai.model must be 1..64 chars of [A-Za-z0-9._-], got %q", a.Model)
+	}
+	if v := a.Schedule.HourlyMinutes; v != 0 && (v < 15 || v > 1440) {
+		return fmt.Errorf("platform: ai.schedule.hourly_minutes must be 0 or 15..1440, got %d", v)
+	}
+	if v := a.Schedule.DailyHours; v != 0 && (v < 1 || v > 168) {
+		return fmt.Errorf("platform: ai.schedule.daily_hours must be 0 or 1..168, got %d", v)
+	}
+	if v := a.Schedule.WeeklyHours; v != 0 && (v < 24 || v > 720) {
+		return fmt.Errorf("platform: ai.schedule.weekly_hours must be 0 or 24..720, got %d", v)
+	}
+	if v := a.Budget.MaxAnalysesPerDay; v < 1 || v > 96 {
+		return fmt.Errorf("platform: ai.budget.max_analyses_per_day must be 1..96, got %d", v)
+	}
+	if v := a.Budget.MaxOutputTokens; v < 256 || v > 8192 {
+		return fmt.Errorf("platform: ai.budget.max_output_tokens must be 256..8192, got %d", v)
 	}
 	return nil
 }
@@ -247,40 +353,6 @@ type CompiledVenueDiscount struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-// CompiledVenue is one compiled-in connector's static profile.
-type CompiledVenue struct {
-	ID       string                 `json:"id"`
-	Discount *CompiledVenueDiscount `json:"discount,omitempty"`
-}
-
-// CompiledVenueTable returns every venue this build has a connector for
-// (CompiledVenues), sorted by id, with its compiled-in fee-discount
-// profile when it has one — the single source the console reads instead
-// of hardcoding venue ids or discount constants (mirrors FieldTiming's
-// "computed, never hardcoded on the frontend").
-func CompiledVenueTable() []CompiledVenue {
-	ids := make([]string, 0, len(CompiledVenues))
-	for id := range CompiledVenues {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	out := make([]CompiledVenue, 0, len(ids))
-	for _, id := range ids {
-		v := CompiledVenue{ID: id}
-		if d, ok := fees.VenueDiscount(exchange.ExchangeID(id)); ok {
-			v.Discount = &CompiledVenueDiscount{
-				PayAsset:     string(d.PayAsset),
-				Rate:         d.Rate.String(),
-				AppliesToAPI: d.AppliesToAPI,
-				Modeled:      false,
-				Reason:       "token-paid discounts are not modeled: no pay-asset ledger",
-			}
-		}
-		out = append(out, v)
-	}
-	return out
-}
-
 func (p PaperSettings) validate(wantAssets map[string]bool) error {
 	if len(p.Balances) != len(wantAssets) {
 		return fmt.Errorf("platform: paper.balances key set must equal the union of enabled venues' starting assets")
@@ -326,25 +398,14 @@ func (t TelegramSettings) validate() error {
 	return nil
 }
 
-// ValidatePaperMode additionally requires that in PAPER mode every
-// enabled venue has paper_enabled set. It is separate from Validate
-// because it needs the process mode, which is not part of the document
-// (design §1.3 row "venues.{ex}.paper_enabled").
-func (s Settings) ValidatePaperMode(mode config.Mode) error {
-	if mode != config.ModePaper {
-		return nil
-	}
-	for id, v := range s.Venues {
-		if v.Enabled && !v.PaperEnabled {
-			return fmt.Errorf("platform: venues.%s is enabled but paper_enabled is false, and the process is in PAPER mode", id)
-		}
-	}
-	return nil
-}
-
 // Seed builds the first-boot document from the bootstrap environment
 // (D5): after version 1 exists, ARB_SYMBOLS/ARB_STARTING_ASSETS/
 // ARB_PAPER_BALANCE/ARB_TELEGRAM_ALLOWLIST are ignored by the service.
+//
+// T-059 extends the rule to ARB_MODE, ARB_LOG_LEVEL, ARB_ALLOWED_ORIGIN,
+// ARB_AI_PROVIDER/ARB_AI_MODEL and the presence of ANTHROPIC_API_KEY (as
+// the ai.enabled seed). A non-settable ARB_MODE (REPLAY, BACKTEST,
+// SHADOW — all legal env values) seeds MARKET_DATA: see SeedMode.
 func Seed(b config.Bootstrap) Settings {
 	symbols := sortedUpper(b.Symbols)
 	starting := sortedUpper(b.StartingAssets)
@@ -352,12 +413,19 @@ func Seed(b config.Bootstrap) Settings {
 	for _, a := range starting {
 		balances[a] = b.PaperBalance
 	}
+	mode, _ := SeedMode(b.Mode)
 	venueID := "binance"
 	return Settings{
+		Platform: PlatformSettings{
+			Mode:          mode,
+			LogLevel:      seedLogLevel(b.LogLevel),
+			AllowedOrigin: seedOrigin(b.AllowedOrigin),
+		},
+		AI: seedAI(b),
 		Venues: map[string]VenueSettings{
 			venueID: {
 				Enabled:        true,
-				PaperEnabled:   b.Mode == config.ModePaper,
+				PaperEnabled:   mode == config.ModePaper,
 				Symbols:        symbols,
 				StartingAssets: starting,
 				Fees: FeeSettings{
@@ -371,6 +439,81 @@ func Seed(b config.Bootstrap) Settings {
 			Allowlist: append([]int64(nil), b.TelegramAllowlist...),
 		},
 	}
+}
+
+// SeedMode maps the bootstrap ARB_MODE onto the settable enum: a
+// settable mode passes through; every non-settable one (REPLAY/BACKTEST
+// are batch runs, SHADOW is enumerated-but-unwired) becomes MARKET_DATA
+// and the second return names the substitution for the boot log. Written
+// once, in terms of Settable, so it cannot drift from ModeTable (§2.2).
+func SeedMode(m config.Mode) (config.Mode, string) {
+	if m == "" {
+		return config.ModeMarketData, ""
+	}
+	if Settable(m) {
+		return m, ""
+	}
+	return config.ModeMarketData, fmt.Sprintf("ARB_MODE=%s is not a settable operating mode; platform.mode seeded as %s", m, config.ModeMarketData)
+}
+
+func seedLogLevel(v string) string {
+	if ValidateLogLevel(v) == nil {
+		return strings.ToLower(v)
+	}
+	return "info"
+}
+
+func seedOrigin(v string) string {
+	if ValidateOrigin(v) == nil {
+		return v
+	}
+	return "http://localhost:3000"
+}
+
+// seedAI reproduces the pre-T-059 env behaviour exactly: the advisor was
+// built when ARB_AI_PROVIDER=fake, or when ANTHROPIC_API_KEY was set
+// (provider "" or "anthropic"); an unknown provider left it disabled.
+func seedAI(b config.Bootstrap) AISettings {
+	ai := AISettings{
+		Provider: "anthropic",
+		Model:    b.AIModel,
+		Schedule: AISchedule{HourlyMinutes: 60, DailyHours: 24, WeeklyHours: 168},
+		Budget:   AIBudget{MaxAnalysesPerDay: 48, MaxOutputTokens: 2048},
+	}
+	if !modelRE.MatchString(ai.Model) {
+		ai.Model = "claude-sonnet-5"
+	}
+	switch b.AIProvider {
+	case "fake":
+		ai.Provider, ai.Enabled = "fake", true
+	case "", "anthropic":
+		ai.Enabled = b.AnthropicAPIKey != ""
+	}
+	return ai
+}
+
+// WithDefaults fills the sections/fields a pre-T-059 payload lacks from
+// the env seed (design D3): old JSONB rows have no "platform"/"ai" keys,
+// so a naive unmarshal yields Mode=="" and Validate would refuse to boot
+// after the deploy. It runs wherever a stored payload becomes a Settings
+// (Service.Load, Service.Get, the rollback path), fills in memory only,
+// and never writes a version — the next operator write persists the
+// complete document. Fields that are already set are left untouched.
+func (s Settings) WithDefaults(b config.Bootstrap) Settings {
+	seed := Seed(b)
+	if s.Platform.Mode == "" {
+		s.Platform.Mode = seed.Platform.Mode
+	}
+	if s.Platform.LogLevel == "" {
+		s.Platform.LogLevel = seed.Platform.LogLevel
+	}
+	if s.Platform.AllowedOrigin == "" {
+		s.Platform.AllowedOrigin = seed.Platform.AllowedOrigin
+	}
+	if s.AI.Provider == "" && s.AI.Model == "" {
+		s.AI = seed.AI
+	}
+	return s
 }
 
 func sortedUpper(in []string) []string {
@@ -388,23 +531,32 @@ func sortedUpper(in []string) []string {
 	return out
 }
 
-// restartScopedPrefixes are the dotted-path prefixes that are hot, i.e.
-// everything else in the document is restart-scoped (design §1.3: every
-// field is restart-scoped except the Telegram allowlist).
-var hotPrefixes = []string{"telegram.allowlist"}
+// hotPrefixes are the dotted paths (exact, or prefix when they end in
+// ".") that apply without an engine restart; everything else in the
+// document is restart-scoped — i.e. exactly venues.*, paper.* and
+// platform.mode (settings-expansion §6).
+var hotPrefixes = []string{"telegram.", "ai.", "platform.log_level", "platform.allowed_origin"}
 
 // RestartScoped reports whether diff contains at least one change whose
 // path is NOT one of the hot-only prefixes.
 func (s Settings) RestartScoped(diff map[string]strategy.Change) bool {
 	for path := range diff {
-		hot := false
-		for _, p := range hotPrefixes {
-			if path == p || strings.HasPrefix(path, p+".") {
-				hot = true
-				break
-			}
+		if !IsHot(path) {
+			return true
 		}
-		if !hot {
+	}
+	return false
+}
+
+// IsHot reports whether one dotted settings path applies without an
+// engine restart.
+func IsHot(path string) bool {
+	for _, p := range hotPrefixes {
+		if strings.HasSuffix(p, ".") {
+			if strings.HasPrefix(path, p) {
+				return true
+			}
+		} else if path == p {
 			return true
 		}
 	}
@@ -418,7 +570,20 @@ func (s Settings) RestartScoped(diff map[string]strategy.Change) bool {
 // restart (components.go:170 - an empty boot allowlist never builds the
 // bot at all).
 func FieldTiming(s Settings, botRunning bool) map[string]string {
-	out := map[string]string{}
+	out := map[string]string{
+		"platform.mode":                  "restart",
+		"platform.log_level":             "hot",
+		"platform.allowed_origin":        "hot",
+		"ai.enabled":                     "hot",
+		"ai.provider":                    "hot",
+		"ai.model":                       "hot",
+		"ai.schedule.hourly_minutes":     "hot",
+		"ai.schedule.daily_hours":        "hot",
+		"ai.schedule.weekly_hours":       "hot",
+		"ai.budget.max_analyses_per_day": "hot",
+		"ai.budget.max_output_tokens":    "hot",
+		"telegram.disabled":              "hot",
+	}
 	for id, v := range s.Venues {
 		prefix := "venues." + id + "."
 		out[prefix+"enabled"] = "restart"

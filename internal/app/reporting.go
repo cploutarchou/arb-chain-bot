@@ -17,7 +17,7 @@ func reportSources(e *Engine, stratSvc *strategy.Service, center *notification.C
 	src := reporting.Sources{
 		System: func() reporting.SystemSection {
 			st := e.Status()
-			out := reporting.SystemSection{Mode: string(e.cfg.Mode), Ready: st.Ready}
+			out := reporting.SystemSection{Mode: string(e.Mode()), Ready: st.Ready}
 			if stratSvc != nil {
 				out.ConfigVersion = stratSvc.Current().Version
 			}

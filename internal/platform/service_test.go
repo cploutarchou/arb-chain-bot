@@ -178,19 +178,20 @@ func TestServiceRollbackRejectsUnbuildableTopology(t *testing.T) {
 	}
 }
 
-// TestServicePaperModeRequiresPaperEnabled wires Mode into the apply
-// path (design §1.3 row venues.{ex}.paper_enabled).
+// TestServicePaperModeRequiresPaperEnabled: the paper_enabled rule now
+// reads platform.mode from the document itself (T-059 §2.2), so the
+// apply path refuses the combination without any injected process mode.
 func TestServicePaperModeRequiresPaperEnabled(t *testing.T) {
 	svc := NewService(NewMemoryStore(), testLogger(), nil)
-	svc.Mode = config.ModePaper
 	if _, err := svc.Load(context.Background(), testCfg()); err != nil {
 		t.Fatal(err)
 	}
 	bad := validSettings()
+	bad.Platform.Mode = config.ModePaper
 	v := bad.Venues["binance"]
 	v.PaperEnabled = false
 	bad.Venues["binance"] = v
 	if _, err := svc.Apply(context.Background(), "alice", "web", bad); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("expected ErrInvalid from ValidatePaperMode, got %v", err)
+		t.Fatalf("expected ErrInvalid from Validate, got %v", err)
 	}
 }

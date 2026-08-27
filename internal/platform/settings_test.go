@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -12,6 +13,12 @@ import (
 
 func validSettings() Settings {
 	return Settings{
+		Platform: PlatformSettings{Mode: config.ModePaper, LogLevel: "info", AllowedOrigin: "http://localhost:3000"},
+		AI: AISettings{
+			Enabled: false, Provider: "anthropic", Model: "claude-sonnet-5",
+			Schedule: AISchedule{HourlyMinutes: 60, DailyHours: 24, WeeklyHours: 168},
+			Budget:   AIBudget{MaxAnalysesPerDay: 48, MaxOutputTokens: 2048},
+		},
 		Venues: map[string]VenueSettings{
 			"binance": {
 				Enabled:        true,
@@ -163,49 +170,59 @@ func TestTokenDiscountRejected(t *testing.T) {
 	}
 }
 
-// TestCompiledVenueTable exercises requirement (a): the console reads
-// the discount table from the API instead of hardcoding it, and every
-// entry must honestly report Modeled:false per P1-2.
-func TestCompiledVenueTable(t *testing.T) {
-	table := CompiledVenueTable()
-	if len(table) == 0 {
-		t.Fatal("expected at least one compiled venue")
+// TestVenueTable exercises requirement (a) and T-061: the console reads
+// the venue/discount table from the API instead of hardcoding it, every
+// discount entry must honestly report Modeled:false per P1-2, and the
+// unbuilt venues are listed with the task that blocks them (D12).
+func TestVenueTable(t *testing.T) {
+	table := VenueTable()
+	if len(table) < 6 {
+		t.Fatalf("expected binance + the five unbuilt venues, got %d", len(table))
 	}
-	var sawBinance bool
+	byID := map[string]VenueProfile{}
 	for _, v := range table {
-		if v.ID == "binance" {
-			sawBinance = true
-			if v.Discount == nil {
-				t.Fatal("binance must report its compiled-in discount profile")
-			}
-			if v.Discount.Modeled {
-				t.Fatal("Modeled must be false until a pay-asset ledger exists (P1-2)")
-			}
-			if v.Discount.PayAsset != "BNB" || !v.Discount.AppliesToAPI {
-				t.Fatalf("unexpected discount profile: %+v", v.Discount)
-			}
+		byID[v.ID] = v
+		if v.Available != CompiledVenues[v.ID] {
+			t.Fatalf("%s: available=%v must mirror CompiledVenues", v.ID, v.Available)
+		}
+		if !v.Available && !strings.Contains(v.Reason, "T-05") {
+			t.Fatalf("%s: unavailable venue must name the blocking task, got %q", v.ID, v.Reason)
 		}
 	}
-	if !sawBinance {
-		t.Fatal("expected binance in the compiled venue table")
+	b := byID["binance"]
+	if !b.Available || b.Discount == nil || b.Discount.Modeled || b.Discount.PayAsset != "BNB" || !b.Discount.AppliesToAPI {
+		t.Fatalf("unexpected binance profile: %+v", b)
 	}
-	// Sorted by id: the console never has to re-sort.
-	for i := 1; i < len(table); i++ {
-		if table[i-1].ID >= table[i].ID {
-			t.Fatalf("table not sorted: %v", table)
+	for _, id := range []string{"okx", "bybit", "bitget", "gate", "mexc"} {
+		if _, ok := byID[id]; !ok {
+			t.Fatalf("venue %s missing from the table", id)
 		}
+	}
+	if byID["okx"].Reason != "connector not built (T-050)" {
+		t.Fatalf("okx reason = %q", byID["okx"].Reason)
 	}
 }
 
-func TestValidatePaperMode(t *testing.T) {
+func TestUnbuiltVenueRefusedByName(t *testing.T) {
+	s := validSettings()
+	s.Venues["okx"] = s.Venues["binance"]
+	err := s.Validate()
+	if !errors.Is(err, ErrConnectorUnavailable) || !strings.Contains(err.Error(), "T-050") {
+		t.Fatalf("expected ErrConnectorUnavailable naming T-050, got %v", err)
+	}
+}
+
+func TestValidatePaperModeFoldedIntoValidate(t *testing.T) {
 	s := validSettings()
 	v := s.Venues["binance"]
 	v.PaperEnabled = false
 	s.Venues["binance"] = v
-	if err := s.ValidatePaperMode(config.ModePaper); err == nil {
-		t.Fatal("expected error: enabled venue without paper_enabled in PAPER mode")
+	s.Platform.Mode = config.ModePaper
+	if err := s.Validate(); err == nil {
+		t.Fatal("expected error: enabled venue without paper_enabled while platform.mode is PAPER")
 	}
-	if err := s.ValidatePaperMode(config.ModeMarketData); err != nil {
+	s.Platform.Mode = config.ModeMarketData
+	if err := s.Validate(); err != nil {
 		t.Fatalf("non-PAPER mode must not require paper_enabled: %v", err)
 	}
 }

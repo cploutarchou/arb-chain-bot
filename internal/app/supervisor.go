@@ -805,7 +805,13 @@ func (s *Supervisor) subscribeSettings() {
 				}
 				s.mu.Lock()
 				if len(diff) > 0 && running.RestartScoped(diff) {
+					// T-059 §2.4: a mode change names the transition so the
+					// banner can say what the restart will do; other
+					// restart-scoped fields keep the generic reason.
 					s.pendingPlatform = fmt.Sprintf("platform settings v%d", newSnap.Version)
+					if from, to := running.Platform.Mode, newSnap.Settings.Platform.Mode; from != to {
+						s.pendingPlatform = fmt.Sprintf("platform settings v%d: mode %s→%s", newSnap.Version, from, to)
+					}
 					s.st.PendingVersion = newSnap.Version
 				} else {
 					s.pendingPlatform = ""
