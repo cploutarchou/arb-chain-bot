@@ -201,6 +201,10 @@ func (s *Service) Load(ctx context.Context) (Snapshot, error) {
 	if err := snap.Settings.Validate(); err != nil {
 		return Snapshot{}, fmt.Errorf("screener: stored active version %d invalid: %w", snap.Version, err)
 	}
+	// A document stored before max_plausible_spread_bps existed carries
+	// a zero there; the active snapshot shows the effective default so
+	// the console edits (and re-posts) the real value.
+	snap.Settings = snap.Settings.Normalised()
 	s.cur.Store(&snap)
 	return snap, nil
 }

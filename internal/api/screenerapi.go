@@ -192,6 +192,12 @@ func parseOptionalDecimal(w http.ResponseWriter, r *http.Request, param string) 
 	return &v, true
 }
 
+// handleScreenerSpreads serves GET /screener/spreads (design §3/§7).
+// Defaults are the safe ones: suspect lanes (asset-identity guard) and
+// unknown-liquidity lanes are excluded, and min_liquidity falls back to
+// settings.min_liquidity_quote; include_suspect=1 /
+// include_unknown_liquidity=1 opt back in and the excluded counts are
+// always reported so the operator knows how many lanes were hidden.
 func (s *Server) handleScreenerSpreads(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	minSpread, ok := parseOptionalDecimal(w, r, "min_spread_bps")
@@ -202,30 +208,72 @@ func (s *Server) handleScreenerSpreads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	snap := s.Screener.Current()
+	if minLiquidity == nil {
+		v := snap.Settings.MinLiquidityQuote
+		minLiquidity = &v
+	}
 	minLifetime, _ := strconv.ParseInt(q.Get("min_lifetime_s"), 10, 64)
 	limit, _ := strconv.Atoi(q.Get("limit"))
 
 	f := screener.SpreadFilters{
-		MinSpreadBpsNet:   minSpread,
-		MinLiquidityQuote: minLiquidity,
-		MinLifetimeS:      minLifetime,
-		BuyVenues:         parseVenueSet(q.Get("buy")),
-		SellVenues:        parseVenueSet(q.Get("sell")),
-		Quote:             q.Get("quote"),
-		Limit:             limit,
+		MinSpreadBpsNet:         minSpread,
+		MinLiquidityQuote:       minLiquidity,
+		MinLifetimeS:            minLifetime,
+		BuyVenues:               parseVenueSet(q.Get("buy")),
+		SellVenues:              parseVenueSet(q.Get("sell")),
+		Quotes:                  parseQuoteSet(q.Get("quote")),
+		Limit:                   limit,
+		IncludeSuspect:          queryFlag(q.Get("include_suspect")),
+		IncludeUnknownLiquidity: queryFlag(q.Get("include_unknown_liquidity")),
+		MaxPlausibleSpreadBps:   snap.Settings.EffectiveMaxPlausibleSpreadBps(),
 	}
 	if base := q.Get("base"); base != "" {
 		f.BasesAllow = map[string]bool{base: true}
 	}
 
-	snap := s.Screener.Current()
 	res := screener.ComputeSpreads(s.Screener.Book, screenerSpotFeeLookup(snap), s.Screener.SpreadLifetime, nil, time.Now().UTC(), f)
 	WriteData(w, http.StatusOK, map[string]any{
 		"rows":         res.Rows,
 		"total":        res.Total,
 		"generated_at": time.Now().UTC(),
 		"model":        "no-transfer, top-of-book",
+		"excluded": map[string]int{
+			"suspect":           res.ExcludedSuspect,
+			"liquidity_unknown": res.ExcludedLiquidityUnknown,
+		},
+		"filters": map[string]any{
+			"min_liquidity":             minLiquidity,
+			"include_suspect":           f.IncludeSuspect,
+			"include_unknown_liquidity": f.IncludeUnknownLiquidity,
+			"max_plausible_spread_bps":  f.MaxPlausibleSpreadBps,
+		},
 	})
+}
+
+// parseQuoteSet splits ?quote=USDT,USDC into a set. Quote assets are
+// matched exactly — USDT, USDC, FDUSD and USD are distinct quotes and
+// are never merged (design §3).
+func parseQuoteSet(csv string) map[string]bool {
+	if csv == "" {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, part := range strings.Split(csv, ",") {
+		part = strings.ToUpper(strings.TrimSpace(part))
+		if part != "" {
+			out[part] = true
+		}
+	}
+	return out
+}
+
+func queryFlag(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 func (s *Server) handleScreenerPerpetuals(w http.ResponseWriter, r *http.Request) {

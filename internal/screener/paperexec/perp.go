@@ -56,6 +56,11 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 		x.skip(ctx, s, ev, now, SkipSettlementNear, errf("next settlement %s away", p.NextFundingAt.Sub(now)))
 		return
 	}
+	// Task 1d: shared guard, re-run at decision time.
+	if g := screener.GuardSpotPerp(q, p, x.maxPlausibleSpreadBps()); g.SkipReason() != "" {
+		x.skip(ctx, s, ev, now, g.SkipReason(), guardDetail(g))
+		return
+	}
 	mmr, ok := r.MMR()
 	if !ok {
 		x.skip(ctx, s, ev, now, SkipMMRUnknown, "rule params.mmr not set")
