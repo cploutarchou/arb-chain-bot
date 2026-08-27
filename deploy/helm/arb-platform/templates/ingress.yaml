@@ -1,0 +1,42 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "arb.fullname" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ default (printf "%s-tls" (include "arb.fullname" .)) .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # API + websocket go straight to arbd; everything else to the console.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arb.arbdName" . }}
+                port: {name: http}
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "arb.arbdName" . }}
+                port: {name: http}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arb.webName" . }}
+                port: {name: http}
+{{- end }}

@@ -1,0 +1,45 @@
+# grafana/loki helm values (SimpleScalable). Logs: arbd JSON lines via
+# promtail/alloy; retention 30d hot, object storage backend from
+# terraform (backups bucket is NOT reused; a separate logs bucket).
+deploymentMode: SimpleScalable
+loki:
+  auth_enabled: false
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index: {prefix: index_, period: 24h}
+  storage:
+    type: s3
+    bucketNames: {chunks: REPLACE-loki-chunks, ruler: REPLACE-loki-ruler, admin: REPLACE-loki-admin}
+    s3:
+      region: eu-central-1
+      # credentials via workload identity on the loki service account
+  limits_config:
+    retention_period: 720h
+    ingestion_rate_mb: 16
+    ingestion_burst_size_mb: 32
+    max_query_series: 5000
+  compactor:
+    retention_enabled: true
+    delete_request_store: s3
+  # Audit events (audit_events table + API audit log lines) are also
+  # shipped here; retention for the {app="arbd", stream="audit"} stream
+  # is 400d via a per-stream override below.
+  overrides:
+    arb:
+      retention_stream:
+        - selector: '{app="arbd", stream="audit"}'
+          priority: 1
+          period: 9600h
+backend:  {replicas: 2}
+read:     {replicas: 2}
+write:    {replicas: 3}
+gateway:  {enabled: true, replicas: 2}
+monitoring:
+  serviceMonitor: {enabled: true, labels: {release: kube-prometheus-stack}}
+serviceAccount:
+  create: true
+  annotations: {}   # eks.amazonaws.com/role-arn: <logs bucket role>
