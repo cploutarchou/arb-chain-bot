@@ -14,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
@@ -165,6 +166,75 @@ func TestEngineRunTwiceIsReentrant(t *testing.T) {
 	}
 }
 
+// TestEngineSetPaperPausedConsumedOnBoot is the P2-2 engine-side
+// regression test: SetPaperPaused(true) called before a Run makes THAT
+// run's paper engine start paused instead of the unconditional Resume()
+// a direct call always used to do; a later Run that never calls
+// SetPaperPaused again reverts to the default (start running) —
+// confirming the flag is consumed (read-and-cleared), not sticky.
+func TestEngineSetPaperPausedConsumedOnBoot(t *testing.T) {
+	e, _ := newTestEngine(t)
+
+	e.SetPaperPaused(true)
+	if err := runOnceUntilReady(t, e, func() {
+		pap := e.Paper()
+		if pap == nil {
+			t.Fatal("expected a paper engine once ready")
+		}
+		if pap.Running() {
+			t.Fatal("SetPaperPaused(true) must make the run start paused")
+		}
+	}); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// No SetPaperPaused call this time: default behavior (start running)
+	// must be back, proving the flag does not leak into a later run.
+	if err := runOnceUntilReady(t, e, func() {
+		pap := e.Paper()
+		if pap == nil {
+			t.Fatal("expected a paper engine once ready")
+		}
+		if !pap.Running() {
+			t.Fatal("without SetPaperPaused, the default (start running) must apply")
+		}
+	}); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("second run: %v", err)
+	}
+}
+
+// runOnceUntilReady is runOnce plus a check callback invoked once ready,
+// BEFORE cancelling — the state runOnce alone cannot let a caller
+// inspect (runOnce cancels immediately upon detecting readiness).
+func runOnceUntilReady(t *testing.T, e *Engine, check func()) error {
+	t.Helper()
+	before := e.currentScanner()
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.Run(ctx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.Status().Ready || e.currentScanner() == before {
+		if time.Now().After(deadline) {
+			cancel()
+			<-errCh
+			t.Fatal("engine never became ready")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	check()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after cancel + ShutdownGrace")
+		return nil
+	}
+}
+
 // TestEngineRunAppliesLatestStrategyEachRun exercises the advisor's
 // "explicit apply at run entry" fix: Subscribe only fires immediately on
 // its FIRST registration, so a config applied between two runs must
@@ -196,6 +266,110 @@ func TestEngineRunAppliesLatestStrategyEachRun(t *testing.T) {
 	}
 	if got := scn.CurrentConfig().Depth; got != 77 {
 		t.Fatalf("second run's scanner depth = %d, want 77 (config applied between runs)", got)
+	}
+}
+
+// TestRecordingSessionStopsWhenRunReturns is a P2-6 regression test
+// against the real Engine: an API-started recording session (bound via
+// RecorderControl.Bind at Run entry) must not survive the Run call that
+// bound it. Exercises the ordinary shutdown path (runOnce's cancel +
+// wait) end to end.
+func TestRecordingSessionStopsWhenRunReturns(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.cfg.RecordingDir = t.TempDir()
+
+	before := e.currentScanner()
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.Run(ctx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.Status().Ready || e.currentScanner() == before {
+		if time.Now().After(deadline) {
+			cancel()
+			<-errCh
+			t.Fatal("engine never became ready")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	rc := e.Recorder()
+	if rc == nil {
+		t.Fatal("expected a recorder control once ready")
+	}
+	if _, err := rc.StartSession(); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if !rc.Status().Running {
+		t.Fatal("expected the session to be running")
+	}
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+
+	// The recorder session's own internal goroutine (independent of
+	// Engine.Run's WaitGroup-tracked children) needs a moment to notice
+	// runCtx cancelled and finish draining — Run returning does not wait
+	// on it synchronously. The invariant this test guards is "stops on
+	// its own, without an explicit Stop() call from anyone", not
+	// "already stopped the instant Run() returns" — poll briefly rather
+	// than asserting on the very next line.
+	deadline = time.Now().Add(2 * time.Second)
+	for rc.Status().Running {
+		if time.Now().After(deadline) {
+			t.Fatal("P2-6: recording session outlived the Run call that bound it (orphaned)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestRecorderControlBoundToRunCtxStopsOnInternalFatalWhileOuterCtxAlive
+// is the P2-6 mechanism test: it reconstructs the exact context
+// relationship engine.go's Run now uses (runCtx := context.WithCancel
+// (ctx), with rctl.Bind(runCtx) rather than rctl.Bind(ctx)) and confirms
+// a session started against the bound lifetime stops when RUN'S OWN
+// cleanup cancels runCtx — even though the caller's outer ctx is still
+// alive. Before the fix, RecorderControl was bound to the wider `ctx`
+// parameter directly: Engine.Run returning on an internal fatal error
+// (a child goroutine's error, not the caller cancelling ctx) left an
+// API-started session running, orphaned, until the SUPERVISOR eventually
+// noticed the exit and cancelled its outer context — an unbounded window
+// in the presence of the generation-tracking bugs P1-1 fixes.
+func TestRecorderControlBoundToRunCtxStopsOnInternalFatalWhileOuterCtxAlive(t *testing.T) {
+	outerCtx, outerCancel := context.WithCancel(context.Background())
+	t.Cleanup(outerCancel)
+
+	runCtx, cancelRun := context.WithCancel(outerCtx)
+	rc := &marketdata.RecorderControl{
+		Dir: t.TempDir(), Log: testLogger(),
+		NewSessionID: func() string { return "sess-1" },
+	}
+	rc.Bind(runCtx) // engine.go's post-fix wiring
+	if _, err := rc.StartSession(); err != nil {
+		t.Fatal(err)
+	}
+	if !rc.Status().Running {
+		t.Fatal("expected the session to be running")
+	}
+
+	// Simulate Run's own deferred cleanup firing on an internal fatal
+	// error — the OUTER ctx (the caller's, e.g. Supervisor's) is
+	// deliberately left alive.
+	cancelRun()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for rc.Status().Running {
+		if time.Now().After(deadline) {
+			t.Fatal("P2-6: session bound to runCtx did not stop when runCtx was cancelled")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if outerCtx.Err() != nil {
+		t.Fatal("test setup bug: outer ctx must still be alive")
 	}
 }
 

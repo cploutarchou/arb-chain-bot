@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"sync/atomic"
@@ -77,7 +78,14 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	}
 
 	stratSvc := buildStrategy(log, store)
-	platformSvc := buildPlatform(log, store, cfg)
+	platformSvc, err := buildPlatform(log, store, cfg)
+	if err != nil {
+		// P2-4: matches the storage.Open hard-failure shape above — a
+		// document that failed to load must not silently become an
+		// env-reseeded MemoryStore, discarding whatever was persisted.
+		log.Error("platform settings load failed; refusing to start without a validated settings document", "error", err)
+		return []Component{ComponentFunc{ComponentName: "platform-settings", Fn: func(context.Context) error { return err }}}
+	}
 	if store != nil {
 		// API-profile fallback catalog; overridden below by engineCatalog
 		// (preferred) when this profile actually runs an engine.
@@ -261,6 +269,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			RunningWorkers: engine.RunningWorkers,
 			Ready:          func() bool { return engine.Status().Ready },
 			SessionID:      engine.SessionID,
+			// P2-2: carries the pause decision into the engine's own
+			// boot sequence rather than relying on a post-hoc re-Pause()
+			// that has nothing to act on while s.Paper() is still nil
+			// mid-bootstrap.
+			SetPaperPaused: engine.SetPaperPaused,
 		}
 		if store != nil {
 			supervisor.EndPaperSession = store.EndPaperSession
@@ -681,7 +694,18 @@ func buildStrategy(log *slog.Logger, store *storage.Store) *strategy.Service {
 // seeds version 1 from platform.Seed(cfg) when the table is empty, and
 // logs when it is not — the env symbol/asset/balance/allowlist
 // variables are first-boot seeds only from then on (D5).
-func buildPlatform(log *slog.Logger, store *storage.Store, cfg config.Bootstrap) *platform.Service {
+//
+// P2-4: a Load failure against a configured database used to be
+// swallowed — silently swapping in a fresh MemoryStore re-seeded from
+// the environment, discarding whatever was actually persisted (wrong
+// venues/symbols/fees/balances, and any operator writes since the
+// database became unreachable, would be lost with no trace beyond a log
+// line). That is exactly the "silently running without the persistence
+// the operator asked for would be a lie" policy this file already
+// enforces for storage.Open failing outright (see the store == nil
+// branch above); Load failing must fail the SAME way, not differently
+// just because it happens one step later.
+func buildPlatform(log *slog.Logger, store *storage.Store, cfg config.Bootstrap) (*platform.Service, error) {
 	var st platform.Store
 	var audit func(context.Context, platform.AuditEvent)
 	if store != nil {
@@ -701,19 +725,22 @@ func buildPlatform(log *slog.Logger, store *storage.Store, cfg config.Bootstrap)
 	} else {
 		st = platform.NewMemoryStore()
 	}
+	return newPlatformService(log, st, audit, cfg)
+}
+
+// newPlatformService is buildPlatform's storage-agnostic core, split out
+// so a Store.Load failure (P2-4) can be unit tested against a fake
+// platform.Store instead of requiring a real, deliberately-broken
+// database.
+func newPlatformService(log *slog.Logger, st platform.Store, audit func(context.Context, platform.AuditEvent), cfg config.Bootstrap) (*platform.Service, error) {
 	svc := platform.NewService(st, log, audit)
 	svc.Mode = cfg.Mode
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := svc.Load(ctx, cfg); err != nil {
-		log.Error("platform settings load failed; falling back to in-memory defaults", "error", err)
-		svc = platform.NewService(platform.NewMemoryStore(), log, audit)
-		svc.Mode = cfg.Mode
-		if _, err := svc.Load(context.Background(), cfg); err != nil {
-			log.Error("in-memory platform settings seed failed", "error", err)
-		}
+		return nil, fmt.Errorf("app: platform settings load failed: %w", err)
 	}
-	return svc
+	return svc, nil
 }
 
 // buildAuth wires auth stores: pgx-backed when persistence is enabled
@@ -769,6 +796,12 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*a
 		TTL:        12 * time.Hour,
 		Now:        time.Now,
 	}
-	adminSvc := &auth.AdminService{Store: admin, Sessions: sessions, Now: time.Now, IDGen: newULID}
+	adminSvc := &auth.AdminService{
+		Store: admin, Sessions: sessions, Now: time.Now, IDGen: newULID,
+		// P3-13: self-service password change had no throttle at all,
+		// unlike login — a stolen session cookie could otherwise
+		// brute-force the current password with no rate limit.
+		PasswordThrottle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
+	}
 	return mgr, adminSvc
 }

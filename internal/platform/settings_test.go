@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -134,30 +135,65 @@ func TestValidateTable(t *testing.T) {
 	}
 }
 
-func TestTokenDiscountValidBinanceAPI(t *testing.T) {
+// TestTokenDiscountRejected is the P1-2 regression test: token_discount
+// must be refused for EVERY venue — even binance, whose compiled-in
+// discount profile applies to API-executed trades — because no
+// pay-asset debit ledger exists anywhere in the paper engine or
+// portfolio (fees.go's Taker()/NetOutput comments explain why applying
+// the discounted rate alone would make paper P&L optimistic). Bybit
+// (API-ineligible even in principle) must be refused the same way.
+func TestTokenDiscountRejected(t *testing.T) {
 	s := validSettings()
 	v := s.Venues["binance"]
 	v.Fees.TokenDiscount = true
 	s.Venues["binance"] = v
-	if err := s.Validate(); err != nil {
-		t.Fatalf("binance token discount applies to API trades, must validate: %v", err)
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "pay-asset ledger") {
+		t.Fatalf("expected a pay-asset-ledger validation error, got %v", err)
 	}
-}
 
-// TestTokenDiscountAPIIneligible exercises the "venue whose discount
-// excludes API trades" case (design §1.2/§1.3, table row
-// venues.{ex}.fees.token_discount) directly against FeeSettings.validate
-// with the venue id "bybit" — no Bybit connector is compiled in, so this
-// path cannot be reached through Settings.Validate's CompiledVenues gate
-// until T-050 lands; the discount-eligibility rule is tested in
-// isolation instead of skipped.
-func TestTokenDiscountAPIIneligible(t *testing.T) {
+	// No Bybit connector is compiled in yet (T-050), so this path cannot
+	// be reached through Settings.Validate's CompiledVenues gate; exercise
+	// FeeSettings.validate directly instead of skipping the case.
 	f := FeeSettings{
 		MakerBps: decimal.NewFromInt(10), TakerBps: decimal.NewFromInt(10),
 		TokenDiscount: true,
 	}
 	if err := f.validate("bybit", nil); err == nil {
-		t.Fatal("expected error: bybit's MNT discount excludes API-executed trades")
+		t.Fatal("expected token_discount to be refused for bybit too")
+	}
+}
+
+// TestCompiledVenueTable exercises requirement (a): the console reads
+// the discount table from the API instead of hardcoding it, and every
+// entry must honestly report Modeled:false per P1-2.
+func TestCompiledVenueTable(t *testing.T) {
+	table := CompiledVenueTable()
+	if len(table) == 0 {
+		t.Fatal("expected at least one compiled venue")
+	}
+	var sawBinance bool
+	for _, v := range table {
+		if v.ID == "binance" {
+			sawBinance = true
+			if v.Discount == nil {
+				t.Fatal("binance must report its compiled-in discount profile")
+			}
+			if v.Discount.Modeled {
+				t.Fatal("Modeled must be false until a pay-asset ledger exists (P1-2)")
+			}
+			if v.Discount.PayAsset != "BNB" || !v.Discount.AppliesToAPI {
+				t.Fatalf("unexpected discount profile: %+v", v.Discount)
+			}
+		}
+	}
+	if !sawBinance {
+		t.Fatal("expected binance in the compiled venue table")
+	}
+	// Sorted by id: the console never has to re-sort.
+	for i := 1; i < len(table); i++ {
+		if table[i-1].ID >= table[i].ID {
+			t.Fatalf("table not sorted: %v", table)
+		}
 	}
 }
 

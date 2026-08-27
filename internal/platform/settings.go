@@ -208,15 +208,77 @@ func (f FeeSettings) validate(venueID string, symbols []string) error {
 		}
 	}
 	if f.TokenDiscount {
-		d, ok := fees.VenueDiscount(exchange.ExchangeID(venueID))
-		if !ok {
-			return fmt.Errorf("platform: venues.%s offers no compiled-in token discount", venueID)
-		}
-		if !d.AppliesToAPI {
-			return fmt.Errorf("platform: venues.%s token discount excludes API-executed trades; cannot be enabled here", venueID)
-		}
+		// P1-2: token_discount used to apply a 25% fee cut (fees.go's
+		// Schedule.Taker, gated on this flag) with no corresponding debit
+		// anywhere — the pay asset (e.g. BNB) is never reserved, spent, or
+		// tracked by the paper engine or portfolio, so a document with
+		// this set to true made paper P&L optimistic by exactly the
+		// discount amount on every fee-bearing leg. Refuse it outright
+		// until a real pay-asset ledger exists (do not implement the
+		// ledger here — that touches money math). This intentionally also
+		// rejects a document that only carries the flag because it was
+		// loaded from a version persisted before this fix landed:
+		// Service.Load runs the SAME Validate on the active row at boot,
+		// so an operator who had this enabled sees a clear, actionable
+		// boot failure naming the field, rather than the fee schedule
+		// silently reverting to a state nobody chose (the D5/P2-4
+		// philosophy this codebase already applies to store failures).
+		return fmt.Errorf("platform: venues.%s.fees.token_discount is not supported: "+
+			"token-paid discounts are not modeled (no pay-asset ledger yet); leave it false", venueID)
 	}
 	return nil
+}
+
+// CompiledVenueDiscount is the read-only view of a venue's compiled-in
+// token-discount profile (docs/research/fees.md). GET
+// /api/v1/platform/venues serves this so the console can render the
+// rate/pay-asset/eligibility (and why the toggle is refused, see P1-2)
+// without hardcoding the constants client-side.
+type CompiledVenueDiscount struct {
+	PayAsset     string `json:"pay_asset"`
+	Rate         string `json:"rate"` // fractional, e.g. "0.25" = 25% off
+	AppliesToAPI bool   `json:"applies_to_api"`
+	// Modeled is always false today (P1-2): FeeSettings.validate refuses
+	// token_discount:true for every venue until a pay-asset debit ledger
+	// exists. Exposed explicitly (not left for the client to infer from
+	// AppliesToAPI) so the console can disable the control instead of
+	// offering a toggle that always fails apply.
+	Modeled bool   `json:"modeled"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// CompiledVenue is one compiled-in connector's static profile.
+type CompiledVenue struct {
+	ID       string                 `json:"id"`
+	Discount *CompiledVenueDiscount `json:"discount,omitempty"`
+}
+
+// CompiledVenueTable returns every venue this build has a connector for
+// (CompiledVenues), sorted by id, with its compiled-in fee-discount
+// profile when it has one — the single source the console reads instead
+// of hardcoding venue ids or discount constants (mirrors FieldTiming's
+// "computed, never hardcoded on the frontend").
+func CompiledVenueTable() []CompiledVenue {
+	ids := make([]string, 0, len(CompiledVenues))
+	for id := range CompiledVenues {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]CompiledVenue, 0, len(ids))
+	for _, id := range ids {
+		v := CompiledVenue{ID: id}
+		if d, ok := fees.VenueDiscount(exchange.ExchangeID(id)); ok {
+			v.Discount = &CompiledVenueDiscount{
+				PayAsset:     string(d.PayAsset),
+				Rate:         d.Rate.String(),
+				AppliesToAPI: d.AppliesToAPI,
+				Modeled:      false,
+				Reason:       "token-paid discounts are not modeled: no pay-asset ledger",
+			}
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (p PaperSettings) validate(wantAssets map[string]bool) error {

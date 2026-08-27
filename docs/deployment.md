@@ -161,10 +161,17 @@ install and are ignored afterward. Open **Settings** in the console:
   only: `exchange:config` for venues/symbols/fees, `system:config` for
   paper balances and the allowlist); every field there is tagged
   **On restart**. A **Preview** call (`POST
-  /api/v1/platform/settings/preview`) dry-runs the topology
-  (`graph.Build`) against the live `exchangeInfo` before you can apply,
-  so a bad symbol list is rejected on save, never discovered when the
-  engine restarts.
+  /api/v1/platform/settings/preview`, `view:system`) dry-runs the
+  topology (`graph.Build`) against the live `exchangeInfo` before you
+  can apply, so a bad symbol list is rejected on save, never discovered
+  when the engine restarts. `token_discount` is rejected outright at
+  validation (no pay-asset debit ledger exists yet, so the discounted
+  fee rate would make paper P&L optimistic with nothing to account for
+  it); `GET /api/v1/platform/venues` (`view:system`) serves the
+  compiled venue/discount table (pay asset, rate, whether it applies to
+  API trades, and an honest `modeled: false`) so the console renders —
+  and correctly disables — that toggle from data instead of hardcoding
+  it.
 - **Notifications** carries the Telegram allowlist, tagged **Immediate**
   once the bot is running — revoking a user takes effect without a
   restart. If the process booted with an empty allowlist the bot was
