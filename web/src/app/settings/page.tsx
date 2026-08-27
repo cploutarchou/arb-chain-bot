@@ -19,6 +19,7 @@ import {
   TelegramAllowlistSection,
 } from "@/components/PlatformSections";
 import { SecretsSection } from "@/components/SecretsSection";
+import { ScreenerSettingsSection } from "@/components/ScreenerSettingsSection";
 import {
   Await,
   Badge,
@@ -710,6 +711,9 @@ export default function SettingsPage() {
         <MarketsSection />
       </div>
       <VenuesSection />
+      <div id="scanner-suite">
+        <ScreenerSettingsSection />
+      </div>
       <div id="logging">
         <LoggingAccessSection />
       </div>
