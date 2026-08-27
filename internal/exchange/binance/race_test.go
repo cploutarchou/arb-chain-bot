@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -109,4 +110,56 @@ func TestResyncSingleFlightPerMarket(t *testing.T) {
 
 func lvl(p, q string) orderbook.Level {
 	return orderbook.Level{Price: d(p), Qty: d(q)}
+}
+
+func TestCaptureSnapshotsTapsWithoutSplicing(t *testing.T) {
+	var mu sync.Mutex
+	var served []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		served = append(served, r.URL.Query().Get("symbol"))
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"lastUpdateId": 4242,
+			"bids":         [][]string{{"100", "1"}},
+			"asks":         [][]string{{"101", "1"}},
+		})
+	}))
+	defer srv.Close()
+
+	var tapped []exchange.Symbol
+	var bodies [][]byte
+	f := &Feed{
+		REST:    NewRESTClient(srv.URL),
+		Books:   orderbook.NewSet(),
+		Symbols: []exchange.Symbol{"BTCUSDT", "ETHUSDT"},
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		SnapTap: func(sym exchange.Symbol, body []byte, _ time.Time) {
+			tapped = append(tapped, sym)
+			bodies = append(bodies, body)
+		},
+	}
+	id := exchange.MarketID{Exchange: ID, Symbol: "BTCUSDT"}
+	book := orderbook.New(id, 0)
+	f.Books.Add(book)
+	f.syncers = map[exchange.MarketID]*Syncer{id: NewSyncer(book, 0)}
+
+	if err := f.CaptureSnapshots(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(tapped) != 2 || tapped[0] != "BTCUSDT" || tapped[1] != "ETHUSDT" {
+		t.Fatalf("tapped = %v", tapped)
+	}
+	if !strings.Contains(string(bodies[0]), `"lastUpdateId":4242`) {
+		t.Fatalf("raw body not forwarded: %s", bodies[0])
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(served) != 2 {
+		t.Fatalf("REST calls = %d, want 2", len(served))
+	}
+	// The live book is untouched: capture only feeds the recording.
+	if f.Stats.Resyncs.Load() != 0 || book.Meta().State == orderbook.StateHealthy {
+		t.Fatalf("capture must not splice into the live book (resyncs=%d state=%v)", f.Stats.Resyncs.Load(), book.Meta().State)
+	}
 }
