@@ -1267,7 +1267,7 @@ Claude Code command, §0). Public market data only; automatic execution is
 PAPER only; the vault's exchange credential group stays unread.
 
 ### T-065 Screener endpoint research
-- status: IN_PROGRESS (2026-08-27) — docs/research/screener-endpoints.md:
+- status: DONE (2026-08-27; Bitget/OKX fee and rate-limit items remain UNVERIFIED and are flagged in the settings UI) — docs/research/screener-endpoints.md:
   public bulk spot tickers, instrument lists, USDT-M perp tickers,
   funding (rate, interval, history), currency/chain status (public vs
   key-gated), rate limits, regular-tier fees for Binance, OKX, Bybit,
