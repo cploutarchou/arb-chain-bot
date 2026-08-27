@@ -94,7 +94,7 @@ func TestConformance(t *testing.T) {
 					t.Fatalf("bad perp identity: %+v", p)
 				}
 				if !p.Mark.IsPositive() || p.Bid.IsNegative() || p.Ask.IsNegative() || p.Index.IsNegative() {
-					if !(noBulkMark[id] && p.Mark.IsZero() && p.Index.IsPositive()) {
+					if !noBulkMark[id] || !p.Mark.IsZero() || !p.Index.IsPositive() {
 						t.Fatalf("bad perp price: %+v", p)
 					}
 				}
