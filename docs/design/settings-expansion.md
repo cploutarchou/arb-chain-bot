@@ -476,7 +476,7 @@ each →
 `GET /api/v1/platform/venues` stays as a thin alias over the same
 `VenueTable()` (shipped console keeps working; fields are additive only) —
 one source function, two routes, no divergence. Every venue card renders
-*"Public market data only — no API keys are used or accepted."*
+*"Public market data only — API keys are never used; any stored under Security are never read."*
 
 ## 6. Wire contract
 

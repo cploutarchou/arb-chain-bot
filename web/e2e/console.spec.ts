@@ -9,7 +9,11 @@ import { test, expect, type Page } from "@playwright/test";
 
 const ADMIN = { email: "admin@e2e.test", password: "e2e-password-123" };
 
-async function login(page: Page, email = ADMIN.email, password = ADMIN.password) {
+async function login(
+  page: Page,
+  email = ADMIN.email,
+  password = ADMIN.password,
+) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
@@ -70,19 +74,29 @@ test("every nav page renders content or an honest state", async ({ page }) => {
   ];
   for (const [path, marker] of pages) {
     await page.goto(path);
-    await expect(page.locator("main")).toContainText(marker, { timeout: 10_000 });
+    await expect(page.locator("main")).toContainText(marker, {
+      timeout: 10_000,
+    });
   }
 });
 
-test("strategy config shows the active version and history", async ({ page }) => {
+test("strategy config shows the active version and history", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/strategies");
-  await expect(page.getByText(/v\d+ active/).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/v\d+ active/).first()).toBeVisible({
+    timeout: 10_000,
+  });
   // Admin sees the edit affordance (RBAC-aware UI; backend enforces).
-  await expect(page.getByRole("button", { name: "Edit configuration" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Edit configuration" }),
+  ).toBeVisible();
 });
 
-test("structured config edit applies as a new version end to end", async ({ page }) => {
+test("structured config edit applies as a new version end to end", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/strategies");
   await page.getByRole("button", { name: "Edit configuration" }).click();
@@ -94,10 +108,14 @@ test("structured config edit applies as a new version end to end", async ({ page
   await depthField.fill(String(next));
   await page.getByRole("button", { name: "Review changes" }).click();
   // Confirmation dialog with a before/after diff table (BL-02, BL-03).
-  await page.getByRole("dialog", { name: "Apply new strategy configuration?" }).waitFor();
+  await page
+    .getByRole("dialog", { name: "Apply new strategy configuration?" })
+    .waitFor();
   await expect(page.getByRole("dialog")).toContainText("scanner.depth");
   await page.getByRole("button", { name: "Apply new version" }).click();
-  await expect(page.getByText(/Version \d+ active\./)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/Version \d+ active\./)).toBeVisible({
+    timeout: 10_000,
+  });
 });
 
 test("strategy config advanced JSON toggle still works", async ({ page }) => {
@@ -111,62 +129,109 @@ test("strategy config advanced JSON toggle still works", async ({ page }) => {
   draft.scanner.depth = draft.scanner.depth === 55 ? 65 : 55;
   await editor.fill(JSON.stringify(draft, null, 2));
   await page.getByRole("button", { name: "Review changes" }).click();
-  await page.getByRole("dialog", { name: "Apply new strategy configuration?" }).waitFor();
+  await page
+    .getByRole("dialog", { name: "Apply new strategy configuration?" })
+    .waitFor();
   await page.getByRole("button", { name: "Apply new version" }).click();
-  await expect(page.getByText(/Version \d+ active\./)).toBeVisible({ timeout: 10_000 });
-});
-
-test("risk center shows deterministic limits and the persisted event timeline", async ({ page }) => {
-  await login(page);
-  await page.goto("/risk");
-  await expect(page.locator("main")).toContainText(/min_net_edge_bps|MinNetEdgeBps/i, {
+  await expect(page.getByText(/Version \d+ active\./)).toBeVisible({
     timeout: 10_000,
   });
+});
+
+test("risk center shows deterministic limits and the persisted event timeline", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/risk");
+  await expect(page.locator("main")).toContainText(
+    /min_net_edge_bps|MinNetEdgeBps/i,
+    {
+      timeout: 10_000,
+    },
+  );
   // BL-31: the timeline is store-backed; no DB in this harness means an
   // honest Unavailable state, not a crash.
   await expect(page.getByText(/Risk event timeline/)).toBeVisible();
-  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+  await expect(page.locator("main")).toContainText(
+    /Persistence isn't configured/i,
+    { timeout: 10_000 },
+  );
 });
 
 test("system health renders the full payload on usePoll", async ({ page }) => {
   await login(page);
   await page.goto("/system");
   // Process stats are always present regardless of profile (BL-18).
-  await expect(page.getByText("Goroutines", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Goroutines", { exact: true })).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.getByText("Heap alloc", { exact: true })).toBeVisible();
   // Engine section: the e2e arbd runs an engine (PAPER profile).
-  await expect(page.getByRole("heading", { name: "Engine / scanner" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Engine / scanner" }),
+  ).toBeVisible();
   // No DB configured — honest absence, not a faked pool.
-  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+  await expect(page.locator("main")).toContainText(
+    /Persistence isn't configured/i,
+    { timeout: 10_000 },
+  );
 });
 
-test("PnL & Analytics renders breakdown/series/distributions honestly with no DB", async ({ page }) => {
+test("PnL & Analytics renders breakdown/series/distributions honestly with no DB", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/pnl");
   await expect(page.getByRole("heading", { name: "Breakdown" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Cumulative P&L and drawdown" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Edge / slippage / latency distributions" })).toBeVisible();
-  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+  await expect(
+    page.getByRole("heading", { name: "Cumulative P&L and drawdown" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Edge / slippage / latency distributions",
+    }),
+  ).toBeVisible();
+  await expect(page.locator("main")).toContainText(
+    /Persistence isn't configured/i,
+    { timeout: 10_000 },
+  );
 });
 
-test("Orders and Fills render filters and an honest empty/unavailable state", async ({ page }) => {
+test("Orders and Fills render filters and an honest empty/unavailable state", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/orders");
   await expect(page.getByRole("heading", { name: "Orders" })).toBeVisible();
-  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+  await expect(page.locator("main")).toContainText(
+    /Persistence isn't configured/i,
+    { timeout: 10_000 },
+  );
 
   await page.goto("/fills");
   await expect(page.getByRole("heading", { name: "Fills" })).toBeVisible();
-  await expect(page.locator("main")).toContainText(/Persistence isn't configured/i, { timeout: 10_000 });
+  await expect(page.locator("main")).toContainText(
+    /Persistence isn't configured/i,
+    { timeout: 10_000 },
+  );
 });
 
-test("Telegram status renders without ever showing a token", async ({ page }) => {
+test("Telegram status renders without ever showing a token", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/telegram");
-  await expect(page.getByRole("heading", { name: "Telegram", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Telegram", exact: true }),
+  ).toBeVisible();
   // Unconfigured in this harness: 200 {enabled:false}, not a 404.
-  await expect(page.locator("main")).toContainText(/not configured for this deployment/i, { timeout: 10_000 });
-  await expect(page.locator("main")).not.toContainText(/bot_token|ARB_TELEGRAM_TOKEN/i);
+  await expect(page.locator("main")).toContainText(
+    /not configured for this deployment/i,
+    { timeout: 10_000 },
+  );
+  await expect(page.locator("main")).not.toContainText(
+    /bot_token|ARB_TELEGRAM_TOKEN/i,
+  );
 });
 
 test("Replay page has no shell-command column and cross-links Campaigns instead of a duplicate table", async ({
@@ -174,15 +239,22 @@ test("Replay page has no shell-command column and cross-links Campaigns instead 
 }) => {
   await login(page);
   await page.goto("/replay");
-  await expect(page.getByRole("heading", { name: "Replay & Backtesting" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Replay & Backtesting" }),
+  ).toBeVisible();
   await expect(page.locator("main")).not.toContainText("ARB_MODE=REPLAY");
   await expect(page.locator("main")).not.toContainText("./arbd");
-  await expect(page.getByRole("link", { name: /Campaigns → Recorder/ }).first()).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Campaigns → Recorder/ }).first(),
+  ).toBeVisible();
   // No store in this harness: the replay runner needs persistence, so
   // this is an honest 404 replays_absent, not a crash.
-  await expect(page.locator("main")).toContainText(/replay runner isn't available|Persistence isn't configured/i, {
-    timeout: 10_000,
-  });
+  await expect(page.locator("main")).toContainText(
+    /replay runner isn't available|Persistence isn't configured/i,
+    {
+      timeout: 10_000,
+    },
+  );
 });
 
 test("Triangle and Opportunity detail pages render an honest not-found/unavailable state for an unknown id", async ({
@@ -191,18 +263,31 @@ test("Triangle and Opportunity detail pages render an honest not-found/unavailab
   await login(page);
   await page.goto("/triangles/does-not-exist");
   await expect(page.locator("main")).toContainText(/Triangle does-not-exist/);
-  await expect(page.locator("main")).toContainText(/not found|Unavailable/i, { timeout: 10_000 });
+  await expect(page.locator("main")).toContainText(/not found|Unavailable/i, {
+    timeout: 10_000,
+  });
 
   await page.goto("/opportunities/does-not-exist");
-  await expect(page.locator("main")).toContainText(/Opportunity does-not-exist/);
-  await expect(page.locator("main")).toContainText(/Persistence isn't configured|Unavailable/i, { timeout: 10_000 });
+  await expect(page.locator("main")).toContainText(
+    /Opportunity does-not-exist/,
+  );
+  await expect(page.locator("main")).toContainText(
+    /Persistence isn't configured|Unavailable/i,
+    { timeout: 10_000 },
+  );
 });
 
-test("Scanner pin/pause/export controls render and pin persists across reload", async ({ page }) => {
+test("Scanner pin/pause/export controls render and pin persists across reload", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/scanner");
-  await expect(page.getByRole("button", { name: "Pause display" })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("button", { name: "Export CSV" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause display" })).toBeVisible(
+    { timeout: 10_000 },
+  );
+  await expect(
+    page.getByRole("button", { name: "Export CSV" }).first(),
+  ).toBeVisible();
   await expect(page.getByLabel(/Pinned only/)).toBeVisible();
 });
 
@@ -216,23 +301,34 @@ test("reports generate on demand", async ({ page }) => {
   await login(page);
   await page.goto("/reports");
   await page.getByRole("button", { name: "Generate daily now" }).click();
-  await expect(page.locator("main")).toContainText(/daily report .* Scanner: \d+ evaluations/, {
-    timeout: 15_000,
-  });
+  await expect(page.locator("main")).toContainText(
+    /daily report .* Scanner: \d+ evaluations/,
+    {
+      timeout: 15_000,
+    },
+  );
 });
 
 test("users & roles shows the bootstrap admin for ADMIN", async ({ page }) => {
   await login(page);
   await page.goto("/settings#users");
-  await expect(page.getByRole("heading", { name: "Users & roles" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Users & roles" }),
+  ).toBeVisible();
   await expect(page.getByText(ADMIN.email)).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("heading", { name: "Create user" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Create user" }),
+  ).toBeVisible();
 });
 
-test("paper reset is disabled with a hint while the engine is running", async ({ page }) => {
+test("paper reset is disabled with a hint while the engine is running", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/paper");
-  const resetButton = page.getByRole("button", { name: "Reset paper session…" });
+  const resetButton = page.getByRole("button", {
+    name: "Reset paper session…",
+  });
   await expect(resetButton).toBeVisible({ timeout: 10_000 });
   // The e2e harness starts the engine running (no exchange egress to
   // pause against) and reset is ADMIN-only while paused — this asserts
@@ -240,71 +336,116 @@ test("paper reset is disabled with a hint while the engine is running", async ({
   // session mid-suite. If the harness ever starts paused instead, this
   // assertion should flip to the enabled + ConfirmDialog path.
   await expect(resetButton).toBeDisabled();
-  await expect(page.getByText(/pause the engine before resetting/)).toBeVisible();
+  await expect(
+    page.getByText(/pause the engine before resetting/),
+  ).toBeVisible();
 });
 
-test("settings Markets & assets renders the real platform-settings document", async ({ page }) => {
+test("settings Markets & assets renders the real platform-settings document", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/settings#markets");
-  await expect(page.getByRole("heading", { name: "Markets & assets" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Markets & assets" }),
+  ).toBeVisible();
   // The default bootstrap seed (config.go: ARB_SYMBOLS/ARB_STARTING_ASSETS
   // defaults) is what the e2e arbd boots with — this is the real T-057
   // platform document, not the deleted read-only scanner-status panel.
-  await expect(page.getByText("BTCUSDT", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("BTCUSDT", { exact: true }).first()).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.getByText("v1", { exact: false }).first()).toBeVisible();
   // ADMIN gets the real editor, not a "not yet editable" placeholder.
-  await expect(page.getByRole("button", { name: "Edit markets & assets" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Edit markets & assets" }),
+  ).toBeVisible();
   await expect(page.getByText(/not yet editable/i)).toHaveCount(0);
 
   // Venues & fees is the other half of the same document, no longer a
   // read-only placeholder either.
-  await expect(page.getByRole("heading", { name: "Venues & fees" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Edit venues & fees" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Venues & fees" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Edit venues & fees" }),
+  ).toBeVisible();
 
   // Version history table for the platform-settings document (rollback
   // affordance, mirrors /strategies).
-  await expect(page.getByRole("heading", { name: "Platform settings — version history" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Platform settings — version history" }),
+  ).toBeVisible();
   await expect(page.getByText(/v1 active/)).toBeVisible({ timeout: 10_000 });
 });
 
-test("settings Venues & fees lists every capability venue, not just the compiled one", async ({ page }) => {
+test("settings Venues & fees lists every capability venue, not just the compiled one", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/settings#markets");
-  await expect(page.getByRole("heading", { name: "Venues & fees" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Venues & fees" }),
+  ).toBeVisible();
   // binance is the only compiled connector in this build (T-061); the
   // rest render read-only with the backend's own reason string, never a
   // hardcoded paraphrase — assert against what the API actually returned.
   const caps = await page.evaluate(async () => {
-    const r = await fetch("/api/v1/platform/capabilities", { credentials: "same-origin" });
-    return (await r.json()) as { data: { venues: { id: string; name: string; available: boolean; reason?: string }[] } };
+    const r = await fetch("/api/v1/platform/capabilities", {
+      credentials: "same-origin",
+    });
+    return (await r.json()) as {
+      data: {
+        venues: {
+          id: string;
+          name: string;
+          available: boolean;
+          reason?: string;
+        }[];
+      };
+    };
   });
   const unavailable = caps.data.venues.find((v) => !v.available);
   expect(unavailable).toBeTruthy();
-  await expect(page.getByText(unavailable!.name, { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(unavailable!.name, { exact: true }).first(),
+  ).toBeVisible();
   await expect(page.locator("main")).toContainText(unavailable!.reason!);
-  await expect(page.locator("main")).toContainText(/Public market data only — no API keys are used or accepted\./);
+  await expect(page.locator("main")).toContainText(
+    /Public market data only — API keys are never used/,
+  );
   // The token-discount checkbox never offers to enable itself (T-061 D12
   // / settings.go's unconditional rejection) — every instance is disabled.
-  const discountBoxes = page.getByRole("checkbox", { name: "Token fee discount" });
+  const discountBoxes = page.getByRole("checkbox", {
+    name: "Token fee discount",
+  });
   const n = await discountBoxes.count();
   for (let i = 0; i < n; i++) {
     await expect(discountBoxes.nth(i)).toBeDisabled();
   }
 });
 
-test("settings Operating mode renders the mode table from capabilities with SHADOW disabled", async ({ page }) => {
+test("settings Operating mode renders the mode table from capabilities with SHADOW disabled", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/settings#operating-mode");
-  await expect(page.getByRole("heading", { name: "Operating mode" })).toBeVisible();
   await expect(
-    page.getByText("LIVE is not an option: this platform never places real orders."),
+    page.getByRole("heading", { name: "Operating mode" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "LIVE is not an option: this platform never places real orders.",
+    ),
   ).toBeVisible();
   // The e2e harness boots ARB_MODE=PAPER (scripts/e2e.sh).
   await expect(page.getByRole("radio", { name: "PAPER" })).toBeChecked();
   const shadow = page.getByRole("radio", { name: "SHADOW" });
   await expect(shadow).toBeVisible();
   await expect(shadow).toBeDisabled();
-  await expect(page.locator("main")).toContainText(/shadow execution is not wired into Engine\.Run/);
+  await expect(page.locator("main")).toContainText(
+    /shadow execution is not wired into Engine\.Run/,
+  );
   // Immediate for the section header's field_timing lookup would be
   // wrong here — platform.mode is restart-scoped.
   await expect(page.getByText("On restart").first()).toBeVisible();
@@ -321,7 +462,9 @@ test("settings AI advisor shows the fake provider running (ARB_AI_PROVIDER=fake 
   const aiSection = page.locator("#ai");
   await expect(aiSection.getByText("Enabled", { exact: true })).toBeVisible();
   await expect(aiSection.getByText("Running", { exact: true })).toBeVisible();
-  await expect(aiSection.getByText("fake", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+  await expect(
+    aiSection.getByText("fake", { exact: true }).first(),
+  ).toBeVisible({ timeout: 10_000 });
   // openai is enumerated but never selectable (D10).
   await aiSection.getByRole("button", { name: "Edit AI advisor" }).click();
   const providerSelect = page.getByLabel("Provider");
@@ -331,42 +474,67 @@ test("settings AI advisor shows the fake provider running (ARB_AI_PROVIDER=fake 
   await expect(openaiOption).toHaveText(/provider not built/);
 });
 
-test("settings Logging & access warns that debug logs every rejected opportunity", async ({ page }) => {
+test("settings Logging & access warns that debug logs every rejected opportunity", async ({
+  page,
+}) => {
   await login(page);
   await page.goto("/settings#logging");
-  await expect(page.getByRole("heading", { name: "Logging & access" })).toBeVisible();
-  await expect(page.locator("main")).toContainText(/debug logs every rejected opportunity/);
+  await expect(
+    page.getByRole("heading", { name: "Logging & access" }),
+  ).toBeVisible();
+  await expect(page.locator("main")).toContainText(
+    /debug logs every rejected opportunity/,
+  );
   await expect(page.getByLabel(/Log level/)).toBeVisible();
   await expect(page.getByLabel(/Allowed origin/)).toBeVisible();
 });
 
-test("settings Security renders the vault status and never a secret value", async ({ page }) => {
+test("settings Security renders the vault status and never a secret value", async ({
+  page,
+}) => {
   await login(page);
   // The harness (scripts/e2e.sh) does not set ARB_SECRET_KEY — assert
   // against what the backend actually reports, not a guessed string.
   const secrets = await page.evaluate(async () => {
     const r = await fetch("/api/v1/secrets", { credentials: "same-origin" });
-    return { status: r.status, json: (await r.json()) as { data: { vault_configured: boolean; reason?: string; secrets: { name: string; label: string }[] } } };
+    return {
+      status: r.status,
+      json: (await r.json()) as {
+        data: {
+          vault_configured: boolean;
+          reason?: string;
+          secrets: { name: string; label: string }[];
+        };
+      },
+    };
   });
   expect(secrets.status).toBe(200);
   await page.goto("/settings#security");
-  await expect(page.getByRole("heading", { name: "Security" }).first()).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Security" }).first(),
+  ).toBeVisible();
   if (!secrets.json.data.vault_configured) {
     expect(secrets.json.data.reason).toBeTruthy();
     await expect(page.locator("main")).toContainText(secrets.json.data.reason!);
     // Writes are refused with the vault unconfigured — Set value/Remove
     // must render disabled, not just fail silently on click.
     const securitySection = page.locator("#security");
-    const setButtons = securitySection.getByRole("button", { name: "Set value" });
+    const setButtons = securitySection.getByRole("button", {
+      name: "Set value",
+    });
     for (let i = 0; i < (await setButtons.count()); i++) {
       await expect(setButtons.nth(i)).toBeDisabled();
     }
   }
   for (const s of secrets.json.data.secrets) {
-    await expect(page.getByText(s.label, { exact: true }).first()).toBeVisible();
+    await expect(
+      page.getByText(s.label, { exact: true }).first(),
+    ).toBeVisible();
   }
   // Never a token, a prefix, or a last-4 anywhere on the page.
-  await expect(page.locator("main")).not.toContainText(/ANTHROPIC_API_KEY|ARB_TELEGRAM_TOKEN/i);
+  await expect(page.locator("main")).not.toContainText(
+    /ANTHROPIC_API_KEY|ARB_TELEGRAM_TOKEN/i,
+  );
 });
 
 test("engine status and the restart banner render the backend's real state, never a placeholder", async ({
@@ -383,8 +551,21 @@ test("engine status and the restart banner render the backend's real state, neve
   // Playwright's separate page.request context does not share the
   // session cookie with the browser's own fetches.
   const body = await page.evaluate(async () => {
-    const r = await fetch("/api/v1/engine/status", { credentials: "same-origin" });
-    return { status: r.status, json: (await r.json()) as { data: { restart: { state: string; pending_reasons?: string[]; error?: string } } } };
+    const r = await fetch("/api/v1/engine/status", {
+      credentials: "same-origin",
+    });
+    return {
+      status: r.status,
+      json: (await r.json()) as {
+        data: {
+          restart: {
+            state: string;
+            pending_reasons?: string[];
+            error?: string;
+          };
+        };
+      },
+    };
   });
   expect(body.status).toBe(200);
   const restart = body.json.data.restart;
@@ -393,8 +574,12 @@ test("engine status and the restart banner render the backend's real state, neve
   const main = page.locator("main");
   if (restart.state === "pending") {
     await expect(main).toContainText("Saved but not running:");
-    await expect(main).toContainText((restart.pending_reasons ?? []).join("; "));
-    await expect(page.getByRole("button", { name: "Restart engine…" })).toBeVisible();
+    await expect(main).toContainText(
+      (restart.pending_reasons ?? []).join("; "),
+    );
+    await expect(
+      page.getByRole("button", { name: "Restart engine…" }),
+    ).toBeVisible();
   } else if (restart.state === "restarting") {
     await expect(main).toContainText(
       "Restarting — waiting for the last recording segment to close and the feed to drain…",
@@ -405,7 +590,9 @@ test("engine status and the restart banner render the backend's real state, neve
   } else {
     // "ready" with no pending reasons renders nothing — never a neutral
     // placeholder banner for a healthy engine.
-    await expect(page.getByRole("button", { name: "Restart engine…" })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Restart engine…" }),
+    ).toHaveCount(0);
   }
 });
 
