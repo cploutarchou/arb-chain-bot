@@ -378,25 +378,42 @@ data-flow,security,risk}.md`.
 - dependencies: T-040
 
 ### T-046 Profitability validation campaign
-- status: BLOCKED only on real recorded feeds — the campaign machinery
-  itself is BUILT and tested: `internal/backtest` replays a recording
-  through the complete pipeline (books → real scanner → deterministic
-  risk engine → simulated executor with mid-wait book drift →
-  portfolio) under the §80 stress grid (fee+X bps, latency ×N, fill
-  and world depth haircuts); `cmd/campaign` runs grid × seeds and
-  writes the honest report with the mandatory "profitable only under
-  perfect conditions" flag; `Dockerfile` + compose `record`/`campaign`
-  profiles + docs/deployment.md make the capture a one-command deploy.
-  Remaining: run `make record` on a network-enabled host for real
-  Binance sessions across regimes, then `make campaign RECORDING=…`.
-  No profitability claim is made without those runs. BL-05b:
-  `backtest.FlagSeverity(flag string) string` classifies each §80 verdict
-  line ("bad"/"warn"/"ok" by prefix); `campaign.Run.Verdicts
-  map[string][]Verdict{Text,Severity}` (json `verdicts`) is filled
-  alongside `Flags` on every completed run and persisted in the new
-  `campaign_runs.verdicts` JSONB column (`migrations/000005`), so the
-  console can render tone from backend data instead of grepping report
-  prose.
+- status: IN_PROGRESS — one sample recorded and campaigned; acceptance
+  wants multiple sessions across regimes (calm, volatile, weekend).
+- campaign 1 (2026-08-27): recording `01M0ZPK16CXTR91MMJQ60HC2K3`
+  (Binance, BTCUSDT/ETHUSDT/ETHBTC/BTCUSDC/ETHUSDC/USDCUSDT, starting
+  assets USDT/USDC; 2026-08-26 18:51:15 → 20:22:02 UTC, **1 h 31 m —
+  below the 6 h minimum**; 223k frames in two segments; the session was
+  cut short when the paper compose profile was brought up on the same
+  host). Full §80 grid (8 scenarios × seeds 1,2,3), USDT=10000, 10/10
+  bps base fees. Report: docs/campaigns/01M0ZPK16CXTR91MMJQ60HC2K3/.
+  Verdict (verbatim): "NO CYCLES EXECUTED in the baseline — the
+  recording produced no qualified opportunities; no profitability
+  statement can be made from it." Every scenario evaluated 1,878,468
+  candidate cycles per three seeds and qualified none (1,878,066
+  rejected, 402 skipped on unhealthy books); the numbers are identical
+  across the stress grid because rejection happens before execution.
+  This is a valid research outcome consistent with
+  final-platform-selection.md §6 (a calm European-evening window,
+  Regular-tier 30 bps three-leg cost, 10 bps of buffers) — not evidence
+  of profitability and not yet evidence against it. The
+  "profitable only under perfect conditions" flag did not apply (there
+  was nothing to flag).
+- findings from this run: (1) recording sessions started from the
+  console after the feed had synced carried no REST snapshot and could
+  not be replayed at all (fixed 2026-08-27: snapshot capture on session
+  start; sessions `01M0ZXKJ…` and `01M0ZYMB…` recorded before the fix
+  are not replayable); (2) the final segment of a session ended by a
+  process shutdown is closed but not always registered in
+  `market_recording_metadata` (campaigns read segments from disk, so
+  results are unaffected; registration to be made shutdown-safe);
+  (3) the campaign output records rejection counts but not reasons —
+  a per-reason histogram in `backtest.Result` is needed before a
+  no-qualification verdict can be explained (why: min edge, book age,
+  depth, quality) — tracked as T-062.
+- next: sessions of ≥ 6 h across regimes on the fixed build (console
+  Start, no compose rebuilds during a session), then campaigns per
+  session; compare regimes before any claim.
 - dependencies: T-032, T-042
 
 ### T-047 Research-debt re-verification
@@ -460,6 +477,13 @@ data-flow,security,risk}.md`.
   Bitget's v3 numeric-JSON prices, Gate's 403-only docs are the known
   connector risks). Kraken and Coinbase are out (fee-eliminated and not
   wanted).
+
+### T-062 Campaign rejection-reason histogram
+- status: TODO. `backtest.Result` and the §80 report should carry a
+  per-reason rejection histogram (the scanner already classifies
+  rejections) so a "no qualified opportunities" verdict says why —
+  minimum net edge, book age, depth exhaustion, data quality — and
+  the stress grid can show which reason dominates under each axis.
 
 ### T-056 MEXC research round
 - status: DONE (2026-08-26) — docs/research/mexc.md. Score 65/100
