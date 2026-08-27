@@ -173,3 +173,73 @@ func BenchmarkMessageLatencyRecord(b *testing.B) {
 		record(float64(d.Nanoseconds()) / 1e6)
 	}
 }
+
+// The three series deploy/observability/platform-rules.yml marks
+// "PENDING EXPORTER" plus the Scanner Suite set, with their labels.
+func TestScreenerAndPlatformSeries(t *testing.T) {
+	m, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = m.Shutdown(t.Context()) }()
+	if err := m.RegisterScreener(ScreenerSources{
+		Venues: func() []VenueStat {
+			return []VenueStat{
+				{Venue: "binance", Online: true, PollLatencyMS: 120, RateLimited: 2},
+				{Venue: "mexc", Online: false, PollLatencyMS: 9000, RateLimited: 5},
+			}
+		},
+		FeedRateLimited: func() int64 { return 3 }, // adds to binance → 5
+		PairsTracked:    func() int64 { return 412 },
+		Alerts:          func() map[string]int64 { return map[string]int64{"spread": 7, "carry": 1} },
+		PaperExecutions: func() []PaperExecStat {
+			return []PaperExecStat{{Strategy: "cross_venue_spot", Outcome: "executed", Count: 4},
+				{Strategy: "cross_venue_spot", Outcome: "skipped", Count: 2}}
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RegisterMigrations(func() int64 { return 1 }); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RegisterCampaign(func() map[string]int64 { return map[string]int64{"done": 3, "failed": 1} }); err != nil {
+		t.Fatal(err)
+	}
+	page := scrape(t, m)
+	for _, frag := range []string{
+		`exchange_rate_limited_total{venue="binance"} 5`,
+		`exchange_rate_limited_total{venue="mexc"} 5`,
+		`screener_venue_online{venue="binance"} 1`,
+		`screener_venue_online{venue="mexc"} 0`,
+		`screener_poll_latency_ms{venue="mexc"} 9000`,
+		`screener_pairs_tracked 412`,
+		`screener_alerts_total{rule_kind="spread"} 7`,
+		`screener_alerts_total{rule_kind="carry"} 1`,
+		`screener_paper_executions_total{outcome="executed",strategy="cross_venue_spot"} 4`,
+		`screener_paper_executions_total{outcome="skipped",strategy="cross_venue_spot"} 2`,
+		`db_migrations_pending 1`,
+		`campaign_runs_total{status="done"} 3`,
+		`campaign_runs_total{status="failed"} 1`,
+	} {
+		if !strings.Contains(page, frag) {
+			t.Errorf("exposition missing series %q", frag)
+		}
+	}
+}
+
+func TestScreenerNilSourcesAreSkipped(t *testing.T) {
+	m, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = m.Shutdown(t.Context()) }()
+	if err := m.RegisterScreener(ScreenerSources{}); err != nil {
+		t.Fatal(err)
+	}
+	page := scrape(t, m)
+	for _, name := range []string{"exchange_rate_limited_total{", "screener_venue_online{", "screener_pairs_tracked ", "screener_alerts_total{"} {
+		if strings.Contains(page, name) {
+			t.Errorf("nil source must not emit %s", name)
+		}
+	}
+}

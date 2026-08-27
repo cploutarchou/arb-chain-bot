@@ -2,6 +2,8 @@
 // wire as a string (decimal-safe) and is formatted for display only —
 // the frontend NEVER recomputes profitability, fees, or risk.
 
+import { emitEntitlementExceeded, emitRiskAckRequired } from "@/lib/errorBus";
+
 export interface APIError {
   code: string;
   message: string;
@@ -110,6 +112,20 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // non-JSON error body — fall through with env null
   }
   if (!res.ok || env?.error) {
+    // Cross-cutting error codes (errorBus): every caller still gets the
+    // thrown ApiError for local handling, but auth.tsx and ToastProvider
+    // also learn about it without every call site wiring it up.
+    if (env?.error?.code === "risk_ack_required") {
+      const data = env.data as { required_version?: string } | null;
+      emitRiskAckRequired(data?.required_version);
+    } else if (env?.error?.code === "entitlement_exceeded") {
+      const data = env.data as { key?: string; limit?: unknown } | null;
+      emitEntitlementExceeded({
+        key: data?.key,
+        limit: data?.limit,
+        message: env.error.message,
+      });
+    }
     throw new ApiError(res.status, env?.error ?? null, env?.data ?? null);
   }
   if (env === null || env.data === null) {
@@ -127,6 +143,12 @@ const post = <T>(path: string, body?: unknown) =>
     method: "POST",
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+const put = <T>(path: string, body?: unknown) =>
+  request<T>(path, {
+    method: "PUT",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 // ---- shapes (mirroring the Go API; decimals stay strings) ----------------
 
@@ -138,10 +160,180 @@ export interface SystemStatus {
   components: string[];
 }
 
+// ---- Tenancy, entitlements and billing (T-081/T-082/T-083, docs/design/
+// billing.md, docs/design/packages.md §3) --------------------------------
+// The console only READS entitlements; every limit is enforced server-
+// side (packages.md §3: "the console only reads them"). Nothing here
+// recomputes a limit or a price.
+
+export type OrgRole = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+export type CustomerType = "consumer" | "business";
+
+export interface Org {
+  id: number;
+  name: string;
+  package_code: string;
+  country?: string;
+  customer_type: CustomerType;
+  risk_ack_version?: string;
+  risk_ack_at?: string;
+  trial_ends_at?: string;
+  created_at: string;
+}
+
+export interface EntitlementVenues {
+  screener_max: number; // -1 = unlimited
+  screener_tiers: string[];
+  screener_fixed: string[];
+  triangular_max: number;
+  dex_enabled: boolean;
+  perps_enabled: boolean;
+}
+
+export interface EntitlementRules {
+  max_active: number;
+  templates_max: number; // -1 = unlimited
+  min_refresh_s: number;
+  kinds: string[];
+}
+
+export interface EntitlementAlerts {
+  channels: string[]; // web | telegram | email | webhook
+  per_day: number;
+  telegram_destinations_max: number;
+  min_cooldown_s: number;
+}
+
+export interface EntitlementAutoPaper {
+  strategies: string[];
+  max_open_positions: number;
+  ledgers_max: number;
+  max_size_quote: string; // decimal string
+}
+
+export interface EntitlementAPI {
+  enabled: boolean;
+  scopes: string[];
+  rate_per_min: number;
+  burst: number;
+  keys_max: number;
+  streaming: boolean;
+}
+
+export interface EntitlementHistory {
+  retention_days: number; // 1 = 24h (Watch)
+  export_formats: string[];
+  export_scheduled: boolean;
+  reports: string;
+}
+
+export interface EntitlementSeats {
+  max: number;
+  roles: string[];
+}
+
+export interface EntitlementSupport {
+  tier: string;
+  response_hours: number;
+}
+
+export interface EntitlementExecution {
+  paper: true;
+  live: false;
+}
+
+export interface EntitlementStatus {
+  subscription: string; // none|trialing|active|past_due|paused|canceled
+  read_only: boolean;
+  trial_ends_at?: string;
+  effective_package: string;
+}
+
+export interface Entitlements {
+  schema_version: number;
+  package_code: string;
+  venues: EntitlementVenues;
+  rules: EntitlementRules;
+  alerts: EntitlementAlerts;
+  auto_paper: EntitlementAutoPaper;
+  api: EntitlementAPI;
+  history: EntitlementHistory;
+  seats: EntitlementSeats;
+  support: EntitlementSupport;
+  execution: EntitlementExecution;
+  white_label?: boolean;
+  status?: EntitlementStatus;
+}
+
 export interface Me {
   user_id: string;
   role: "ADMIN" | "OPERATOR" | "VIEWER";
+  platform_admin: boolean;
+  org: Org;
+  org_role: OrgRole;
+  risk_ack_required: boolean;
+  risk_ack_version: string;
+  entitlements: Entitlements;
   csrf_token?: string;
+}
+
+export interface OrgMember {
+  org_id: number;
+  user_id: string;
+  email?: string;
+  role: OrgRole;
+  suspended: boolean;
+  created_at: string;
+}
+
+export interface OrgGetResponse {
+  org: Org;
+  org_role: OrgRole;
+  members: OrgMember[] | null;
+  entitlements: Entitlements;
+}
+
+export interface BillingSubscription {
+  org_id: number;
+  paddle_customer_id?: string;
+  paddle_subscription_id?: string;
+  price_id?: string;
+  status: string; // trialing|active|past_due|paused|canceled
+  current_period_end?: string;
+  cancel_at_period_end: boolean;
+  past_due_since?: string;
+  scheduled_price_id?: string;
+  updated_at: string;
+}
+
+export interface BillingSubscriptionResponse {
+  org_id: number;
+  package_code: string;
+  trial_ends_at?: string;
+  configured: boolean;
+  status?: EntitlementStatus;
+  subscription?: BillingSubscription;
+}
+
+export interface BillingPrice {
+  price_id: string;
+  package_code: string;
+  billing_interval: "month" | "year";
+}
+
+export interface BillingPricesResponse {
+  prices: BillingPrice[] | null;
+  environment: string;
+  client_token: string;
+}
+
+export interface BillingCheckoutResult {
+  transaction_id?: string;
+  client_token?: string;
+  environment?: string;
+  pending: boolean;
+  proration?: string;
+  package_code: string;
 }
 
 export interface PaperStatus {
@@ -1141,6 +1333,311 @@ export interface CampaignRun {
   actor?: string;
 }
 
+// ---- Scanner Suite (T-065..T-072, docs/design/scanner-suite.md §7) --------
+// Every bps/price/liquidity/PnL/APR value is a decimal string, rendered
+// verbatim — the frontend never recomputes a spread, a fee, or a carry
+// number. Public market data only; nothing here ever signs a request or
+// resolves an exchange credential.
+
+export interface ScreenerVenueStatus {
+  id: string;
+  name: string;
+  enabled: boolean;
+  online: boolean;
+  last_poll_at?: string;
+  poll_ms: number;
+  spot_pairs: number;
+  perp_contracts: number;
+  rate_limited: boolean;
+  error?: string;
+}
+
+export interface ScreenerStatusView {
+  venues: ScreenerVenueStatus[] | null;
+  pairs_tracked: number;
+  spreads_per_sec: number;
+  poll_interval_s: number;
+  updated_at: string;
+}
+
+// "open" | "closed" | "unknown" — unknown means the venue requires an API
+// key to answer (never inferred from another source, per SKILL.md).
+export type ScreenerNetworkState = "open" | "closed" | "unknown";
+
+export interface ScreenerNetworks {
+  buy_withdraw: ScreenerNetworkState;
+  sell_deposit: ScreenerNetworkState;
+  reason?: string;
+}
+
+export interface ScreenerSpreadRow {
+  base: string;
+  quote: string;
+  buy_venue: string;
+  sell_venue: string;
+  buy_ask: string;
+  buy_ask_qty: string;
+  sell_bid: string;
+  sell_bid_qty: string;
+  spread_bps_gross: string;
+  spread_bps_net: string;
+  /** null when either venue publishes no top-of-book size (liquidity_unknown). */
+  liquidity_quote: string | null;
+  liquidity_unknown: boolean;
+  /** Asset-identity guard: same ticker, different asset; excluded unless include_suspect=1. */
+  suspect: boolean;
+  suspect_reason?: string;
+  lifetime_s: number;
+  first_seen_at: string;
+  buy_age_ms: number;
+  sell_age_ms: number;
+  buy_fee_bps: string;
+  sell_fee_bps: string;
+  networks: ScreenerNetworks;
+}
+
+export interface ScreenerSpreadsResponse {
+  rows: ScreenerSpreadRow[] | null;
+  total: number;
+  generated_at: string;
+  model: string;
+}
+
+// ScreenerSpreadsQuery mirrors the §7 query params exactly (wire names).
+// `base` is the one narrowing param the backend documents; the filter
+// card's bases_allow/bases_deny (below) are a client-side convention on
+// top of it — bases_allow is sent as this csv `base`, bases_deny is
+// applied to the fetched rows in the browser since §7 has no deny slot.
+export interface ScreenerSpreadsQuery {
+  min_spread_bps?: number;
+  min_liquidity?: number;
+  min_lifetime_s?: number;
+  buy?: string[];
+  sell?: string[];
+  quote?: string;
+  base?: string;
+  limit?: number;
+}
+
+function screenerSpreadsQuery(q: ScreenerSpreadsQuery): string {
+  const p = new URLSearchParams();
+  if (q.min_spread_bps !== undefined)
+    p.set("min_spread_bps", String(q.min_spread_bps));
+  if (q.min_liquidity !== undefined)
+    p.set("min_liquidity", String(q.min_liquidity));
+  if (q.min_lifetime_s !== undefined)
+    p.set("min_lifetime_s", String(q.min_lifetime_s));
+  if (q.buy?.length) p.set("buy", q.buy.join(","));
+  if (q.sell?.length) p.set("sell", q.sell.join(","));
+  if (q.quote) p.set("quote", q.quote);
+  if (q.base) p.set("base", q.base);
+  if (q.limit !== undefined) p.set("limit", String(q.limit));
+  return p.toString();
+}
+
+// ScreenerFilterSet is the filter-card's own shape — saved/loaded as a
+// named template. Superset of ScreenerSpreadsQuery: bases_allow maps to
+// the `base` query param, bases_deny is client-side only (see above).
+export interface ScreenerFilterSet {
+  buy_venues?: string[];
+  sell_venues?: string[];
+  quote?: string;
+  min_spread_bps?: number;
+  min_liquidity?: number;
+  min_lifetime_s?: number;
+  bases_allow?: string[];
+  bases_deny?: string[];
+}
+
+export interface ScreenerTemplate {
+  id: string;
+  name: string;
+  filters: ScreenerFilterSet;
+}
+
+export interface ScreenerPerpRow {
+  venue: string;
+  base: string;
+  quote: string;
+  spot_mid: string;
+  perp_mark: string;
+  perp_index: string;
+  basis_bps: string;
+  funding_rate: string;
+  predicted_funding_rate: string;
+  funding_interval_h: number;
+  next_funding_at: string;
+  carry_apr_gross: string;
+  carry_apr_net: string;
+  spot_fee_bps: string;
+  perp_fee_bps: string;
+  age_ms: number;
+  // hold_days_assumed is not in §7's row shape but is referenced by the
+  // task copy ("30-day hold assumption") — render the note only when the
+  // backend actually sends it, never a hardcoded day count.
+  hold_days_assumed?: number;
+}
+
+export interface ScreenerPerpsResponse {
+  rows: ScreenerPerpRow[] | null;
+  generated_at: string;
+}
+
+export interface ScreenerPerpsQuery {
+  venue?: string;
+  base?: string;
+  // Fraction, e.g. 0.10 for 10% APR (internal/screener/basis.go
+  // PerpFilters.MinCarryAPR) — callers taking a percent input from the
+  // operator must divide by 100 before passing it here.
+  min_carry_apr?: number;
+  limit?: number;
+}
+
+export interface ScreenerFundingPoint {
+  at: string;
+  rate: string;
+}
+
+export interface ScreenerFundingSeries {
+  venue: string;
+  base: string;
+  points: ScreenerFundingPoint[] | null;
+}
+
+export interface ScreenerFundingResponse {
+  series: ScreenerFundingSeries[] | null;
+}
+
+export interface ScreenerCalculatorOverrideFees {
+  buy_fee_bps?: string;
+  sell_fee_bps?: string;
+}
+
+export interface ScreenerCalculatorRequest {
+  base: string;
+  quote: string;
+  buy_venue: string;
+  sell_venue: string;
+  size_quote: string;
+  transfer_fee_quote?: string;
+  override_fees?: ScreenerCalculatorOverrideFees;
+}
+
+export interface ScreenerCalculatorResult {
+  buy_ask: string;
+  sell_bid: string;
+  size_base: string;
+  gross: string;
+  fees_buy: string;
+  fees_sell: string;
+  transfer_fee: string;
+  net: string;
+  net_bps: string;
+  liquidity_ok: boolean;
+}
+
+export interface ScreenerVenueSettings {
+  enabled: boolean;
+  spot_taker_bps: string;
+  perp_taker_bps: string;
+  perps_enabled: boolean;
+}
+
+export interface ScreenerPaperSettings {
+  balances: Record<string, Record<string, string>>;
+}
+
+export interface ScreenerSettingsDoc {
+  poll_interval_s: number;
+  min_liquidity_quote: string;
+  venues: Record<string, ScreenerVenueSettings>;
+  paper: ScreenerPaperSettings;
+}
+
+export interface ScreenerSettingsSnapshot {
+  version: number;
+  created_at: string;
+  created_by?: string;
+  settings: ScreenerSettingsDoc;
+  field_timing: Record<string, string>;
+}
+
+export type ScreenerRuleKind = "spread" | "carry" | "basis";
+
+export interface ScreenerRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: ScreenerRuleKind;
+  min_spread_bps?: string;
+  min_carry_apr?: string;
+  min_liquidity_quote: string;
+  min_lifetime_s: number;
+  buy_venues: string[];
+  sell_venues: string[];
+  quotes: string[];
+  bases_allow: string[];
+  bases_deny: string[];
+  cooldown_s: number;
+  telegram: boolean;
+  // Opt-in automatic PAPER execution (design §4) — LIVE stays disabled by
+  // design regardless of this flag; it only ever books to the paper ledger.
+  auto_paper: boolean;
+  paper_size_quote: string;
+}
+
+export type ScreenerRuleInput = Omit<ScreenerRule, "id">;
+
+export interface ScreenerEvent {
+  id: string;
+  rule_id: string;
+  kind: string;
+  opened_at: string;
+  closed_at?: string;
+  lifetime_s: number;
+  base: string;
+  quote: string;
+  buy_venue: string;
+  sell_venue: string;
+  peak_net_bps: string;
+  telegram_sent: boolean;
+  paper_execution_id?: string;
+}
+
+export interface ScreenerAutoPaperRuleSummary {
+  rule_id: string;
+  alerts: number;
+  executed: number;
+  skipped: Record<string, number>;
+  net_pnl_quote: string;
+  hit_rate: string;
+  mean_lifetime_s: number;
+}
+
+// ScreenerAutoPaperPosition: §7 elides the position row shape
+// ("positions: [...]") — every field beyond id is optional and an
+// unrecognized backend field still renders via the index signature,
+// mirroring the Report interface's forward-compat convention above.
+export interface ScreenerAutoPaperPosition {
+  id: string;
+  rule_id?: string;
+  strategy?: string;
+  base?: string;
+  quote?: string;
+  buy_venue?: string;
+  sell_venue?: string;
+  status?: string;
+  opened_at?: string;
+  closed_at?: string;
+  net_pnl_quote?: string;
+  [field: string]: unknown;
+}
+
+export interface ScreenerAutoPaperResponse {
+  positions: ScreenerAutoPaperPosition[] | null;
+  summary: { per_rule: ScreenerAutoPaperRuleSummary[] | null };
+}
+
 // ---- endpoint groups -----------------------------------------------------
 
 export const api = {
@@ -1158,6 +1655,61 @@ export const api = {
         current_password: currentPassword,
         new_password: newPassword,
       }),
+  },
+  // me() is the same handler as auth.me() (GET /api/v1/me is an alias of
+  // GET /api/v1/auth/me, internal/api/auth.go handleMe) — a named
+  // top-level entry point per the T-081/T-082 wire shape (role,
+  // platform_admin, org, org_role, risk_ack_required, entitlements).
+  me: () => get<Me>("/api/v1/me"),
+  riskAck: {
+    // POST /api/v1/me/risk-ack {version} — version must equal the
+    // backend's current RiskAckVersion or this 409s with
+    // data.required_version (billing.md §1.4); callers should source it
+    // from the 403's required_version / me.risk_ack_version, not a
+    // hardcoded constant.
+    accept: (version: string) =>
+      post<{ org_id: number; risk_ack_version: string; risk_ack_at: string }>(
+        "/api/v1/me/risk-ack",
+        { version },
+      ),
+  },
+  org: {
+    get: () => get<OrgGetResponse>("/api/v1/org"),
+    members: () =>
+      get<{ members: OrgMember[] | null; seats_max: number }>(
+        "/api/v1/org/members",
+      ),
+    // No email-invite endpoint exists: POST /org/members takes an
+    // existing account's user_id (orgapi.go handleOrgMemberAdd) and
+    // /api/v1/users (email-based account creation) is platform-admin
+    // only. Self-service e-mail invites land with T-085.
+    addMember: (userId: string, role: OrgRole) =>
+      post<{ org_id: number; user_id: string; role: OrgRole }>(
+        "/api/v1/org/members",
+        { user_id: userId, role },
+      ),
+    // {id} in these two routes is the member's user_id, not a row id.
+    setMemberRole: (userId: string, role: OrgRole) =>
+      post<{ user_id: string; role: OrgRole }>(
+        `/api/v1/org/members/${encodeURIComponent(userId)}/role`,
+        { role },
+      ),
+    removeMember: (userId: string) =>
+      del<{ status: string }>(
+        `/api/v1/org/members/${encodeURIComponent(userId)}`,
+      ),
+  },
+  billing: {
+    subscription: () =>
+      get<BillingSubscriptionResponse>("/api/v1/billing/subscription"),
+    prices: () => get<BillingPricesResponse>("/api/v1/billing/prices"),
+    checkout: (priceId: string) =>
+      post<BillingCheckoutResult>("/api/v1/billing/checkout", {
+        price_id: priceId,
+      }),
+    portal: () => get<{ url: string }>("/api/v1/billing/portal"),
+    cancel: () =>
+      post<{ status: string; effective: string }>("/api/v1/billing/cancel"),
   },
   users: {
     list: async () =>
@@ -1195,6 +1747,94 @@ export const api = {
   },
   scanner: {
     status: () => get<ScannerStatus>("/api/v1/scanner/status"),
+  },
+  // Scanner Suite (T-065..T-072): cross-venue spot screener, perpetuals/
+  // funding monitor, calculator, alert rules, automatic PAPER execution.
+  // Reads need screener:view (VIEWER+); mutations need screener:config
+  // (ADMIN) + CSRF + parent_version where versioned (design §7).
+  screener: {
+    status: () => get<ScreenerStatusView>("/api/v1/screener/status"),
+    spreads: (q: ScreenerSpreadsQuery) =>
+      get<ScreenerSpreadsResponse>(
+        `/api/v1/screener/spreads?${screenerSpreadsQuery(q)}`,
+      ),
+    perpetuals: (q: ScreenerPerpsQuery) => {
+      const p = new URLSearchParams();
+      if (q.venue) p.set("venue", q.venue);
+      if (q.base) p.set("base", q.base);
+      if (q.min_carry_apr !== undefined)
+        p.set("min_carry_apr", String(q.min_carry_apr));
+      if (q.limit !== undefined) p.set("limit", String(q.limit));
+      return get<ScreenerPerpsResponse>(
+        `/api/v1/screener/perpetuals?${p.toString()}`,
+      );
+    },
+    funding: (base: string, venues: string[] = [], hours = 72) => {
+      const p = new URLSearchParams();
+      if (base) p.set("base", base);
+      if (venues.length) p.set("venues", venues.join(","));
+      p.set("hours", String(hours));
+      return get<ScreenerFundingResponse>(
+        `/api/v1/screener/funding?${p.toString()}`,
+      );
+    },
+    calculator: (req: ScreenerCalculatorRequest) =>
+      post<ScreenerCalculatorResult>("/api/v1/screener/calculator", req),
+    settings: {
+      current: () => get<ScreenerSettingsSnapshot>("/api/v1/screener/settings"),
+      // parent_version required (T-058 optimistic concurrency), same
+      // convention as api.platform.apply / api.config.apply above.
+      apply: (settings: ScreenerSettingsDoc, parentVersion: number) =>
+        post<ScreenerSettingsSnapshot>("/api/v1/screener/settings", {
+          settings,
+          parent_version: parentVersion,
+        }),
+    },
+    rules: {
+      list: async () =>
+        (await get<{ rules: ScreenerRule[] | null }>("/api/v1/screener/rules"))
+          .rules ?? [],
+      create: (rule: ScreenerRuleInput) =>
+        post<{ rule: ScreenerRule }>("/api/v1/screener/rules", rule).then(
+          (r) => r.rule,
+        ),
+      update: (id: string, rule: ScreenerRuleInput) =>
+        put<{ rule: ScreenerRule }>(
+          `/api/v1/screener/rules/${encodeURIComponent(id)}`,
+          rule,
+        ).then((r) => r.rule),
+      remove: (id: string) =>
+        del<{ status: string }>(
+          `/api/v1/screener/rules/${encodeURIComponent(id)}`,
+        ),
+    },
+    events: (ruleId = "", limit = 100) => {
+      const p = new URLSearchParams();
+      if (ruleId) p.set("rule_id", ruleId);
+      p.set("limit", String(limit));
+      return get<{ events: ScreenerEvent[] | null }>(
+        `/api/v1/screener/events?${p.toString()}`,
+      );
+    },
+    autoPaper: () =>
+      get<ScreenerAutoPaperResponse>("/api/v1/screener/auto-paper"),
+    templates: {
+      list: async () =>
+        (
+          await get<{ templates: ScreenerTemplate[] | null }>(
+            "/api/v1/screener/templates",
+          )
+        ).templates ?? [],
+      create: (name: string, filters: ScreenerFilterSet) =>
+        post<{ template: ScreenerTemplate }>("/api/v1/screener/templates", {
+          name,
+          filters,
+        }).then((r) => r.template),
+      remove: (id: string) =>
+        del<{ status: string }>(
+          `/api/v1/screener/templates/${encodeURIComponent(id)}`,
+        ),
+    },
   },
   opportunities: {
     recent: (limit = 20) =>

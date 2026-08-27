@@ -1,0 +1,36 @@
+# grafana/tempo-distributed helm values. arbd exports OTLP traces
+# (OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo-distributor.monitoring:4317)
+# once the tracing hooks land in internal/metrics; the collector side is
+# ready ahead of it.
+traces:
+  otlp:
+    grpc: {enabled: true}
+    http: {enabled: true}
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: REPLACE-tempo-traces
+      endpoint: s3.eu-central-1.amazonaws.com
+      region: eu-central-1
+    # credentials via workload identity
+compactor:
+  config:
+    compaction:
+      block_retention: 336h     # 14d
+distributor: {replicas: 2}
+ingester: {replicas: 3}
+querier: {replicas: 2}
+queryFrontend: {replicas: 1}
+metricsGenerator:
+  enabled: true
+  config:
+    storage:
+      remote_write:
+        - url: http://kube-prometheus-stack-prometheus.monitoring:9090/api/v1/write
+  # service graphs + span metrics give per-venue REST latency without
+  # extra instrumentation
+global_overrides:
+  metrics_generator_processors: [service-graphs, span-metrics]
+serviceAccount:
+  annotations: {}   # eks.amazonaws.com/role-arn: <traces bucket role>

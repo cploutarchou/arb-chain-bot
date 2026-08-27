@@ -388,8 +388,14 @@ data-flow,security,risk}.md`.
   gross deviation above ~−1 bps in 12 h of live scanning (8.6k
   `RISK_MIN_EDGE` rejections, best net −41 bps against 30 bps fees +
   10 bps buffers); less-liquid intermediates and fiat-quoted pairs are
-  where deviations, if any, should appear. Session id and campaign
-  report follow in docs/campaigns/ once ≥ 6 h are captured.
+  where deviations, if any, should appear. Session
+  `01M11K202ZHBEZKPD8QXBPF6YJ` (from 12:27 UTC). The operator cancelled
+  the scheduled 18:37 UTC campaign step on 2026-08-27 to prioritise the
+  Scanner Suite (Phase 22); the recording keeps running until the next
+  rebuild and can be campaigned later. Live scanning over the widened
+  universe (3 h): 28k `RISK_MIN_EDGE` rejections, best net edge −36 bps
+  (≈ +4 bps gross before 40 bps of fees and buffers), 0 of 144 triangles
+  ever above −20 bps net.
 - campaign 1 (2026-08-27): recording `01M0ZPK16CXTR91MMJQ60HC2K3`
   (Binance, BTCUSDT/ETHUSDT/ETHBTC/BTCUSDC/ETHUSDC/USDCUSDT, starting
   assets USDT/USDC; 2026-08-26 18:51:15 → 20:22:02 UTC, **1 h 31 m —
@@ -1253,6 +1259,94 @@ data-flow,security,risk}.md`.
   unavailable venue returns `400 connector_unavailable` naming the task.
 
 ---
+
+## Phase 22 — Scanner Suite (cross-venue screener, perpetuals/funding, alerts, auto-paper)
+
+Design: docs/design/scanner-suite.md (restates the operator's request as a
+Claude Code command, §0). Public market data only; automatic execution is
+PAPER only; the vault's exchange credential group stays unread.
+
+### T-065 Screener endpoint research
+- status: DONE (2026-08-27; Bitget/OKX fee and rate-limit items remain UNVERIFIED and are flagged in the settings UI) — docs/research/screener-endpoints.md:
+  public bulk spot tickers, instrument lists, USDT-M perp tickers,
+  funding (rate, interval, history), currency/chain status (public vs
+  key-gated), rate limits, regular-tier fees for Binance, OKX, Bybit,
+  Bitget, Gate, MEXC. Acceptance: every field VERIFIED with URL + access
+  date or marked UNVERIFIED.
+
+### T-066 Venue collectors (`internal/screener/venue`)
+- status: DONE (2026-08-27) — six collectors with fixtures + conformance test; 5-min soak 5,448 pairs / 3,990 perps, zero 429/418. 30-min soak still owed before Tier-2 defaults flip. One collector per venue polling the bulk endpoints
+  under a per-venue weight/rate gate; normalised spot quotes and perp
+  rows; data-age tracking. Acceptance: ≥ 90 % of tradable spot pairs per
+  poll, 30-minute soak with zero 429/418, fixture unit tests per venue.
+
+### T-067 Spreads, basis and carry math
+- status: DONE (2026-08-27) — golden tests; asset-identity + liquidity guard added after the live VON/TROLL/XTER mismatch (suspect lanes excluded by default). Net cross-venue spread (both taker fees), liquidity
+  (top-of-book), lifetime tracking; spot↔perp basis, funding carry
+  annualised net of fees. Decimal only in money paths; golden tests.
+
+### T-068 Screener settings, API, RBAC
+- status: DONE (2026-08-27) — migration 000010, screener:view/screener:config, every §7 route. Versioned DB document (venues on/off, poll interval,
+  fee table, liquidity floor, paper balances per venue), `screener:view`
+  (OPERATOR+) / `screener:config` (ADMIN), CSRF, audit, parent_version;
+  read models for the console; migration 000010.
+
+### T-069 Console pages (Scanner Suite group)
+- status: DONE (2026-08-27) — six pages, icon rail, light/dark AA tokens with contrast check, seven UX components; sidebar collapse-to-rail and dense mode deferred. `/screener`, `/perpetuals`, `/funding`, `/calculator`,
+  `/scanner-alerts`, `/auto-paper`; stats strip, filter card with saved
+  templates, dense auto-refreshing virtualised table, row expand with
+  per-side quotes; light theme in the design system; e2e coverage.
+
+### T-070 Alert rules → Telegram
+- status: DONE (2026-08-27) — evaluator with lifetime/cooldown/dedup, measurement-only text with fixed footer; real Telegram delivery not yet exercised. Persisted rules (spread/lifetime/liquidity/venues/
+  funding thresholds), evaluation on each poll, cooldown + dedup through
+  `internal/notification`, audit on rule changes.
+
+### T-071 Automatic paper execution
+- status: DONE (2026-08-27, code) — cross-venue spot, carry, funding harvest reproducing strategy-models worked examples; migration 000011 ledger; NO soak evidence yet (24 h soak report owed). Rule opt-in; CrossVenueSpot (inventory on both venues,
+  no transfers), Carry (spot long + perp short with funding accrual and
+  maintenance-margin stop), Futures-Futures; paper cycles tagged by
+  strategy so PnL/Reports break them down; 24 h soak report filed under
+  docs/campaigns/screener/. LIVE stays disabled.
+
+### T-072 Skill, agent and deployment docs
+- status: DONE (2026-08-27) — `.claude/skills/scanner-suite/SKILL.md`,
+  `.claude/agents/screener-engineer.md`; deployment notes follow T-068.
+
+## Phases 23–27 — Product programme (docs/design/crypto-arb-platform-command.md)
+
+### Phase 23 Venue breadth
+- T-073 `Collector` interface + conformance test + venue registry (verified flag, fee defaults). TODO.
+- T-074 Tier-1 venues via public bulk tickers: Binance, OKX, Bybit, Bitget, Gate, MEXC (from T-065/T-066). TODO.
+- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE and ENABLED BY DEFAULT (30-min live soak 2026-08-27, all ten venues, poll 5 s: kucoin 295 polls 1006 spot/664 perps avg 1104 ms max 3346; htx 197 polls 600/301 avg 4145 max 7496; kraken 248 polls 1382/276 avg 2249 max 3806; coinbase 142 polls 921/0 avg 7701 max 9365 — 0 × 429/418/403/510 and 0 errors each; book 6690 pairs / 5231 perps). HTX/Coinbase limits and fees still UNVERIFIED (flagged in the registry). MEXC in-band 510 now detected (1 hit in the soak on contract/ticker → counted, 10 s pause, recovered). Remaining: Crypto.com, Bitfinex, BingX, Upbit, Bithumb, WhiteBIT, LBank, BitMart, Phemex. IN_PROGRESS.
+- T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO.
+
+### Phase 24 Strategies, auto-paper, unattended operation
+- T-077 Strategy registry (cross-venue spot, carry, futures-futures, funding harvest, triangular) with per-strategy paper ledger and statistics. TODO.
+- T-078 Nightly paper report per strategy and per rule (2026-08-27, `internal/screener/report/`): 00:05 UTC and `POST /screener/reports/run` (ADMIN); previous UTC day + cumulative; strategy-models §7 table (n, net after fees/funding/slippage, net bps mean/median, hit rate with Wilson 95 %, lifetime, max drawdown, drift, skipped by reason, funding rows, slip p95, concentration) and the §8 checklist with pass/fail + reason per item ("no evidence yet" below the floors; regimes, stress grid, fee verification and manual items always fail until filed). Files `<recordings>/screener-reports/<date>/`, table `screener_reports` (000012), one Telegram summary. Tests: synthetic ledger with hand-computed answers (6 executions / 3 days), 240-sample gate run (items 4 and 6 pass, 6 fail), storage round trip. Docs/campaigns filing of a real 30-day window: not yet (no ≥ 30-day auto-paper run exists).
+- T-079 Operations automation — minimal part done (2026-08-27): self-healing collectors (`Automation.healCollectors` restarts a venue goroutine with no completed poll for 5 × poll_interval_s, logs it, `venues[].restarts` in /screener/status; tests `TestPollerRestartStale`, `TestAutomationHealsStaleCollectors`). Scheduled migrations, backups, health checks and alerting on failure: TODO.
+- T-080 Evidence dashboard: per-strategy net PnL after fees, hit rate, drawdown, sample size vs production-gate thresholds. TODO.
+
+### Phase 25 SaaS
+- T-081 Tenancy: organisations, memberships, roles; console per tenant. DONE (2026-08-27, migration 000013; platform-admin flag gates the exchange-credential vault and system routes with tests; Organisation page). Compliance blocks (docs/compliance/review-2026-08-27.md #1, #9, #10): exchange-credential vault operator-only with a 403 test for tenant roles; Art. 30 data map + erasure by pseudonymised audit before prod; Telegram chat IDs encrypted, never logged.
+- T-082 Packages + entitlements enforced server-side. DONE (2026-08-27; schema-validated resolve with overrides that can never enable live; enforcement on rules, venues, refresh, templates, auto-paper, alerts/day; console gating + upgrade toasts).
+- T-083 Paddle billing lifecycle + webhooks + customer portal. IMPLEMENTED (2026-08-27; signature-verified idempotent webhooks, checkout/portal/cancel, Billing page; sandbox run against real Paddle still owed — needs the operator's Paddle account and catalogue per docs/design/billing.md).
+- T-084 Affiliate programme ledger + payouts report. PARTIAL (2026-08-27; decimal accrual ledger with maturation/reversal; payouts report and jobs open).
+- T-085 Marketing site (site/) with evidence-based copy and legal pages; compliance review. IN_PROGRESS (copy and legal drafts in docs/site; site scaffold with copy lint being built). Blocks (#3, #4, #5, #6): legal-page drafts, sign-up risk acknowledgement, hypothetical-performance disclaimer on every paper surface, copy lint (no %/currency figure without a docs/campaigns citation; banned words).
+- T-086 Client onboarding, e-mail/web alert channels, API keys for client API access (our API, not exchange keys). TODO.
+- T-087 Client console re-skin (ux-designer → ui-designer → frontend). TODO.
+- T-088 White-label option (later). TODO.
+
+### Phase 26 Production infrastructure
+- T-089 deploy/ as code: Helm/Kustomize + Terraform; envs dev / paper-test / prod. TODO.
+- T-090 HA Postgres + PITR + restore drill; tick partitioning. TODO.
+- T-091 CI/CD staged deploys with canary + rollback. TODO.
+- T-092 Observability stack, SLOs, alert rules, runbooks. TODO.
+- T-093 Edge security (WAF, rate limiting), image/dependency scanning, GDPR data map. TODO.
+- T-094 Load/soak tests at target scale (venues × pairs × tenants). TODO.
+
+### Phase 27 Production execution gate
+- T-095 BLOCKED by design (record in docs/decisions/; see compliance review #2, #16 for what client-funds execution would additionally require): live execution requires (a) ≥ 30 days positive auto-paper evidence across regimes, (b) security review, (c) the operator's recorded legal decision, (d) a human-reviewed code change replacing ErrLiveTradingDisabled. No work starts before (a)–(c) exist.
 
 ## Status log
 

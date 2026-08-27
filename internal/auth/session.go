@@ -30,17 +30,26 @@ type User struct {
 	Role         Role
 	Disabled     bool
 	CreatedAt    time.Time
+	// PlatformAdmin marks the operator's own staff (users.platform_admin,
+	// migration 000013). It unlocks the exchange-credential vault group
+	// and the system routes; no package, membership role or webhook can
+	// set it (compliance review 2026-08-27 #1).
+	PlatformAdmin bool
 }
 
 // Session is a server-side revocable session.
 type Session struct {
-	Token     string // opaque, 256-bit
-	UserID    string
-	Role      Role
-	CreatedAt time.Time
-	ExpiresAt time.Time
-	RevokedAt time.Time
-	IP        netip.Addr
+	Token  string // opaque, 256-bit
+	UserID string
+	Role   Role
+	// PlatformAdmin mirrors User.PlatformAdmin at validation time (the
+	// pgx store joins users on every lookup, so a revoked flag takes
+	// effect on the next request).
+	PlatformAdmin bool
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	RevokedAt     time.Time
+	IP            netip.Addr
 }
 
 // Stores are small interfaces so the pgx implementation (storage layer)
@@ -129,12 +138,13 @@ func (m *Manager) Login(ctx context.Context, email, password string, ip netip.Ad
 		return Session{}, err
 	}
 	s := Session{
-		Token:     token,
-		UserID:    u.ID,
-		Role:      u.Role,
-		CreatedAt: m.Now(),
-		ExpiresAt: m.Now().Add(m.TTL),
-		IP:        ip,
+		Token:         token,
+		UserID:        u.ID,
+		Role:          u.Role,
+		PlatformAdmin: u.PlatformAdmin,
+		CreatedAt:     m.Now(),
+		ExpiresAt:     m.Now().Add(m.TTL),
+		IP:            ip,
 	}
 	// The store only ever sees the digest; the raw token exists in the
 	// caller's cookie and nowhere else (audit S-005).

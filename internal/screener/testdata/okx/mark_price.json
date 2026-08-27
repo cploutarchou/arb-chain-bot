@@ -1,0 +1,318 @@
+{
+ "code": "0",
+ "msg": "",
+ "data": [
+  {
+   "instId": "2Z-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.0593",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ASTS-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "61.14",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ADBE-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "288.94",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ASML-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "1732.68",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ARM-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "252.07",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AVGO-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "369.37",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "APR-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.2205",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AI-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.02045",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AT-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.138",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "APP-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "311.6",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ALLO-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.25493",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "APT-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.5811",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ANTHROPIC-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "198.07",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AUCTION-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "3.273",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AGLD-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.1715",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "BTC-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "80306.7",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ETH-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "2521.81",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "BCH-USD-SWAP",
+   "instType": "SWAP",
+   "markPx": "272.5",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ADA-USD-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.2159",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ADA-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.2159",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "1INCH-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.09085",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AAVE-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "129.03",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ALGO-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.09157",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ATOM-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "1.533",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AVAX-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "7.529",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "APE-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.14391",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "A-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.07869",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ACU-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.14928",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AR-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "2.231",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ACH-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.005155",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ARB-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.09252",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "APLD-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "27.88",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AERO-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.5194",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AEVO-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.02326",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ACT-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.011552",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AEHR-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "93.76",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ARKM-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.11515",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AEON-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.05759",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AMZN-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "256.7",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "API3-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.2411",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ALAB-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "300.9",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AAPL-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "314.58",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AMD-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "473.5",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AAOI-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "112.43",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AMAT-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "477.15",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AIXBT-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.02125",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ANIME-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.002722",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ATH-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.00504",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ARX-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.1365",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "ASTER-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.7148",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "0G-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.1639",
+   "ts": "1787848767032"
+  },
+  {
+   "instId": "AVNT-USDT-SWAP",
+   "instType": "SWAP",
+   "markPx": "0.10703",
+   "ts": "1787848767032"
+  }
+ ]
+}

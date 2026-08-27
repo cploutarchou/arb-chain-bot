@@ -412,3 +412,145 @@ func bookStateValue(s string) int64 {
 	}
 	return -1
 }
+
+// ---- Scanner Suite + platform pull instruments -------------------------
+
+// VenueStat is one screener venue's collector status at scrape time
+// (screener.VenueStatus projected; RateLimited is the collector gate's
+// cumulative 429/418/403/in-band count).
+type VenueStat struct {
+	Venue         string
+	Online        bool
+	PollLatencyMS int64
+	RateLimited   int64
+}
+
+// PaperExecStat is one cumulative auto-paper outcome counter.
+type PaperExecStat struct {
+	Strategy, Outcome string
+	Count             int64
+}
+
+// ScreenerSources are the Scanner Suite pull callbacks; nil members are
+// skipped.
+type ScreenerSources struct {
+	Venues func() []VenueStat
+	// FeedRateLimited is the triangular engine's Binance REST 429/418
+	// count (binance.Feed.Stats.RateLimited); it is added to the
+	// screener collector's count under venue="binance".
+	FeedRateLimited func() int64
+	PairsTracked    func() int64
+	Alerts          func() map[string]int64 // rule_kind → opened
+	PaperExecutions func() []PaperExecStat
+}
+
+// RegisterScreener wires the Scanner Suite counters:
+// exchange_rate_limited_total{venue}, screener_venue_online{venue},
+// screener_poll_latency_ms{venue}, screener_pairs_tracked,
+// screener_alerts_total{rule_kind},
+// screener_paper_executions_total{strategy,outcome}.
+func (m *Metrics) RegisterScreener(src ScreenerSources) error {
+	meter := m.meter
+	var errs []error
+	i64c := func(name, desc string) api.Int64ObservableCounter {
+		c, err := meter.Int64ObservableCounter(name, api.WithDescription(desc))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return c
+	}
+	i64g := func(name, desc string) api.Int64ObservableGauge {
+		g, err := meter.Int64ObservableGauge(name, api.WithDescription(desc))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return g
+	}
+	var (
+		rateLimited = i64c("exchange_rate_limited", "rate-limit answers (HTTP 429/418/403 or in-band) per venue, collectors + engine feed")
+		online      = i64g("screener_venue_online", "1 when the venue's last poll succeeded, else 0")
+		latency     = i64g("screener_poll_latency_ms", "last poll duration per venue in ms")
+		pairs       = i64g("screener_pairs_tracked", "distinct base/quote pairs in the screener book")
+		alerts      = i64c("screener_alerts", "alerts opened per rule kind")
+		paperExecs  = i64c("screener_paper_executions", "automatic PAPER executions per strategy and outcome")
+	)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	_, err := meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		if src.Venues != nil {
+			limited := map[string]int64{}
+			for _, v := range src.Venues() {
+				attrs := api.WithAttributes(attribute.String("venue", v.Venue))
+				o.ObserveInt64(online, boolGauge(v.Online), attrs)
+				o.ObserveInt64(latency, v.PollLatencyMS, attrs)
+				limited[v.Venue] += v.RateLimited
+			}
+			if src.FeedRateLimited != nil {
+				limited["binance"] += src.FeedRateLimited()
+			}
+			for venue, n := range limited {
+				o.ObserveInt64(rateLimited, n, api.WithAttributes(attribute.String("venue", venue)))
+			}
+		} else if src.FeedRateLimited != nil {
+			o.ObserveInt64(rateLimited, src.FeedRateLimited(), api.WithAttributes(attribute.String("venue", "binance")))
+		}
+		if src.PairsTracked != nil {
+			o.ObserveInt64(pairs, src.PairsTracked())
+		}
+		if src.Alerts != nil {
+			for kind, n := range src.Alerts() {
+				o.ObserveInt64(alerts, n, api.WithAttributes(attribute.String("rule_kind", kind)))
+			}
+		}
+		if src.PaperExecutions != nil {
+			for _, p := range src.PaperExecutions() {
+				o.ObserveInt64(paperExecs, p.Count, api.WithAttributes(
+					attribute.String("strategy", p.Strategy),
+					attribute.String("outcome", p.Outcome)))
+			}
+		}
+		return nil
+	}, rateLimited, online, latency, pairs, alerts, paperExecs)
+	return err
+}
+
+// RegisterMigrations exposes db_migrations_pending (0/1: the database's
+// schema_migrations version is behind, dirty, or unreadable, compared
+// with the version this binary was built for at boot).
+func (m *Metrics) RegisterMigrations(pending func() int64) error {
+	g, err := m.meter.Int64ObservableGauge("db_migrations_pending",
+		api.WithDescription("1 when schema migrations are pending for this build, else 0"))
+	if err != nil {
+		return err
+	}
+	_, err = m.meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		o.ObserveInt64(g, pending())
+		return nil
+	}, g)
+	return err
+}
+
+// RegisterCampaign exposes campaign_runs_total{status} from the §80
+// campaign runner's terminal-state counters.
+func (m *Metrics) RegisterCampaign(counts func() map[string]int64) error {
+	c, err := m.meter.Int64ObservableCounter("campaign_runs",
+		api.WithDescription("campaign runs reaching a terminal status (done/failed)"))
+	if err != nil {
+		return err
+	}
+	_, err = m.meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		for status, n := range counts() {
+			o.ObserveInt64(c, n, api.WithAttributes(attribute.String("status", status)))
+		}
+		return nil
+	}, c)
+	return err
+}
+
+func boolGauge(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
