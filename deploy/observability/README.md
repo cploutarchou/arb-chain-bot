@@ -44,3 +44,21 @@ scrape_configs:
 - Hot-path budget: per-frame and per-evaluation instrumentation is one
   atomic add; SDK reads happen at scrape time only. Benchmarks:
   `go test -bench . ./internal/metrics/`.
+
+## Kubernetes additions (Phase 26)
+
+- `servicemonitor.yaml` — Prometheus Operator scrape of the private
+  metrics port + postgres-exporter.
+- `platform-rules.yml` — SRE alerts (feed stale > 30s, collector 429s,
+  recorder drops, campaign runs, migrations, replication lag, backups,
+  restore drill, pod restarts) and SLO burn-rate rules. Series marked
+  PENDING EXPORTER are listed at the top of the file.
+- `render-rules.sh` — wraps both rule files as PrometheusRule objects.
+- `grafana-dashboard-platform.json` — SRE dashboard (feed health,
+  collector 429s, recorder, campaign runs, API latency, platform).
+- `loki-values.yaml`, `promtail-values.yaml`, `tempo-values.yaml` —
+  logs and traces stacks; audit stream retained 400d.
+
+SLOs (30-day windows): API availability 99.9 %, API p99 < 500 ms,
+feed freshness 99.5 % of minutes with max book age < 5 s. Burn-rate
+alerts in `platform-rules.yml` group `arb-slo`.

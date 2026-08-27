@@ -1,0 +1,1511 @@
+{
+ "retCode": 0,
+ "retMsg": "OK",
+ "result": {
+  "category": "spot",
+  "list": [
+   {
+    "symbolId": 9,
+    "symbol": "BTCUSDT",
+    "baseCoin": "BTC",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.000001",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.000001",
+     "maxOrderQty": "230",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "8000000",
+     "maxLimitOrderQty": "230",
+     "maxMarketOrderQty": "120",
+     "postOnlyMaxLimitOrderSize": "1150"
+    },
+    "priceFilter": {
+     "tickSize": "0.1"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.005",
+     "priceLimitRatioY": "0.01"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 10,
+    "symbol": "ETHUSDT",
+    "baseCoin": "ETH",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.00001",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.00001",
+     "maxOrderQty": "8118",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "7000000",
+     "maxLimitOrderQty": "8118",
+     "maxMarketOrderQty": "2706",
+     "postOnlyMaxLimitOrderSize": "40590"
+    },
+    "priceFilter": {
+     "tickSize": "0.01"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.005",
+     "priceLimitRatioY": "0.01"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 21,
+    "symbol": "AXSUSDT",
+    "baseCoin": "AXS",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "9806",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "600000",
+     "maxLimitOrderQty": "9806",
+     "maxMarketOrderQty": "4903",
+     "postOnlyMaxLimitOrderSize": "49030"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 26,
+    "symbol": "AAVEUSDT",
+    "baseCoin": "AAVE",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.0001",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.0001",
+     "maxOrderQty": "3700",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "600000",
+     "maxLimitOrderQty": "3700",
+     "maxMarketOrderQty": "1800",
+     "postOnlyMaxLimitOrderSize": "18500"
+    },
+    "priceFilter": {
+     "tickSize": "0.01"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 33,
+    "symbol": "ADAUSDT",
+    "baseCoin": "ADA",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "7600000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "4000000",
+     "maxLimitOrderQty": "7600000",
+     "maxMarketOrderQty": "1500000",
+     "postOnlyMaxLimitOrderSize": "38000000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 49,
+    "symbol": "AGLDUSDT",
+    "baseCoin": "AGLD",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "69060",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "69060",
+     "maxMarketOrderQty": "34530",
+     "postOnlyMaxLimitOrderSize": "345300"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 50,
+    "symbol": "ANKRUSDT",
+    "baseCoin": "ANKR",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1181800",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1181800",
+     "maxMarketOrderQty": "590900",
+     "postOnlyMaxLimitOrderSize": "5909000"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 60,
+    "symbol": "ATOMUSDT",
+    "baseCoin": "ATOM",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "120000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "600000",
+     "maxLimitOrderQty": "120000",
+     "maxMarketOrderQty": "25000",
+     "postOnlyMaxLimitOrderSize": "600000"
+    },
+    "priceFilter": {
+     "tickSize": "0.001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 61,
+    "symbol": "ALGOUSDT",
+    "baseCoin": "ALGO",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "2391900",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "1000000",
+     "maxLimitOrderQty": "2391900",
+     "maxMarketOrderQty": "797300",
+     "postOnlyMaxLimitOrderSize": "11959500"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 65,
+    "symbol": "AVAXUSDT",
+    "baseCoin": "AVAX",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.001",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.001",
+     "maxOrderQty": "140000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "3000000",
+     "maxLimitOrderQty": "140000",
+     "maxMarketOrderQty": "27000",
+     "postOnlyMaxLimitOrderSize": "700000"
+    },
+    "priceFilter": {
+     "tickSize": "0.001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 81,
+    "symbol": "AVAUSDT",
+    "baseCoin": "AVA",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "39600",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "39600",
+     "maxMarketOrderQty": "19800",
+     "postOnlyMaxLimitOrderSize": "198000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 104,
+    "symbol": "1INCHUSDT",
+    "baseCoin": "1INCH",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "1300000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1300000",
+     "maxMarketOrderQty": "260000",
+     "postOnlyMaxLimitOrderSize": "6500000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 185,
+    "symbol": "ACHUSDT",
+    "baseCoin": "ACH",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1110200",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1110200",
+     "maxMarketOrderQty": "555100",
+     "postOnlyMaxLimitOrderSize": "5551000"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 204,
+    "symbol": "APEUSDT",
+    "baseCoin": "APE",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "872000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "872000",
+     "maxMarketOrderQty": "436000",
+     "postOnlyMaxLimitOrderSize": "4360000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 232,
+    "symbol": "APEXUSDT",
+    "baseCoin": "APEX",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "600000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "600000",
+     "maxMarketOrderQty": "120000",
+     "postOnlyMaxLimitOrderSize": "3000000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 293,
+    "symbol": "BABYDOGEUSDT",
+    "baseCoin": "BABYDOGE",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "1",
+     "quotePrecision": "0.0000000000001",
+     "minOrderQty": "1",
+     "maxOrderQty": "26001000000000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "26001000000000",
+     "maxMarketOrderQty": "8667000000000",
+     "postOnlyMaxLimitOrderSize": "130005000000000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0000000000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 303,
+    "symbol": "ARUSDT",
+    "baseCoin": "AR",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "16713",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "600000",
+     "maxLimitOrderQty": "16713",
+     "maxMarketOrderQty": "5571",
+     "postOnlyMaxLimitOrderSize": "83565"
+    },
+    "priceFilter": {
+     "tickSize": "0.001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 378,
+    "symbol": "APTUSDT",
+    "baseCoin": "APT",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "173600",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "600000",
+     "maxLimitOrderQty": "173600",
+     "maxMarketOrderQty": "86800",
+     "postOnlyMaxLimitOrderSize": "868000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 412,
+    "symbol": "ACSUSDT",
+    "baseCoin": "ACS",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.00000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "29220000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "29220000",
+     "maxMarketOrderQty": "14610000",
+     "postOnlyMaxLimitOrderSize": "146100000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.1",
+     "priceLimitRatioY": "0.2"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 425,
+    "symbol": "ARBUSDT",
+    "baseCoin": "ARB",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "2740000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "600000",
+     "maxLimitOrderQty": "2740000",
+     "maxMarketOrderQty": "1370000",
+     "postOnlyMaxLimitOrderSize": "13700000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 428,
+    "symbol": "AXLUSDT",
+    "baseCoin": "AXL",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "517920",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "517920",
+     "maxMarketOrderQty": "172640",
+     "postOnlyMaxLimitOrderSize": "2589600"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 431,
+    "symbol": "AGIUSDT",
+    "baseCoin": "AGI",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "1",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.00000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "1633500",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1633500",
+     "maxMarketOrderQty": "544500",
+     "postOnlyMaxLimitOrderSize": "8167500"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.1",
+     "priceLimitRatioY": "0.2"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 467,
+    "symbol": "ARKMUSDT",
+    "baseCoin": "ARKM",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "1100000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1100000",
+     "maxMarketOrderQty": "220000",
+     "postOnlyMaxLimitOrderSize": "5500000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 539,
+    "symbol": "AIOZUSDT",
+    "baseCoin": "AIOZ",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "171740",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "171740",
+     "maxMarketOrderQty": "85870",
+     "postOnlyMaxLimitOrderSize": "858700"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 575,
+    "symbol": "ALTUSDT",
+    "baseCoin": "ALT",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1923000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1923000",
+     "maxMarketOrderQty": "641000",
+     "postOnlyMaxLimitOrderSize": "9615000"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 588,
+    "symbol": "AEVOUSDT",
+    "baseCoin": "AEVO",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "2400000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "2400000",
+     "maxMarketOrderQty": "480000",
+     "postOnlyMaxLimitOrderSize": "12000000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 670,
+    "symbol": "AURORAUSDT",
+    "baseCoin": "AURORA",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "499400",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "499400",
+     "maxMarketOrderQty": "249700",
+     "postOnlyMaxLimitOrderSize": "2497000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 673,
+    "symbol": "ATHUSDT",
+    "baseCoin": "ATH",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "5043000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "5043000",
+     "maxMarketOrderQty": "1681000",
+     "postOnlyMaxLimitOrderSize": "25215000"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 711,
+    "symbol": "A8USDT",
+    "baseCoin": "A8",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1437000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1437000",
+     "maxMarketOrderQty": "479000",
+     "postOnlyMaxLimitOrderSize": "7185000"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 714,
+    "symbol": "AVAILUSDT",
+    "baseCoin": "AVAIL",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "2062200",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "2062200",
+     "maxMarketOrderQty": "687400",
+     "postOnlyMaxLimitOrderSize": "10311000"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 790,
+    "symbol": "BANUSDT",
+    "baseCoin": "BAN",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "1",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "1",
+     "maxOrderQty": "178050",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "178050",
+     "maxMarketOrderQty": "59350",
+     "postOnlyMaxLimitOrderSize": "890250"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 813,
+    "symbol": "AEROUSDT",
+    "baseCoin": "AERO",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "116920",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "116920",
+     "maxMarketOrderQty": "58460",
+     "postOnlyMaxLimitOrderSize": "584600"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 824,
+    "symbol": "ALCHUSDT",
+    "baseCoin": "ALCH",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "378800",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "378800",
+     "maxMarketOrderQty": "189400",
+     "postOnlyMaxLimitOrderSize": "1894000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 833,
+    "symbol": "AIXBTUSDT",
+    "baseCoin": "AIXBT",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "537000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "537000",
+     "maxMarketOrderQty": "179000",
+     "postOnlyMaxLimitOrderSize": "2685000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 848,
+    "symbol": "ANIMEUSDT",
+    "baseCoin": "ANIME",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "6562000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "6562000",
+     "maxMarketOrderQty": "3281000",
+     "postOnlyMaxLimitOrderSize": "32810000"
+    },
+    "priceFilter": {
+     "tickSize": "0.000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 853,
+    "symbol": "AVLUSDT",
+    "baseCoin": "AVL",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "210800",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "210800",
+     "maxMarketOrderQty": "105400",
+     "postOnlyMaxLimitOrderSize": "1054000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 854,
+    "symbol": "B3USDT",
+    "baseCoin": "B3",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "1",
+     "quotePrecision": "0.0000001",
+     "minOrderQty": "1",
+     "maxOrderQty": "33210000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "33210000",
+     "maxMarketOrderQty": "11070000",
+     "postOnlyMaxLimitOrderSize": "166050000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0000001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 882,
+    "symbol": "BABY1USDT",
+    "baseCoin": "BABY1",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "1",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "1",
+     "maxOrderQty": "5904000",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "5904000",
+     "maxMarketOrderQty": "1968000",
+     "postOnlyMaxLimitOrderSize": "29520000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 908,
+    "symbol": "AUSDT",
+    "baseCoin": "A",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "122280",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "122280",
+     "maxMarketOrderQty": "40760",
+     "postOnlyMaxLimitOrderSize": "611400"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1002,
+    "symbol": "AAPLXUSDT",
+    "baseCoin": "AAPLX",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.001",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "0.001",
+     "maxOrderQty": "270",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "65000",
+     "maxLimitOrderQty": "270",
+     "maxMarketOrderQty": "270",
+     "postOnlyMaxLimitOrderSize": "1350"
+    },
+    "priceFilter": {
+     "tickSize": "0.01"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "xstocks",
+    "xstockMultiplier": "1.0032690125398187"
+   },
+   {
+    "symbolId": 1006,
+    "symbol": "AMZNXUSDT",
+    "baseCoin": "AMZNX",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.001",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "0.001",
+     "maxOrderQty": "310",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "65000",
+     "maxLimitOrderQty": "310",
+     "maxMarketOrderQty": "310",
+     "postOnlyMaxLimitOrderSize": "1550"
+    },
+    "priceFilter": {
+     "tickSize": "0.01"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "xstocks",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1082,
+    "symbol": "AVNTUSDT",
+    "baseCoin": "AVNT",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "968700",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "968700",
+     "maxMarketOrderQty": "322900",
+     "postOnlyMaxLimitOrderSize": "4843500"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1109,
+    "symbol": "BARDUSDT",
+    "baseCoin": "BARD",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1214700",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "50000",
+     "maxLimitOrderQty": "1214700",
+     "maxMarketOrderQty": "404900",
+     "postOnlyMaxLimitOrderSize": "6073500"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1116,
+    "symbol": "ASTERUSDT",
+    "baseCoin": "ASTER",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "726800",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "726800",
+     "maxMarketOrderQty": "363400",
+     "postOnlyMaxLimitOrderSize": "3634000"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.015",
+     "priceLimitRatioY": "0.03"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1118,
+    "symbol": "0GUSDT",
+    "baseCoin": "0G",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.01",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.01",
+     "maxOrderQty": "123220",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "123220",
+     "maxMarketOrderQty": "61610",
+     "postOnlyMaxLimitOrderSize": "616100"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1135,
+    "symbol": "2ZUSDT",
+    "baseCoin": "2Z",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "utaOnly",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "667400",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "667400",
+     "maxMarketOrderQty": "333700",
+     "postOnlyMaxLimitOrderSize": "3337000"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1253,
+    "symbol": "AEDZUSDT",
+    "baseCoin": "AEDZ",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1469022",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1469022",
+     "maxMarketOrderQty": "734511",
+     "postOnlyMaxLimitOrderSize": "7345110"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1259,
+    "symbol": "AZTECUSDT",
+    "baseCoin": "AZTEC",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1832700",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1832700",
+     "maxMarketOrderQty": "610900",
+     "postOnlyMaxLimitOrderSize": "9163500"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1279,
+    "symbol": "BASEDUSDT",
+    "baseCoin": "BASED",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.000001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "1755926.3",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "1755926.3",
+     "maxMarketOrderQty": "351185.3",
+     "postOnlyMaxLimitOrderSize": "8779631.5"
+    },
+    "priceFilter": {
+     "tickSize": "0.00001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.02",
+     "priceLimitRatioY": "0.05"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   },
+   {
+    "symbolId": 1311,
+    "symbol": "ARXUSDT",
+    "baseCoin": "ARX",
+    "quoteCoin": "USDT",
+    "innovation": "0",
+    "status": "Trading",
+    "marginTrading": "none",
+    "stTag": "0",
+    "lotSizeFilter": {
+     "basePrecision": "0.1",
+     "quotePrecision": "0.00001",
+     "minOrderQty": "0.1",
+     "maxOrderQty": "158640",
+     "minOrderAmt": "5",
+     "maxOrderAmt": "200000",
+     "maxLimitOrderQty": "158640",
+     "maxMarketOrderQty": "52880",
+     "postOnlyMaxLimitOrderSize": "793200"
+    },
+    "priceFilter": {
+     "tickSize": "0.0001"
+    },
+    "riskParameters": {
+     "priceLimitRatioX": "0.05",
+     "priceLimitRatioY": "0.1"
+    },
+    "symbolType": "",
+    "xstockMultiplier": "1"
+   }
+  ]
+ },
+ "retExtInfo": {},
+ "time": 1787848767284
+}

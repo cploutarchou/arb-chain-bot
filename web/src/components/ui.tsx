@@ -14,7 +14,13 @@ export function PageTitle({ children }: { children: ReactNode }) {
   return <h1 className="mb-4 text-lg font-semibold">{children}</h1>;
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
   return (
     <section className="mb-6">
       <h2 className="mb-2 text-[13px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
@@ -25,7 +31,15 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
-export function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: Tone }) {
+export function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: Tone;
+}) {
   const color =
     tone === "ok"
       ? "text-[var(--ok)]"
@@ -38,8 +52,12 @@ export function Stat({ label, value, tone }: { label: string; value: ReactNode; 
             : "text-[var(--text)]";
   return (
     <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
-      <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">{label}</div>
-      <div className={`mt-1 truncate text-sm font-medium ${color}`}>{value}</div>
+      <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">
+        {label}
+      </div>
+      <div className={`mt-1 truncate text-sm font-medium ${color}`}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -53,19 +71,32 @@ export function Stat({ label, value, tone }: { label: string; value: ReactNode; 
 const ABSENCE_CODES: Record<string, string> = {
   storage_absent: "Persistence isn't configured for this deployment yet.",
   engine_absent: "No trading engine is running in this deployment profile.",
-  replays_absent: "The replay runner isn't available in this deployment (it needs persistence).",
+  replays_absent:
+    "The replay runner isn't available in this deployment (it needs persistence).",
   reporting_absent: "Reporting isn't running in this deployment profile.",
   portfolio_absent: "The paper portfolio hasn't initialized yet.",
   pnl_absent: "The paper portfolio hasn't initialized yet.",
   realtime_absent: "The realtime hub isn't running in this deployment.",
 };
 
-export function Unavailable({ code, message }: { code?: string; message?: string }) {
-  const copy = (code && ABSENCE_CODES[code]) || message || "Not available in this deployment.";
+export function Unavailable({
+  code,
+  message,
+}: {
+  code?: string;
+  message?: string;
+}) {
+  const copy =
+    (code && ABSENCE_CODES[code]) ||
+    message ||
+    "Not available in this deployment.";
   return (
     <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-4 text-sm text-[var(--text-dim)]">
-      {copy} See <code className="rounded bg-[var(--bg-raised)] px-1 py-0.5 text-[12px]">docs/deployment.md</code> if
-      this deployment should have it configured.
+      {copy} See{" "}
+      <code className="rounded bg-[var(--bg-raised)] px-1 py-0.5 text-[12px]">
+        docs/deployment.md
+      </code>{" "}
+      if this deployment should have it configured.
     </div>
   );
 }
@@ -96,12 +127,27 @@ export function StaleVersionNotice({
   );
 }
 
-export function ErrorBox({ message, status, code }: { message: string; status?: number; code?: string }) {
-  if (code && ABSENCE_CODES[code]) return <Unavailable code={code} message={message} />;
+export function ErrorBox({
+  message,
+  status,
+  code,
+}: {
+  message: string;
+  status?: number;
+  code?: string;
+}) {
+  if (code && ABSENCE_CODES[code])
+    return <Unavailable code={code} message={message} />;
   return (
     <div className="rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-4 text-sm">
       <span className="font-medium text-[var(--critical)]">
-        {status === 401 ? "Session required:" : status === 403 ? "Forbidden:" : status === 404 ? "Unavailable:" : "Error:"}
+        {status === 401
+          ? "Session required:"
+          : status === 403
+            ? "Forbidden:"
+            : status === 404
+              ? "Unavailable:"
+              : "Error:"}
       </span>{" "}
       {message}
     </div>
@@ -117,10 +163,36 @@ export function Empty({ what }: { what: string }) {
 }
 
 // Await renders the three poll states uniformly.
-export function Await<T>({ state, what, children }: { state: PollState<T>; what: string; children: (data: T) => ReactNode }) {
+export function Await<T>({
+  state,
+  what,
+  children,
+}: {
+  state: PollState<T>;
+  what: string;
+  children: (data: T) => ReactNode;
+}) {
   if (state.kind === "loading") return <Loading what={what} />;
-  if (state.kind === "error") return <ErrorBox message={state.message} status={state.status} code={state.code} />;
+  if (state.kind === "error")
+    return (
+      <ErrorBox
+        message={state.message}
+        status={state.status}
+        code={state.code}
+      />
+    );
   return <>{children(state.data)}</>;
+}
+
+// ColumnAlign: per-column alignment for Table/VirtualTable (design-system.md
+// §1.4 item 5 / §2.2 — numeric columns, and their header, right-aligned).
+// Optional and parallel to `head`/each row's cell array rather than a
+// change to `head`'s shape, so every existing string[] caller keeps
+// compiling unchanged.
+export type ColumnAlign = "num" | "text";
+
+function alignClass(align?: ColumnAlign): string {
+  return align === "num" ? "text-right" : "text-left";
 }
 
 export function Table({
@@ -129,6 +201,7 @@ export function Table({
   empty,
   sticky,
   maxHeight,
+  align,
 }: {
   head: string[];
   rows: ReactNode[][];
@@ -138,6 +211,10 @@ export function Table({
   // takes effect together with maxHeight, which bounds the scroll region.
   sticky?: boolean;
   maxHeight?: number;
+  // align: one entry per column, defaulting to "text" (left) when absent
+  // or shorter than `head` — never required, so existing callers are
+  // unaffected until they opt a numeric column in.
+  align?: ColumnAlign[];
 }) {
   if (rows.length === 0) return <Empty what={empty} />;
   return (
@@ -145,11 +222,14 @@ export function Table({
       className="overflow-x-auto rounded border border-[var(--border)]"
       style={maxHeight ? { maxHeight, overflowY: "auto" } : undefined}
     >
-      <table className="w-full border-collapse text-[13px]">
+      <table className="w-full border-collapse text-[13px] [font-variant-numeric:tabular-nums_slashed-zero]">
         <thead className={sticky ? "sticky top-0 z-10" : undefined}>
           <tr className="bg-[var(--bg-panel)] text-left">
-            {head.map((h) => (
-              <th key={h} className="whitespace-nowrap px-3 py-2 font-medium text-[var(--text-dim)]">
+            {head.map((h, i) => (
+              <th
+                key={h}
+                className={`whitespace-nowrap px-3 py-2 font-medium text-[var(--text-dim)] ${alignClass(align?.[i])}`}
+              >
                 {h}
               </th>
             ))}
@@ -157,9 +237,15 @@ export function Table({
         </thead>
         <tbody>
           {rows.map((cells, i) => (
-            <tr key={i} className="border-t border-[var(--border)] hover:bg-[var(--bg-panel)]">
+            <tr
+              key={i}
+              className="group border-t border-[var(--border)] hover:bg-[var(--bg-panel)]"
+            >
               {cells.map((c, j) => (
-                <td key={j} className="whitespace-nowrap px-3 py-1.5">
+                <td
+                  key={j}
+                  className={`whitespace-nowrap px-3 py-1.5 ${alignClass(align?.[j])}`}
+                >
                   {c}
                 </td>
               ))}
@@ -189,17 +275,30 @@ export function VirtualTable({
   empty,
   maxHeight = 480,
   threshold = 500,
+  align,
 }: {
   head: string[];
   rows: ReactNode[][];
   empty: string;
   maxHeight?: number;
   threshold?: number;
+  // See Table's `align` — same per-column "num"/"text" option, threaded
+  // through to both the direct-render and windowed-scroll branches below.
+  align?: ColumnAlign[];
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   if (rows.length === 0) return <Empty what={empty} />;
   if (rows.length <= threshold) {
-    return <Table head={head} rows={rows} empty={empty} sticky maxHeight={maxHeight} />;
+    return (
+      <Table
+        head={head}
+        rows={rows}
+        empty={empty}
+        sticky
+        maxHeight={maxHeight}
+        align={align}
+      />
+    );
   }
   const visibleCount = Math.ceil(maxHeight / ROW_HEIGHT) + OVERSCAN * 2;
   const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
@@ -213,11 +312,14 @@ export function VirtualTable({
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       aria-label={`${rows.length} rows, virtualized`}
     >
-      <table className="w-full border-collapse text-[13px]">
+      <table className="w-full border-collapse text-[13px] [font-variant-numeric:tabular-nums_slashed-zero]">
         <thead className="sticky top-0 z-10">
           <tr className="bg-[var(--bg-panel)] text-left">
-            {head.map((h) => (
-              <th key={h} className="whitespace-nowrap px-3 py-2 font-medium text-[var(--text-dim)]">
+            {head.map((h, i) => (
+              <th
+                key={h}
+                className={`whitespace-nowrap px-3 py-2 font-medium text-[var(--text-dim)] ${alignClass(align?.[i])}`}
+              >
                 {h}
               </th>
             ))}
@@ -230,9 +332,16 @@ export function VirtualTable({
             </tr>
           )}
           {rows.slice(startIdx, endIdx).map((cells, i) => (
-            <tr key={startIdx + i} className="border-t border-[var(--border)] hover:bg-[var(--bg-panel)]" style={{ height: ROW_HEIGHT }}>
+            <tr
+              key={startIdx + i}
+              className="group border-t border-[var(--border)] hover:bg-[var(--bg-panel)]"
+              style={{ height: ROW_HEIGHT }}
+            >
               {cells.map((c, j) => (
-                <td key={j} className="whitespace-nowrap px-3 py-1.5">
+                <td
+                  key={j}
+                  className={`whitespace-nowrap px-3 py-1.5 ${alignClass(align?.[j])}`}
+                >
                   {c}
                 </td>
               ))}
@@ -250,17 +359,27 @@ export function VirtualTable({
 }
 
 export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
+  // Every tone outlines with --border-strong (design-system.md §1.4 item
+  // 5: "Badge ... → border-[var(--border-strong)]") — a badge is a
+  // control-identifying boundary, not a decorative rule, so it never
+  // uses the weaker --border.
   const cls =
     tone === "ok"
-      ? "border-[var(--ok)] text-[var(--ok)]"
+      ? "border-[var(--border-strong)] text-[var(--ok)]"
       : tone === "warn"
-        ? "border-[var(--warn)] text-[var(--warn)]"
+        ? "border-[var(--border-strong)] text-[var(--warn)]"
         : tone === "high"
-          ? "border-[var(--high)] text-[var(--high)]"
+          ? "border-[var(--border-strong)] text-[var(--high)]"
           : tone === "bad"
-            ? "border-[var(--critical)] text-[var(--critical)]"
-            : "border-[var(--border)] text-[var(--text-dim)]";
-  return <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] ${cls}`}>{children}</span>;
+            ? "border-[var(--border-strong)] text-[var(--critical)]"
+            : "border-[var(--border-strong)] text-[var(--text-dim)]";
+  return (
+    <span
+      className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium ${cls}`}
+    >
+      {children}
+    </span>
+  );
 }
 
 export function Button({
@@ -287,10 +406,10 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`rounded border px-2.5 py-1 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+      className={`rounded border px-2.5 py-1 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-[var(--opacity-disabled)] ${
         danger
-          ? "border-[var(--critical)] text-[var(--critical)] hover:bg-[var(--critical)] hover:text-black"
-          : "border-[var(--border)] text-[var(--text)] hover:bg-[var(--bg-raised)]"
+          ? "border-[var(--critical)] text-[var(--critical)] hover:bg-[var(--critical)] hover:text-[var(--on-critical)]"
+          : "border-[var(--border-strong)] text-[var(--text)] hover:bg-[var(--bg-raised)]"
       }`}
     >
       {children}
@@ -367,7 +486,7 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4"
       onClick={danger ? undefined : onCancel}
     >
       <div
@@ -377,13 +496,17 @@ export function ConfirmDialog({
         aria-label={title}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[85vh] w-full max-w-xl overflow-auto rounded border border-[var(--border)] bg-[var(--bg-panel)] p-4 outline-none"
+        className="max-h-[85vh] w-full max-w-xl overflow-auto rounded border border-[var(--border-strong)] bg-[var(--bg-panel)] p-4 outline-none"
       >
         <h2 className="mb-3 text-sm font-semibold">{title}</h2>
         <div className="mb-4 text-[13px] text-[var(--text-dim)]">{body}</div>
         <div className="flex justify-end gap-2">
           <Button onClick={onCancel}>{cancelLabel}</Button>
-          <Button onClick={onConfirm} danger={danger} disabled={confirmDisabled}>
+          <Button
+            onClick={onConfirm}
+            danger={danger}
+            disabled={confirmDisabled}
+          >
             {confirmLabel}
           </Button>
         </div>
@@ -406,11 +529,19 @@ export function DiffTable({
   showEffect?: boolean;
 }) {
   if (rows.length === 0) {
-    return <p className="text-[13px] text-[var(--text-dim)]">No parameter changes.</p>;
+    return (
+      <p className="text-[13px] text-[var(--text-dim)]">
+        No parameter changes.
+      </p>
+    );
   }
   return (
     <Table
-      head={showEffect ? ["Parameter", beforeLabel, afterLabel, "Effect"] : ["Parameter", beforeLabel, afterLabel]}
+      head={
+        showEffect
+          ? ["Parameter", beforeLabel, afterLabel, "Effect"]
+          : ["Parameter", beforeLabel, afterLabel]
+      }
       empty="changes"
       rows={rows.map((r) =>
         showEffect
@@ -424,7 +555,9 @@ export function DiffTable({
 export function fmtTime(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().replace("T", " ").slice(0, 19) + "Z";
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toISOString().replace("T", " ").slice(0, 19) + "Z";
 }
 
 // ---- Inline SVG charts (BL-19) --------------------------------------------
@@ -444,7 +577,8 @@ export function PnLSeriesChart({
   width?: number;
   height?: number;
 }) {
-  if (points.length === 0) return <p className="text-[13px] text-[var(--text-dim)]">No data.</p>;
+  if (points.length === 0)
+    return <p className="text-[13px] text-[var(--text-dim)]">No data.</p>;
   const cum = points.map((p) => Number(p.cumulative_pnl));
   const dd = points.map((p) => Number(p.drawdown));
   const minY = Math.min(0, ...cum, ...dd);
@@ -456,10 +590,16 @@ export function PnLSeriesChart({
   const padB = 8;
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
-  const sx = (i: number) => padL + (points.length <= 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
+  const sx = (i: number) =>
+    padL + (points.length <= 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
   const sy = (v: number) => padT + plotH - ((v - minY) / spanY) * plotH;
   const zeroY = sy(0);
-  const cumPath = cum.map((v, i) => `${i === 0 ? "M" : "L"} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(" ");
+  const cumPath = cum
+    .map(
+      (v, i) =>
+        `${i === 0 ? "M" : "L"} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`,
+    )
+    .join(" ");
   const ddArea = [
     `M ${sx(0).toFixed(1)} ${zeroY.toFixed(1)}`,
     ...dd.map((v, i) => `L ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`),
@@ -475,19 +615,41 @@ export function PnLSeriesChart({
   const worst = points[worstIdx]!;
   return (
     <div>
-      <svg width={width} height={height} role="img" aria-label="Cumulative P&L and drawdown over the selected window">
-        <line x1={padL} y1={zeroY} x2={width - padR} y2={zeroY} stroke="var(--border)" strokeWidth={1} />
+      <svg
+        width={width}
+        height={height}
+        role="img"
+        aria-label="Cumulative P&L and drawdown over the selected window"
+      >
+        <line
+          x1={padL}
+          y1={zeroY}
+          x2={width - padR}
+          y2={zeroY}
+          stroke="var(--border)"
+          strokeWidth={1}
+        />
         <path d={ddArea} fill="var(--critical)" opacity={0.18} stroke="none" />
-        <path d={cumPath} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
+        <path
+          d={cumPath}
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth={1.5}
+        />
       </svg>
       <div className="mt-1 flex flex-wrap gap-4 text-[11px] text-[var(--text-dim)]">
         <span>n = {points.length}</span>
-        <span>Start {fmtTime(first.at)}: {first.cumulative_pnl}</span>
         <span>
-          End {fmtTime(last.at)}: <span className="text-[var(--text)]">{last.cumulative_pnl}</span>
+          Start {fmtTime(first.at)}: {first.cumulative_pnl}
         </span>
         <span>
-          Max drawdown: <span className="text-[var(--critical)]">{worst.drawdown}</span> at {fmtTime(worst.at)}
+          End {fmtTime(last.at)}:{" "}
+          <span className="text-[var(--text)]">{last.cumulative_pnl}</span>
+        </span>
+        <span>
+          Max drawdown:{" "}
+          <span className="text-[var(--critical)]">{worst.drawdown}</span> at{" "}
+          {fmtTime(worst.at)}
         </span>
       </div>
     </div>
@@ -507,7 +669,11 @@ export function HistogramChart({
   height?: number;
 }) {
   if (dist.n === 0) {
-    return <p className="text-[13px] text-[var(--text-dim)]">No samples in this window (n = 0).</p>;
+    return (
+      <p className="text-[13px] text-[var(--text-dim)]">
+        No samples in this window (n = 0).
+      </p>
+    );
   }
   const buckets = dist.buckets ?? [];
   const maxCount = Math.max(1, ...buckets.map((b) => b.count));
@@ -515,7 +681,12 @@ export function HistogramChart({
   const barW = buckets.length ? width / buckets.length : 0;
   return (
     <div>
-      <svg width={width} height={height} role="img" aria-label="Distribution histogram">
+      <svg
+        width={width}
+        height={height}
+        role="img"
+        aria-label="Distribution histogram"
+      >
         {buckets.map((b, i) => {
           const h = (b.count / maxCount) * (height - padB - 4);
           return (
@@ -532,7 +703,14 @@ export function HistogramChart({
             </rect>
           );
         })}
-        <line x1={0} y1={height - padB} x2={width} y2={height - padB} stroke="var(--border)" strokeWidth={1} />
+        <line
+          x1={0}
+          y1={height - padB}
+          x2={width}
+          y2={height - padB}
+          stroke="var(--border)"
+          strokeWidth={1}
+        />
       </svg>
       <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-[var(--text-dim)]">
         <span>n = {dist.n}</span>

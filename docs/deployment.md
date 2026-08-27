@@ -310,3 +310,64 @@ against live feeds, with the console servable separately via
 - Postgres is the source of truth for market metadata (instrument
   rules), the recording catalog, and the stream table the campaign
   needs — keep the `pgdata` volume alongside the `recordings` volume.
+
+## 6. Environments
+
+Three environments run the same image digests with per-environment
+configuration only. Everything is code under `deploy/`
+(`deploy/helm/arb-platform`, `deploy/terraform`, `deploy/postgres`,
+`deploy/observability`) and `.github/workflows/deploy.yml`.
+
+| | dev | paper-test | prod |
+|---|---|---|---|
+| Where | docker compose (§1–§4) or a local cluster with `values-dev.yaml` | managed k8s, `values-paper-test.yaml` | managed k8s, `values-prod.yaml` |
+| Postgres | compose `db` / in-cluster | managed HA (multi-AZ), 7-day PITR | managed HA (multi-AZ) + read replica, 14-day PITR, pgBackRest weekly full/daily diff, weekly restore drill |
+| Secrets | `.env` (never committed) | External Secrets from the KMS store, prefix `arb/paper-test/` | same, prefix `arb/prod/` |
+| Ingress | none | TLS (staging issuer), WAF + rate limit | TLS, WAF + rate limit, canary annotations |
+| arbd | 1 replica | 1 replica, ServiceMonitor on | 1 replica (single-writer), anti-affinity, zone spread, PDB maxUnavailable=0 |
+| web | 1 | HPA 2–4 | HPA 3–10, PDB minAvailable=2 |
+| `ARB_MODE` | PAPER / RECORD | PAPER | PAPER |
+
+Promotion flow (`deploy.yml`):
+
+1. Tag `vX.Y.Z` -> build `arbd` and `web` images once, push by digest,
+   Trivy scan (fail on critical), cosign keyless signature, chart lint
+   and template for every values file (including the negative check
+   that `arbd.mode=LIVE` is rejected).
+2. `paper-test`: `helm upgrade --atomic` with the digests; the migrate
+   hook runs first and a failure aborts the release. Smoke test
+   (`deploy/scripts/smoke.sh`: rollout, `/healthz`, `/readyz`, console,
+   mode check). Failure -> `helm rollback`.
+3. `prod-approval`: a GitHub environment with required reviewers. A
+   human approves the exact digests that passed paper-test.
+4. `prod-canary`: second release `arb-canary` — console at 10 % of
+   traffic (nginx canary weight) and a shadow arbd in REPLAY mode.
+   Smoke, then a 15-minute bake polling Alertmanager
+   (`deploy/scripts/bake.sh`); any of `APIAvailabilityBurnFast`,
+   `FeedStale`, `PodCrashLooping`, `MigrateJobFailed`, `ArbdNotReady`
+   firing uninstalls the canary and stops the pipeline.
+5. `prod-full`: atomic upgrade of the main release, smoke, 10-minute
+   bake, canary removed. Failure -> automatic `helm rollback` to the
+   previous revision followed by a smoke test of the rolled-back state.
+
+Every step is reversible: images are immutable digests, releases keep
+five revisions, migrations are forward-only in the hook and reversed by
+hand per `docs/runbooks/restore-drill.md`. Cloud access in CI uses
+OIDC-assumed roles configured as repository variables; the workflow
+file contains no secrets and the application only ever sees secrets
+through External Secrets.
+
+SLOs (30-day windows, rules in `deploy/observability/platform-rules.yml`):
+API availability 99.9 %, API p99 latency < 500 ms, feed freshness
+99.5 % of minutes with max book age < 5 s. Burn-rate alerts gate the
+prod bake.
+
+LIVE execution is disabled in every environment by code. There is no
+LIVE value for `ARB_MODE`: the chart's `arb.mode` helper fails the
+render on anything other than RECORD, PAPER or REPLAY, the values files
+pin PAPER, the smoke test re-checks the rendered ConfigMap, and the
+executor returns `ErrLiveTradingDisabled`. Enabling live orders is the
+production gate in `docs/design/crypto-arb-platform-command.md` — a
+reviewed code change after 30+ days of positive paper evidence in
+`docs/campaigns/`, a security review, and a recorded legal decision —
+never a configuration, secret, or pipeline input.

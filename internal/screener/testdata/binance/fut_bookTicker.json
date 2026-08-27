@@ -1,0 +1,497 @@
+[
+ {
+  "symbol": "BTCUSDT",
+  "bidPrice": "80322.10",
+  "bidQty": "0.034",
+  "askPrice": "80322.20",
+  "askQty": "7.666",
+  "time": 1787848767200,
+  "lastUpdateId": 11406088281340
+ },
+ {
+  "symbol": "ETHUSDT",
+  "bidPrice": "2522.14",
+  "bidQty": "13.970",
+  "askPrice": "2522.15",
+  "askQty": "109.963",
+  "time": 1787848766862,
+  "lastUpdateId": 11406088243165
+ },
+ {
+  "symbol": "ADAUSDT",
+  "bidPrice": "0.21590",
+  "bidQty": "95569",
+  "askPrice": "0.21600",
+  "askQty": "105170",
+  "time": 1787848767231,
+  "lastUpdateId": 11406088285792
+ },
+ {
+  "symbol": "ALGOUSDT",
+  "bidPrice": "0.091580",
+  "bidQty": "1405.3",
+  "askPrice": "0.091590",
+  "askQty": "7371.0",
+  "time": 1787848764799,
+  "lastUpdateId": 11406087933400
+ },
+ {
+  "symbol": "TRBUSDT",
+  "bidPrice": "18.017",
+  "bidQty": "10.4",
+  "askPrice": "18.018",
+  "askQty": "3.4",
+  "time": 1787848766617,
+  "lastUpdateId": 11406088221133
+ },
+ {
+  "symbol": "AAVEUSDT",
+  "bidPrice": "129.090",
+  "bidQty": "1.9",
+  "askPrice": "129.100",
+  "askQty": "21.0",
+  "time": 1787848765779,
+  "lastUpdateId": 11406088151469
+ },
+ {
+  "symbol": "1INCHUSDT",
+  "bidPrice": "0.0908900",
+  "bidQty": "1094",
+  "askPrice": "0.0909100",
+  "askQty": "879",
+  "time": 1787848752949,
+  "lastUpdateId": 11406086695896
+ },
+ {
+  "symbol": "ALICEUSDT",
+  "bidPrice": "0.146300",
+  "bidQty": "1485.1",
+  "askPrice": "0.146400",
+  "askQty": "3464.0",
+  "time": 1787848758180,
+  "lastUpdateId": 11406087165217
+ },
+ {
+  "symbol": "1000SHIBUSDT",
+  "bidPrice": "0.005477",
+  "bidQty": "9713",
+  "askPrice": "0.005478",
+  "askQty": "317390",
+  "time": 1787848766181,
+  "lastUpdateId": 11406088187799
+ },
+ {
+  "symbol": "GTCUSDT",
+  "bidPrice": "0.090280",
+  "bidQty": "5980.0",
+  "askPrice": "0.090350",
+  "askQty": "1785.5",
+  "time": 1787848766515,
+  "lastUpdateId": 11406088213270
+ },
+ {
+  "symbol": "1000XECUSDT",
+  "bidPrice": "0.0071610",
+  "bidQty": "14114",
+  "askPrice": "0.0071650",
+  "askQty": "3704",
+  "time": 1787848733434,
+  "lastUpdateId": 11406084713396
+ },
+ {
+  "symbol": "LPTUSDT",
+  "bidPrice": "1.428",
+  "bidQty": "277.2",
+  "askPrice": "1.429",
+  "askQty": "268.3",
+  "time": 1787848765102,
+  "lastUpdateId": 11406088036791
+ },
+ {
+  "symbol": "IMXUSDT",
+  "bidPrice": "0.1323",
+  "bidQty": "17673",
+  "askPrice": "0.1324",
+  "askQty": "1760",
+  "time": 1787848766096,
+  "lastUpdateId": 11406088181594
+ },
+ {
+  "symbol": "1000LUNCUSDT",
+  "bidPrice": "0.0552000",
+  "bidQty": "7399",
+  "askPrice": "0.0552100",
+  "askQty": "3041",
+  "time": 1787848763408,
+  "lastUpdateId": 11406087807420
+ },
+ {
+  "symbol": "ACHUSDT",
+  "bidPrice": "0.0051580",
+  "bidQty": "11833",
+  "askPrice": "0.0051600",
+  "askQty": "31208",
+  "time": 1787848765204,
+  "lastUpdateId": 11406088055812
+ },
+ {
+  "symbol": "1000PEPEUSDT",
+  "bidPrice": "0.0039191",
+  "bidQty": "56714",
+  "askPrice": "0.0039192",
+  "askQty": "17696",
+  "time": 1787848766197,
+  "lastUpdateId": 11406088189077
+ },
+ {
+  "symbol": "1000FLOKIUSDT",
+  "bidPrice": "0.0271600",
+  "bidQty": "41163",
+  "askPrice": "0.0271700",
+  "askQty": "9836",
+  "time": 1787848765313,
+  "lastUpdateId": 11406088087266
+ },
+ {
+  "symbol": "AGLDUSDT",
+  "bidPrice": "0.1716000",
+  "bidQty": "1037",
+  "askPrice": "0.1717000",
+  "askQty": "5878",
+  "time": 1787848764862,
+  "lastUpdateId": 11406087952426
+ },
+ {
+  "symbol": "ARKUSDT",
+  "bidPrice": "0.1157000",
+  "bidQty": "3454",
+  "askPrice": "0.1158000",
+  "askQty": "4997",
+  "time": 1787848765518,
+  "lastUpdateId": 11406088124123
+ },
+ {
+  "symbol": "1000BONKUSDT",
+  "bidPrice": "0.0031980",
+  "bidQty": "1754386",
+  "askPrice": "0.0031990",
+  "askQty": "54961",
+  "time": 1787848766344,
+  "lastUpdateId": 11406088197615
+ },
+ {
+  "symbol": "1000SATSUSDT",
+  "bidPrice": "0.00001180",
+  "bidQty": "385641425",
+  "askPrice": "0.00001181",
+  "askQty": "43930646",
+  "time": 1787848765421,
+  "lastUpdateId": 11406088107444
+ },
+ {
+  "symbol": "1000RATSUSDT",
+  "bidPrice": "0.0418900",
+  "bidQty": "283",
+  "askPrice": "0.0419000",
+  "askQty": "600",
+  "time": 1787848762331,
+  "lastUpdateId": 11406087720777
+ },
+ {
+  "symbol": "ACEUSDT",
+  "bidPrice": "0.208110",
+  "bidQty": "1509.11",
+  "askPrice": "0.208140",
+  "askQty": "522.05",
+  "time": 1787848766896,
+  "lastUpdateId": 11406088245458
+ },
+ {
+  "symbol": "ALTUSDT",
+  "bidPrice": "0.0065310",
+  "bidQty": "11713",
+  "askPrice": "0.0065340",
+  "askQty": "7439",
+  "time": 1787848762237,
+  "lastUpdateId": 11406087713418
+ },
+ {
+  "symbol": "1000PEPEUSDC",
+  "bidPrice": "0.0039170",
+  "bidQty": "13579",
+  "askPrice": "0.0039177",
+  "askQty": "126572",
+  "time": 1787848765542,
+  "lastUpdateId": 11406088127772
+ },
+ {
+  "symbol": "AEVOUSDT",
+  "bidPrice": "0.0232700",
+  "bidQty": "7198.1",
+  "askPrice": "0.0232900",
+  "askQty": "19010.9",
+  "time": 1787848759127,
+  "lastUpdateId": 11406087390769
+ },
+ {
+  "symbol": "1000SHIBUSDC",
+  "bidPrice": "0.0054740",
+  "bidQty": "391373",
+  "askPrice": "0.0054770",
+  "askQty": "342455",
+  "time": 1787848766811,
+  "lastUpdateId": 11406088238024
+ },
+ {
+  "symbol": "1000BONKUSDC",
+  "bidPrice": "0.0031950",
+  "bidQty": "94982",
+  "askPrice": "0.0031970",
+  "askQty": "68748",
+  "time": 1787848765676,
+  "lastUpdateId": 11406088144013
+ },
+ {
+  "symbol": "1MBABYDOGEUSDT",
+  "bidPrice": "0.0003810",
+  "bidQty": "321845",
+  "askPrice": "0.0003813",
+  "askQty": "1263528",
+  "time": 1787848765353,
+  "lastUpdateId": 11406088095812
+ },
+ {
+  "symbol": "1000CATUSDT",
+  "bidPrice": "0.0019770",
+  "bidQty": "120787",
+  "askPrice": "0.0019790",
+  "askQty": "38816",
+  "time": 1787848766159,
+  "lastUpdateId": 11406088186354
+ },
+ {
+  "symbol": "1000000MOGUSDT",
+  "bidPrice": "0.1217000",
+  "bidQty": "939.6",
+  "askPrice": "0.1218000",
+  "askQty": "1365.6",
+  "time": 1787848767236,
+  "lastUpdateId": 11406088286365
+ },
+ {
+  "symbol": "ACTUSDT",
+  "bidPrice": "0.0115440",
+  "bidQty": "10169",
+  "askPrice": "0.0115510",
+  "askQty": "7449",
+  "time": 1787848764981,
+  "lastUpdateId": 11406088011111
+ },
+ {
+  "symbol": "AKTUSDT",
+  "bidPrice": "0.5650000",
+  "bidQty": "198.1",
+  "askPrice": "0.5653000",
+  "askQty": "285.4",
+  "time": 1787848766012,
+  "lastUpdateId": 11406088173580
+ },
+ {
+  "symbol": "1000CHEEMSUSDT",
+  "bidPrice": "0.0005556",
+  "bidQty": "28346",
+  "askPrice": "0.0005559",
+  "askQty": "409707",
+  "time": 1787848759116,
+  "lastUpdateId": 11406087383637
+ },
+ {
+  "symbol": "AEROUSDT",
+  "bidPrice": "0.5194000",
+  "bidQty": "508.3",
+  "askPrice": "0.5195000",
+  "askQty": "110.2",
+  "time": 1787848767079,
+  "lastUpdateId": 11406088263181
+ },
+ {
+  "symbol": "AIXBTUSDT",
+  "bidPrice": "0.0212500",
+  "bidQty": "12036",
+  "askPrice": "0.0212700",
+  "askQty": "38220",
+  "time": 1787848762381,
+  "lastUpdateId": 11406087724298
+ },
+ {
+  "symbol": "ALCHUSDT",
+  "bidPrice": "0.0301900",
+  "bidQty": "2663",
+  "askPrice": "0.0302100",
+  "askQty": "1693",
+  "time": 1787848744911,
+  "lastUpdateId": 11406085935797
+ },
+ {
+  "symbol": "ANIMEUSDT",
+  "bidPrice": "0.0027250",
+  "bidQty": "47999",
+  "askPrice": "0.0027260",
+  "askQty": "94449",
+  "time": 1787848766585,
+  "lastUpdateId": 11406088219269
+ },
+ {
+  "symbol": "ADAUSDC",
+  "bidPrice": "0.215900",
+  "bidQty": "10138.1",
+  "askPrice": "0.216000",
+  "askQty": "3648.6",
+  "time": 1787848766352,
+  "lastUpdateId": 11406088198270
+ },
+ {
+  "symbol": "AIOTUSDT",
+  "bidPrice": "0.0386800",
+  "bidQty": "1560",
+  "askPrice": "0.0387000",
+  "askQty": "815",
+  "time": 1787848741118,
+  "lastUpdateId": 11406085485483
+ },
+ {
+  "symbol": "ALPINEUSDT",
+  "bidPrice": "0.355700",
+  "bidQty": "2821.4",
+  "askPrice": "0.355900",
+  "askQty": "475.5",
+  "time": 1787848764862,
+  "lastUpdateId": 11406087952461
+ },
+ {
+  "symbol": "AGTUSDT",
+  "bidPrice": "0.0154260",
+  "bidQty": "3367",
+  "askPrice": "0.0154310",
+  "askQty": "341",
+  "time": 1787848764228,
+  "lastUpdateId": 11406087865957
+ },
+ {
+  "symbol": "1000000BOBUSDT",
+  "bidPrice": "0.0169400",
+  "bidQty": "6838",
+  "askPrice": "0.0169600",
+  "askQty": "5580",
+  "time": 1787848740559,
+  "lastUpdateId": 11406085418456
+ },
+ {
+  "symbol": "AAVEUSDC",
+  "bidPrice": "128.960",
+  "bidQty": "1.6",
+  "askPrice": "129.010",
+  "askQty": "0.9",
+  "time": 1787848765501,
+  "lastUpdateId": 11406088121850
+ },
+ {
+  "symbol": "AINUSDT",
+  "bidPrice": "0.0712600",
+  "bidQty": "257",
+  "askPrice": "0.0713300",
+  "askQty": "449",
+  "time": 1787848765210,
+  "lastUpdateId": 11406088058769
+ },
+ {
+  "symbol": "ALLUSDT",
+  "bidPrice": "0.562600",
+  "bidQty": "220",
+  "askPrice": "0.563000",
+  "askQty": "279",
+  "time": 1787848764912,
+  "lastUpdateId": 11406087969679
+ },
+ {
+  "symbol": "AIOUSDT",
+  "bidPrice": "0.0445200",
+  "bidQty": "1696",
+  "askPrice": "0.0445400",
+  "askQty": "2142",
+  "time": 1787848760804,
+  "lastUpdateId": 11406087557093
+ },
+ {
+  "symbol": "0GUSDT",
+  "bidPrice": "0.1639000",
+  "bidQty": "9667",
+  "askPrice": "0.1640000",
+  "askQty": "2004",
+  "time": 1787848762429,
+  "lastUpdateId": 11406087727184
+ },
+ {
+  "symbol": "AKEUSDT",
+  "bidPrice": "0.0068690",
+  "bidQty": "29999",
+  "askPrice": "0.0068700",
+  "askQty": "12802",
+  "time": 1787848767206,
+  "lastUpdateId": 11406088282420
+ },
+ {
+  "symbol": "2ZUSDT",
+  "bidPrice": "0.0592500",
+  "bidQty": "255",
+  "askPrice": "0.0592700",
+  "askQty": "97",
+  "time": 1787848764391,
+  "lastUpdateId": 11406087885887
+ },
+ {
+  "symbol": "4USDT",
+  "bidPrice": "0.0126710",
+  "bidQty": "5579",
+  "askPrice": "0.0126830",
+  "askQty": "4704",
+  "time": 1787848733931,
+  "lastUpdateId": 11406084754625
+ },
+ {
+  "symbol": "ALLOUSDT",
+  "bidPrice": "0.2550700",
+  "bidQty": "197",
+  "askPrice": "0.2550800",
+  "askQty": "134",
+  "time": 1787848765584,
+  "lastUpdateId": 11406088132938
+ },
+ {
+  "symbol": "AIAUSDT",
+  "bidPrice": "0.0799500",
+  "bidQty": "398",
+  "askPrice": "0.0799900",
+  "askQty": "913",
+  "time": 1787848735421,
+  "lastUpdateId": 11406084965934
+ },
+ {
+  "symbol": "ACUUSDT",
+  "bidPrice": "0.1491900",
+  "bidQty": "131",
+  "askPrice": "0.1492600",
+  "askQty": "1006",
+  "time": 1787848762835,
+  "lastUpdateId": 11406087754760
+ },
+ {
+  "symbol": "AIGENSYNUSDT",
+  "bidPrice": "0.0204400",
+  "bidQty": "10636",
+  "askPrice": "0.0204500",
+  "askQty": "9056",
+  "time": 1787848759568,
+  "lastUpdateId": 11406087438955
+ }
+]

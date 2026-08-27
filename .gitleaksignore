@@ -1,2 +1,4 @@
 # Test fixture, not a credential: a fake advisor key literal in an expansion test (commit 13e1428).
 13e142862f56b93155c8983a3b114c56b23de178:internal/app/expansion_test.go:generic-api-key:229
+# Test fixture, not a credential: synthetic Paddle API key literal in a client test (commit 571fafa; replaced in 00da4e0).
+571fafa228b86b4368324f6258fc6fcda04e0bce:internal/billing/paddle/paddle_test.go:generic-api-key:331

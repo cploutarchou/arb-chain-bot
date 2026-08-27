@@ -92,8 +92,10 @@ func (s *Server) platformRoutes(mux *http.ServeMux) {
 	// of role, could probe it. Real RBAC needs at least view:system, same
 	// as the GET routes above.
 	mux.HandleFunc("POST /api/v1/platform/settings/preview", s.requirePerm(auth.PermViewSystem, s.requireCSRF(gate(s.handlePlatformPreview))))
-	mux.HandleFunc("POST /api/v1/platform/settings", s.requireAuth(s.requireCSRF(gate(s.handlePlatformApply))))
-	mux.HandleFunc("POST /api/v1/platform/settings/rollback", s.requireAuth(s.requireCSRF(gate(s.handlePlatformRollback))))
+	// Platform settings and engine restarts are system routes: platform
+	// operator only (T-081), on top of the section-level RBAC below.
+	mux.HandleFunc("POST /api/v1/platform/settings", s.requirePlatformAdmin(s.requireCSRF(gate(s.handlePlatformApply))))
+	mux.HandleFunc("POST /api/v1/platform/settings/rollback", s.requirePlatformAdmin(s.requireCSRF(gate(s.handlePlatformRollback))))
 
 	restartGate := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +110,7 @@ func (s *Server) platformRoutes(mux *http.ServeMux) {
 	// table; they serve the identical status payload.
 	mux.HandleFunc("GET /api/v1/engine/status", s.requirePerm(auth.PermViewSystem, restartGate(s.handleEngineStatus)))
 	mux.HandleFunc("GET /api/v1/engine/restart", s.requirePerm(auth.PermViewSystem, restartGate(s.handleEngineStatus)))
-	mux.HandleFunc("POST /api/v1/engine/restart", s.requirePerm(auth.PermSystemConfig, s.requireCSRF(restartGate(s.handleEngineRestartPost))))
+	mux.HandleFunc("POST /api/v1/engine/restart", s.requirePerm(auth.PermSystemConfig, s.requireOnlyPlatformAdmin(s.requireCSRF(restartGate(s.handleEngineRestartPost)))))
 }
 
 func (s *Server) handlePlatformGet(w http.ResponseWriter, r *http.Request) {

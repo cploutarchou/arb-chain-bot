@@ -35,10 +35,23 @@ func testStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
+	// organisations.referred_by → affiliate_accounts has no cascade and
+	// organisations is never truncated (the platform row must survive):
+	// clear the link first or a referral left by a previous run blocks
+	// the affiliate_accounts delete below.
+	if _, err := s.Pool.Exec(context.Background(), "UPDATE organisations SET referred_by = NULL WHERE referred_by IS NOT NULL"); err != nil {
+		t.Fatalf("clear organisations.referred_by: %v", err)
+	}
 	for _, table := range []string{"fills", "orders", "paper_cycles", "paper_sessions",
 		"opportunities", "triangles", "markets", "sessions",
-		"strategy_configs", "platform_settings", "audit_events", "ai_recommendations", "ai_analyses",
-		"alerts", "secrets", "users", "exchanges", "campaign_runs", "replay_runs", "risk_events", "reports"} {
+		"strategy_configs", "platform_settings",
+		// screener_settings/_rules FK-reference users(id) with no cascade
+		// (same as platform_settings above): deleted before "users" below.
+		"screener_reports", "screener_paper_executions", "screener_paper_positions", "screener_paper_balances",
+		"screener_templates", "funding_history", "screener_events", "screener_rules", "screener_settings",
+		"audit_events", "ai_recommendations", "ai_analyses",
+		"affiliate_ledger", "affiliate_accounts", "paddle_events", "subscriptions", "billing_prices",
+		"memberships", "alerts", "secrets", "users", "exchanges", "campaign_runs", "replay_runs", "risk_events", "reports"} {
 		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("clean %s: %v", table, err)
 		}

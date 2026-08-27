@@ -1,0 +1,157 @@
+# Weekly full + daily differential + 5-minute WAL push.
+# Each job is idempotent; a missed run is picked up by the next.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pgbackrest
+  namespace: arb
+  annotations:
+    # eks.amazonaws.com/role-arn: <terraform secrets.eso_role_arn-like role scoped to the backups bucket>
+    {}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-backup-full
+  namespace: arb
+  labels: {app.kubernetes.io/component: pg-backup, arb.io/backup-type: full}
+spec:
+  schedule: "0 1 * * 0"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 14400
+      template:
+        metadata:
+          labels: {app.kubernetes.io/component: pg-backup}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: pgbackrest
+          securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: pgbackrest
+              image: pgbackrest/pgbackrest:2.53
+              args: ["--stanza=arb", "--type=full", "backup"]
+              envFrom: [{secretRef: {name: pgbackrest-credentials}}]
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources:
+                requests: {cpu: 500m, memory: 512Mi}
+                limits: {cpu: "2", memory: 2Gi}
+              volumeMounts:
+                - {name: config, mountPath: /etc/pgbackrest, readOnly: true}
+                - {name: spool, mountPath: /spool}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: config
+              configMap: {name: pgbackrest-config}
+            - name: spool
+              emptyDir: {sizeLimit: 10Gi}
+            - name: tmp
+              emptyDir: {}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-backup-diff
+  namespace: arb
+  labels: {app.kubernetes.io/component: pg-backup, arb.io/backup-type: diff}
+spec:
+  schedule: "0 1 * * 1-6"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels: {app.kubernetes.io/component: pg-backup}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: pgbackrest
+          securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: pgbackrest
+              image: pgbackrest/pgbackrest:2.53
+              args: ["--stanza=arb", "--type=diff", "backup"]
+              envFrom: [{secretRef: {name: pgbackrest-credentials}}]
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources:
+                requests: {cpu: 250m, memory: 256Mi}
+                limits: {cpu: "1", memory: 1Gi}
+              volumeMounts:
+                - {name: config, mountPath: /etc/pgbackrest, readOnly: true}
+                - {name: spool, mountPath: /spool}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: config
+              configMap: {name: pgbackrest-config}
+            - name: spool
+              emptyDir: {sizeLimit: 5Gi}
+            - name: tmp
+              emptyDir: {}
+---
+# WAL archiving for self-hosted Postgres is done by archive_command
+# inside the DB; for managed services the provider archives WAL itself
+# and PITR uses the provider's window. This job only verifies that the
+# repo is consistent and the latest WAL segment is <15 min old, pushing
+# pg_backup_wal_age_seconds / pg_backup_last_success_timestamp to the
+# pushgateway so the alert rules can fire.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-backup-check
+  namespace: arb
+  labels: {app.kubernetes.io/component: pg-backup, arb.io/backup-type: check}
+spec:
+  schedule: "*/5 * * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      template:
+        metadata:
+          labels: {app.kubernetes.io/component: pg-backup}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: pgbackrest
+          securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: check
+              image: pgbackrest/pgbackrest:2.53
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  pgbackrest --stanza=arb --output=json info > /tmp/info.json
+                  pgbackrest --stanza=arb check
+                  ts=$(date +%s)
+                  last=$(sed -n 's/.*"stop":\([0-9]*\).*/\1/p' /tmp/info.json | sort -n | tail -1)
+                  cat <<METRICS | wget -q --post-file=- -O- "http://prometheus-pushgateway.monitoring:9091/metrics/job/pg_backup/instance/arb"
+                  # TYPE pg_backup_last_success_timestamp gauge
+                  pg_backup_last_success_timestamp ${last:-0}
+                  # TYPE pg_backup_check_timestamp gauge
+                  pg_backup_check_timestamp ${ts}
+                  METRICS
+              envFrom: [{secretRef: {name: pgbackrest-credentials}}]
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {cpu: 250m, memory: 128Mi}
+              volumeMounts:
+                - {name: config, mountPath: /etc/pgbackrest, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: config
+              configMap: {name: pgbackrest-config}
+            - name: tmp
+              emptyDir: {}

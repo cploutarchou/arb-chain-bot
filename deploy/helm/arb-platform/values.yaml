@@ -1,0 +1,200 @@
+# Default values for arb-platform. Environment overlays live in
+# values-dev.yaml / values-paper-test.yaml / values-prod.yaml.
+# No secret material anywhere in this file: credentials are projected
+# from the external secret store (see externalSecrets).
+
+global:
+  environment: dev
+  imagePullSecrets: []
+  # Same image digest is promoted dev -> paper-test -> prod (build once).
+  imageRegistry: ghcr.io/cploutarchou
+
+image:
+  arbd:
+    repository: arb-chain-bot/arbd
+    tag: ""          # defaults to Chart.appVersion; CI overrides with the git tag
+    digest: ""       # when set, wins over tag (promotion uses digests)
+    pullPolicy: IfNotPresent
+  web:
+    repository: arb-chain-bot/web
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: migrate/migrate
+    registry: docker.io
+    tag: v4.18.3
+    pullPolicy: IfNotPresent
+  # Helper image used by the migrate hook to copy SQL files (see
+  # migrate-job.yaml): the arbd image bundles nothing else than binaries,
+  # so migrations are shipped via a ConfigMap generated from ./migrations.
+  # In CI the chart is packaged with `deploy/helm/package.sh` which copies
+  # migrations/ into files/migrations/ first.
+
+arbd:
+  enabled: true
+  replicas: 1                     # engine is single-writer per instance; >1 needs run ownership (migration 000009)
+  # Operating mode. Only RECORD | PAPER | REPLAY are valid. There is no
+  # LIVE mode: the executor returns ErrLiveTradingDisabled and the
+  # production gate is a reviewed code change, not a value here.
+  mode: PAPER
+  httpPort: 8080
+  metricsPort: 9109
+  logLevel: info
+  symbols: "BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT"
+  startingAssets: "USDT,USDC"
+  paperBalance: "10000"           # string: decimal, never a float
+  shutdownGrace: "20s"
+  allowedOrigin: ""
+  ai:
+    provider: ""
+    model: ""
+  extraEnv: []
+  recordings:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+    # When set, a sidecar-free approach: the arbd pod writes segments to
+    # the PVC and the recordings-sync CronJob (deploy/postgres is unrelated)
+    # pushes closed sessions to object storage. Sync is out of scope for
+    # v0.1 of the chart; the bucket lifecycle is in terraform.
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  probes:
+    liveness:  {path: /healthz, initialDelaySeconds: 10, periodSeconds: 15, timeoutSeconds: 3, failureThreshold: 3}
+    readiness: {path: /readyz,  initialDelaySeconds: 5,  periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3}
+    startup:   {path: /healthz, periodSeconds: 5, failureThreshold: 24}
+  strategy:
+    type: Recreate                # PVC is RWO and the engine is single-writer
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  pdb:
+    enabled: true
+    maxUnavailable: 0             # a single engine replica must not be evicted mid-session
+  serviceMonitor:
+    enabled: false                # deploy/observability/servicemonitor.yaml is the reference; on by default in paper-test/prod
+    interval: 15s
+
+web:
+  enabled: true
+  replicas: 2
+  port: 3000
+  backendURL: ""                  # defaults to http://<release>-arbd:8080
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+  affinity: {}
+  topologySpreadConstraints: []
+  nodeSelector: {}
+  tolerations: []
+  podAnnotations: {}
+
+migrate:
+  enabled: true
+  # Runs as a pre-install / pre-upgrade hook; the release fails (and
+  # helm --atomic rolls back) if the migration fails.
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+database:
+  # Connection string is assembled from secret keys DB_HOST/DB_USER/...
+  # by the external secret; only non-sensitive parts live here.
+  sslmode: require
+  name: arb
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: false
+  className: nginx
+  host: console.example.internal
+  tls:
+    enabled: true
+    secretName: ""                # cert-manager fills it when annotations set
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # console websocket
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/limit-rps: "20"               # edge rate limit
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"    # WAF
+    nginx.ingress.kubernetes.io/enable-owasp-core-rules: "true"
+
+externalSecrets:
+  enabled: true
+  # ClusterSecretStore backed by a KMS provider (AWS Secrets Manager,
+  # GCP Secret Manager, Vault transit, ...). The store itself is created
+  # by terraform / platform team; this chart only references it.
+  storeRef:
+    name: kms-secret-store
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  # Remote key prefix, e.g. arb/<env>/. Each key below is a separate
+  # secret in the store. ARB_SECRET_KEY is the vault master key: the
+  # exchange-key vault in Postgres is write-only from the platform; no
+  # consumer of those keys exists before the production gate.
+  remotePrefix: "arb/dev/"
+  keys:
+    databaseURL: database-url
+    secretKey: secret-key
+    adminEmail: admin-email
+    adminPassword: admin-password
+    telegramToken: telegram-token
+    telegramAllowlist: telegram-allowlist
+
+networkPolicy:
+  enabled: true
+  # Namespace label selectors for the ingress controller and monitoring.
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+  monitoringNamespaceSelector:
+    kubernetes.io/metadata.name: monitoring
+  # CIDRs the engine may reach for exchange REST/WS. Exchanges sit behind
+  # CDNs, so this is 0.0.0.0/0 minus RFC1918 by default; tighten per env.
+  egressExchangeCIDRs:
+    - 0.0.0.0/0
+  egressExcludeCIDRs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.169.254/32           # cloud metadata endpoint
+  # Managed Postgres / Redis endpoints (CIDR); empty allows nothing extra.
+  egressDatabaseCIDRs: []
+  databasePort: 5432
+  egressRedisCIDRs: []
+  redisPort: 6379
+
+serviceAccount:
+  create: true
+  annotations: {}                 # e.g. IRSA / workload identity for object storage writes
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile: {type: RuntimeDefault}
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: ["ALL"]}

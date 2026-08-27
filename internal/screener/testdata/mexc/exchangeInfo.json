@@ -1,0 +1,2388 @@
+{
+ "symbols": [
+  {
+   "symbol": "AIDOGEUSDT",
+   "status": "1",
+   "baseAsset": "AIDOGE",
+   "baseAssetPrecision": 0,
+   "quoteAsset": "USDT",
+   "quotePrecision": 15,
+   "quoteAssetPrecision": 15,
+   "baseCommissionPrecision": 0,
+   "quoteCommissionPrecision": 15,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "AIDOGE",
+   "tradeSideType": 1,
+   "contractAddress": "0x09E18590E8f76b6Cf471b3cd75fE1A1a9D2B2c2b",
+   "conceptPlateIds": [
+    51,
+    23,
+    29
+   ],
+   "firstOpenTime": 1681704000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-ai",
+    "mc-trade-zone-MEME"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACSUSDT",
+   "status": "1",
+   "baseAsset": "ACS",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 7,
+   "quoteAssetPrecision": 7,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 7,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Access Protocol",
+   "tradeSideType": 1,
+   "contractAddress": "5MAYDfq5yxtudAhtfyuMBuHZjgAbaS9tbEyEQYAhDS5y",
+   "conceptPlateIds": [
+    52
+   ],
+   "firstOpenTime": 1676480400000,
+   "conceptPlates": [
+    "mc-trade-zone-assessment"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ADXUSDT",
+   "status": "1",
+   "baseAsset": "ADX",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "heyAura",
+   "tradeSideType": 1,
+   "contractAddress": "0xADE00C28244d5CE17D72E40330B1c318cD12B7c3",
+   "conceptPlateIds": [
+    51,
+    23
+   ],
+   "firstOpenTime": 1753963200000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-ai"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ADAUSDT",
+   "status": "1",
+   "baseAsset": "ADA",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.1",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.02",
+     "askMultiplierDown": "0.02"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "2000000",
+   "fullName": "Cardano",
+   "tradeSideType": 1,
+   "contractAddress": "",
+   "conceptPlateIds": [
+    50,
+    19
+   ],
+   "conceptPlates": [
+    "mc-trade-zone-mainly",
+    "mc-trade-zone-web3"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACMUSDT",
+   "status": "1",
+   "baseAsset": "ACM",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.1",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "AC Milan Fan Token",
+   "tradeSideType": 1,
+   "contractAddress": "0x062F6004FD0BF204D272Ff115E5b84F7A01489D1",
+   "conceptPlateIds": [
+    51,
+    74
+   ],
+   "firstOpenTime": 1660312800000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-fantoken"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AEROUSDT",
+   "status": "1",
+   "baseAsset": "AERO",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Aerodrome Finance",
+   "tradeSideType": 1,
+   "contractAddress": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+   "conceptPlateIds": [
+    19,
+    51,
+    62
+   ],
+   "firstOpenTime": 1734081600000,
+   "conceptPlates": [
+    "mc-trade-zone-web3",
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-DeFi"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AAPLXUSDT",
+   "status": "1",
+   "baseAsset": "AAPLX",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Apple xStock",
+   "tradeSideType": 1,
+   "contractAddress": "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1751454000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACUUSDT",
+   "status": "1",
+   "baseAsset": "ACU",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Acurast",
+   "tradeSideType": 1,
+   "contractAddress": "0x216b3643ff8b7BB30d8A48E9F1BD550126202AdD",
+   "conceptPlateIds": [
+    51,
+    40
+   ],
+   "firstOpenTime": 1768903380000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-DePIN"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ABBVONUSDT",
+   "status": "1",
+   "baseAsset": "ABBVON",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "AbbVie (Ondo)",
+   "tradeSideType": 1,
+   "contractAddress": "0x7c7378143a9c8839e0502e2178F058F46c6ea504",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1767963600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AGLDUSDT",
+   "status": "1",
+   "baseAsset": "AGLD",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.0001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "Adventure Gold",
+   "tradeSideType": 1,
+   "contractAddress": "0x32353a6c91143bfd6c7d363b546e62a9a2489a20",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1630641600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AAPLONUSDT",
+   "status": "1",
+   "baseAsset": "AAPLON",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Apple (Ondo)",
+   "tradeSideType": 1,
+   "contractAddress": "0x14c3abF95Cb9C93a8b82C1CdCB76D72Cb87b2d4c",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1756908000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACNONUSDT",
+   "status": "1",
+   "baseAsset": "ACNON",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Accenture (Ondo)",
+   "tradeSideType": 1,
+   "contractAddress": "0xAbA9Ae731Aad63335C604E5f6E6A5db2e05f549d",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1757343600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ADIONUSDT",
+   "status": "1",
+   "baseAsset": "ADION",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Analog Devices",
+   "tradeSideType": 1,
+   "contractAddress": "0x2dDc2391CC89E3e716A938F089AE755174cfDf1f",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1774620000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ABEYUSDT",
+   "status": "1",
+   "baseAsset": "ABEY",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "ABEY",
+   "tradeSideType": 1,
+   "contractAddress": "",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1726668000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACHUSDT",
+   "status": "1",
+   "baseAsset": "ACH",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "Alchemy",
+   "tradeSideType": 1,
+   "contractAddress": "0xed04915c23f00a313a544955524eb7dbd823143d",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1599477600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AGTUSDT",
+   "status": "1",
+   "baseAsset": "AGT",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Alaya AI",
+   "tradeSideType": 1,
+   "contractAddress": "0x5dBde81fcE337FF4bcaaEe4Ca3466C00aeCaE274",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1747386120000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AALONUSDT",
+   "status": "1",
+   "baseAsset": "AALON",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "American Airlines",
+   "tradeSideType": 1,
+   "contractAddress": "0xBE8eb7b51a08f9d52Bb6C8c7EcA699f0f89BfC02",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1768482000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACTUSDT",
+   "status": "1",
+   "baseAsset": "ACT",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "The AI Prophecy",
+   "tradeSideType": 1,
+   "contractAddress": "GJAFwWjJ3vnTsrQVabjBVK2TYB1YtRCQXRDfDgUnpump",
+   "conceptPlateIds": [
+    51,
+    29
+   ],
+   "firstOpenTime": 1729767600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-MEME"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AGONUSDT",
+   "status": "1",
+   "baseAsset": "AGON",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "FirstMajesticSilver",
+   "tradeSideType": 1,
+   "contractAddress": "0xaa26e62e51bc5da24ED2B6Fc6491e137d68824B9",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1784813400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ADBEONUSDT",
+   "status": "1",
+   "baseAsset": "ADBEON",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Adobe (Ondo)",
+   "tradeSideType": 1,
+   "contractAddress": "0x7042a8fFc7c7049684BfBc2fcb41b72380755a43",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1757685600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ETHUSDT",
+   "status": "1",
+   "baseAsset": "ETH",
+   "baseAssetPrecision": 5,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 5,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.0001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.005",
+     "askMultiplierDown": "0.005"
+    }
+   ],
+   "maxQuoteAmount": "4000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "4000000",
+   "fullName": "Ethereum",
+   "tradeSideType": 1,
+   "contractAddress": "",
+   "conceptPlateIds": [
+    50,
+    5,
+    55
+   ],
+   "conceptPlates": [
+    "mc-trade-zone-mainly",
+    "mc-trade-zone-layer2",
+    "mc-trade-zone-WLFI"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACHRONUSDT",
+   "status": "1",
+   "baseAsset": "ACHRON",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 3,
+   "quoteAssetPrecision": 3,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 3,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Archer Aviation",
+   "tradeSideType": 1,
+   "contractAddress": "0x9cFA08002d606e638Fe91941bE725e1b970B84a6",
+   "conceptPlateIds": [
+    51,
+    56,
+    73
+   ],
+   "firstOpenTime": 1772629200000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks",
+    "mc-trade-zone-DefenseEnergy"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AGIUSDT",
+   "status": "1",
+   "baseAsset": "AGI",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Delysium",
+   "tradeSideType": 1,
+   "contractAddress": "0x7dA2641000Cbb407C329310C461b2cB9c70C3046",
+   "conceptPlateIds": [
+    51,
+    23
+   ],
+   "firstOpenTime": 1681214400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-ai"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AEVOUSDT",
+   "status": "1",
+   "baseAsset": "AEVO",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "Aevo",
+   "tradeSideType": 1,
+   "contractAddress": "0xB528edBef013aff855ac3c50b381f253aF13b997",
+   "conceptPlateIds": [
+    50,
+    62,
+    63
+   ],
+   "firstOpenTime": 1710324000000,
+   "conceptPlates": [
+    "mc-trade-zone-mainly",
+    "mc-trade-zone-DeFi",
+    "mc-trade-zone-PerpDex"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AAVEUSDT",
+   "status": "1",
+   "baseAsset": "AAVE",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.0001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "AaveToken",
+   "tradeSideType": 1,
+   "contractAddress": "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9",
+   "conceptPlateIds": [
+    51,
+    55,
+    62
+   ],
+   "firstOpenTime": 1601726400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-WLFI",
+    "mc-trade-zone-DeFi"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AGGONUSDT",
+   "status": "1",
+   "baseAsset": "AGGON",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "US Aggregate Bond",
+   "tradeSideType": 1,
+   "contractAddress": "0xfF7CF16aA2fFc463b996DB2f7B7cf0130336899D",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1768570200000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AEHRONUSDT",
+   "status": "1",
+   "baseAsset": "AEHRON",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Aehr Test Systems",
+   "tradeSideType": 1,
+   "contractAddress": "0xeB48e68F01c0C76735dc6F1dcC0F151A973BD9d2",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1786023000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "1R0RUSDT",
+   "status": "1",
+   "baseAsset": "1R0R",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 7,
+   "quoteAssetPrecision": 7,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 7,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "R0AR TOKEN",
+   "tradeSideType": 1,
+   "contractAddress": "0xb0415D55f2C87b7f99285848bd341C367FeAc1ea",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1751032800000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "2ZUSDT",
+   "status": "1",
+   "baseAsset": "2Z",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "DoubleZero",
+   "tradeSideType": 1,
+   "contractAddress": "J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1759406400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ABNBONUSDT",
+   "status": "1",
+   "baseAsset": "ABNBON",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Airbnb (Ondo)",
+   "tradeSideType": 1,
+   "contractAddress": "0xb035c3d5083bdc80074F380aeBc9Fcb68aBa0A28",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1757426400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACNUSDT",
+   "status": "1",
+   "baseAsset": "ACN",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "AITECH Cloud Network",
+   "tradeSideType": 1,
+   "contractAddress": "0x3e76dd57E649A263a532cC9bcC58b32A065fB2a4",
+   "conceptPlateIds": [
+    51,
+    23
+   ],
+   "firstOpenTime": 1777449600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-ai"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "1INCHUSDT",
+   "status": "1",
+   "baseAsset": "1INCH",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.0002",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "1INCH",
+   "tradeSideType": 1,
+   "contractAddress": "0x111111111117dc0aa78b770fa6a738034120c302",
+   "conceptPlateIds": [
+    51,
+    62
+   ],
+   "firstOpenTime": 1608859200000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-DeFi"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AIAUSDT",
+   "status": "1",
+   "baseAsset": "AIA",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "DeAgentAI",
+   "tradeSideType": 1,
+   "contractAddress": "0x99cc0e7834326ec6ac571421e9b8e042e9eb63062771c77ac592bd194180b5da::deagent_token::DEAGENT_TOKEN",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1758182400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AGROUSDT",
+   "status": "1",
+   "baseAsset": "AGRO",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 7,
+   "quoteAssetPrecision": 7,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 7,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Agro Global Token V2",
+   "tradeSideType": 1,
+   "contractAddress": "0x404f83279c36e3E0e2771B7ae9f9B0B2B50EE27C",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1688644800000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ADIUSDT",
+   "status": "1",
+   "baseAsset": "ADI",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "ADI",
+   "tradeSideType": 1,
+   "contractAddress": "",
+   "conceptPlateIds": [
+    51,
+    5
+   ],
+   "firstOpenTime": 1775037600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-layer2"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "114514USDT",
+   "status": "1",
+   "baseAsset": "114514",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 7,
+   "quoteAssetPrecision": 7,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 7,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "114514",
+   "tradeSideType": 1,
+   "contractAddress": "AGdGTQa8iRnSx4fQJehWo4Xwbh1bzTazs55R6Jwupump",
+   "conceptPlateIds": [
+    52,
+    29
+   ],
+   "firstOpenTime": 1767586200000,
+   "conceptPlates": [
+    "mc-trade-zone-assessment",
+    "mc-trade-zone-MEME"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AFCUSDT",
+   "status": "1",
+   "baseAsset": "AFC",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.01",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Arsenal Fan Token",
+   "tradeSideType": 1,
+   "contractAddress": "0x76088F3eD5dC655De9295D93868ec1EeC654A615",
+   "conceptPlateIds": [
+    51,
+    74
+   ],
+   "firstOpenTime": 1670997600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-fantoken"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AASTUSDT",
+   "status": "1",
+   "baseAsset": "AAST",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "AASToken",
+   "tradeSideType": 1,
+   "contractAddress": "0xb1E998b346DDDacD06f01db50645bE52DafB93db",
+   "conceptPlateIds": [
+    52
+   ],
+   "firstOpenTime": 1709467200000,
+   "conceptPlates": [
+    "mc-trade-zone-assessment"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "2U2USDT",
+   "status": "1",
+   "baseAsset": "2U2",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "2u2",
+   "tradeSideType": 1,
+   "contractAddress": "0xBa454dF19789372EEb1AB3b113A8F639594E31B9",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1785740400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AEONUSDT",
+   "status": "1",
+   "baseAsset": "AEON",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "AEON",
+   "tradeSideType": 1,
+   "contractAddress": "0x277aDD739c6E0477616948357AF9E79Fe1Ec9B80",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1785146580000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACAUSDT",
+   "status": "1",
+   "baseAsset": "ACA",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 7,
+   "quoteAssetPrecision": 7,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 7,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.0001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "Acala Token",
+   "tradeSideType": 1,
+   "contractAddress": "",
+   "conceptPlateIds": [
+    52
+   ],
+   "firstOpenTime": 1643097600000,
+   "conceptPlates": [
+    "mc-trade-zone-assessment"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ACEUSDT",
+   "status": "1",
+   "baseAsset": "ACE",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 5,
+   "quoteAssetPrecision": 5,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 5,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "200000",
+   "fullName": "Fusionist",
+   "tradeSideType": 1,
+   "contractAddress": "0xc27A719105A987b4c34116223CAE8bd8F4B5def4",
+   "conceptPlateIds": [
+    50,
+    35
+   ],
+   "firstOpenTime": 1702879200000,
+   "conceptPlates": [
+    "mc-trade-zone-mainly",
+    "mc-trade-zone-GameFi"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ABBCUSDT",
+   "status": "1",
+   "baseAsset": "ABBC",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "ABBC Coin",
+   "tradeSideType": 1,
+   "contractAddress": "eosio.token",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1641308400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": true
+  },
+  {
+   "symbol": "0GUSDT",
+   "status": "1",
+   "baseAsset": "0G",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "0G",
+   "tradeSideType": 1,
+   "contractAddress": "",
+   "conceptPlateIds": [
+    51
+   ],
+   "firstOpenTime": 1758535200000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "BTCUSDT",
+   "status": "1",
+   "baseAsset": "BTC",
+   "baseAssetPrecision": 8,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 8,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0.000001",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.005",
+     "askMultiplierDown": "0.005"
+    }
+   ],
+   "maxQuoteAmount": "4000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "4000000",
+   "fullName": "Bitcoin",
+   "tradeSideType": 1,
+   "contractAddress": "",
+   "conceptPlateIds": [
+    50,
+    5,
+    39,
+    12
+   ],
+   "firstOpenTime": 1506787200000,
+   "conceptPlates": [
+    "mc-trade-zone-mainly",
+    "mc-trade-zone-layer2",
+    "mc-trade-zone-BTCECOS",
+    "mc-trade-zone-pow"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "67USDT",
+   "status": "1",
+   "baseAsset": "67",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "The Official 67 Coin",
+   "tradeSideType": 1,
+   "contractAddress": "9AvytnUKsLxPxFHFqS6VLxaxt5p6BhYNr53SD2Chpump",
+   "conceptPlateIds": [
+    52,
+    29
+   ],
+   "firstOpenTime": 1763268600000,
+   "conceptPlates": [
+    "mc-trade-zone-assessment",
+    "mc-trade-zone-MEME"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "ABTONUSDT",
+   "status": "1",
+   "baseAsset": "ABTON",
+   "baseAssetPrecision": 3,
+   "quoteAsset": "USDT",
+   "quotePrecision": 2,
+   "quoteAssetPrecision": 2,
+   "baseCommissionPrecision": 3,
+   "quoteCommissionPrecision": 2,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Abbott (Ondo)",
+   "tradeSideType": 1,
+   "contractAddress": "0x3859385363f7BB4Dfe42811cCF3F294FcD41dd1D",
+   "conceptPlateIds": [
+    51,
+    56
+   ],
+   "firstOpenTime": 1757343600000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-xStocks"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "AGRSUSDT",
+   "status": "1",
+   "baseAsset": "AGRS",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 4,
+   "quoteAssetPrecision": 4,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 4,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "Agoras",
+   "tradeSideType": 1,
+   "contractAddress": "0x738865301A9b7Dd80Dc3666dD48cF034ec42bdDa",
+   "conceptPlateIds": [
+    51,
+    5
+   ],
+   "firstOpenTime": 1721142000000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-layer2"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "4USDT",
+   "status": "1",
+   "baseAsset": "4",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "4",
+   "tradeSideType": 1,
+   "contractAddress": "0x0A43fC31a73013089DF59194872Ecae4cAe14444",
+   "conceptPlateIds": [
+    51,
+    29
+   ],
+   "firstOpenTime": 1759316400000,
+   "conceptPlates": [
+    "mc-trade-zone-innovation",
+    "mc-trade-zone-MEME"
+   ],
+   "st": false
+  },
+  {
+   "symbol": "9BITUSDT",
+   "status": "1",
+   "baseAsset": "9BIT",
+   "baseAssetPrecision": 2,
+   "quoteAsset": "USDT",
+   "quotePrecision": 6,
+   "quoteAssetPrecision": 6,
+   "baseCommissionPrecision": 2,
+   "quoteCommissionPrecision": 6,
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "LIMIT_MAKER"
+   ],
+   "isSpotTradingAllowed": true,
+   "isMarginTradingAllowed": false,
+   "quoteAmountPrecision": "1",
+   "baseSizePrecision": "0",
+   "permissions": [
+    "SPOT"
+   ],
+   "filters": [
+    {
+     "filterType": "PERCENT_PRICE_BY_SIDE",
+     "bidMultiplierUp": "0.2",
+     "askMultiplierDown": "0.2"
+    }
+   ],
+   "maxQuoteAmount": "2000000",
+   "makerCommission": "0",
+   "takerCommission": "0.0005",
+   "quoteAmountPrecisionMarket": "1",
+   "maxQuoteAmountMarket": "100000",
+   "fullName": "The9bit",
+   "tradeSideType": 1,
+   "contractAddress": "HmMubgKx91Tpq3jmfcKQwsv5HrErqnCTTRJMB6afFR2u",
+   "conceptPlateIds": [
+    35,
+    51
+   ],
+   "firstOpenTime": 1767502800000,
+   "conceptPlates": [
+    "mc-trade-zone-GameFi",
+    "mc-trade-zone-innovation"
+   ],
+   "st": false
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{{- if .Values.web.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arb.webName" . }}-config
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+data:
+  NODE_ENV: "production"
+  PORT: {{ .Values.web.port | quote }}
+  HOSTNAME: "0.0.0.0"
+  ARB_BACKEND_URL: {{ default (printf "http://%s:%d" (include "arb.arbdName" .) (int .Values.arbd.httpPort)) .Values.web.backendURL | quote }}
+{{- end }}

@@ -1,0 +1,121 @@
+# Restore drill: bring up a scratch Postgres in the same pod, restore
+# the latest backup with WAL replay to a point in time, verify, report.
+# Never touches the production instance. Runnable ad hoc:
+#   kubectl -n arb create job --from=cronjob/pg-restore-drill drill-$(date +%s)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-restore-drill-scripts
+  namespace: arb
+data:
+  verify.sql: |
+    -- Fails the drill (exit 3 via ON_ERROR_STOP) when expectations break.
+    \set ON_ERROR_STOP on
+    -- 1. all migrations applied, none dirty
+    SELECT CASE WHEN dirty THEN 1/0 ELSE version END AS migration_version FROM schema_migrations;
+    -- 2. core tables present and readable
+    SELECT count(*) AS markets FROM markets;
+    SELECT count(*) AS campaign_runs FROM campaign_runs;
+    SELECT count(*) AS recordings FROM market_recording_metadata;
+    -- 3. money columns are numeric, never float (decimal money math)
+    SELECT CASE WHEN count(*) > 0 THEN 1/0 ELSE 0 END AS float_money_columns
+      FROM information_schema.columns
+     WHERE table_schema='public'
+       AND data_type IN ('real','double precision')
+       AND (column_name LIKE '%pnl%' OR column_name LIKE '%balance%' OR column_name LIKE '%fee%' OR column_name LIKE '%price%' OR column_name LIKE '%qty%');
+    -- 4. secrets table restored but still opaque (ciphertext only)
+    SELECT count(*) AS vault_rows FROM secrets;
+    -- 5. freshness: newest row must be within the drill target window
+    SELECT max(started_at) AS newest_paper_cycle FROM paper_cycles;
+  drill.sh: |
+    #!/bin/sh
+    set -eu
+    TARGET="${RESTORE_TARGET:-$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)}"
+    started=$(date +%s)
+    echo "restore drill: stanza=arb target=$TARGET"
+    mkdir -p /pgdata && chmod 700 /pgdata
+    pgbackrest --stanza=arb --pg1-path=/pgdata --delta \
+      --type=time --target="$TARGET" --target-action=promote restore
+    pg_ctl -D /pgdata -o "-c listen_addresses=127.0.0.1 -c port=5433 -c archive_mode=off" -w start
+    for i in $(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 && break; sleep 5; done
+    # wait for recovery to finish (promote)
+    for i in $(seq 1 120); do
+      r=$(psql -h 127.0.0.1 -p 5433 -U arb -d arb -Atc "select pg_is_in_recovery()")
+      [ "$r" = "f" ] && break; sleep 5
+    done
+    ok=1
+    psql -h 127.0.0.1 -p 5433 -U arb -d arb -v ON_ERROR_STOP=1 -f /scripts/verify.sql > /tmp/verify.out 2>&1 || ok=0
+    cat /tmp/verify.out
+    dur=$(( $(date +%s) - started ))
+    echo "restore drill: success=$ok duration=${dur}s"
+    cat <<METRICS | wget -q --post-file=- -O- "http://prometheus-pushgateway.monitoring:9091/metrics/job/pg_restore_drill/instance/arb" || true
+    # TYPE pg_restore_drill_success gauge
+    pg_restore_drill_success $ok
+    # TYPE pg_restore_drill_duration_seconds gauge
+    pg_restore_drill_duration_seconds $dur
+    # TYPE pg_restore_drill_timestamp gauge
+    pg_restore_drill_timestamp $(date +%s)
+    METRICS
+    # record in the production ops table via the admin URL (append-only)
+    psql "$PGADMIN_URL" -v ON_ERROR_STOP=1 -c \
+      "insert into restore_drills(target_time, success, duration_seconds, notes) values ('$TARGET', $( [ $ok = 1 ] && echo true || echo false ), $dur, left(\$\$$(head -c 2000 /tmp/verify.out | sed "s/'/''/g")\$\$, 4000))" \
+      || echo "restore_drills table missing (create via migration); result not recorded in DB"
+    pg_ctl -D /pgdata -m fast stop || true
+    [ "$ok" = 1 ]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-restore-drill
+  namespace: arb
+  labels: {app.kubernetes.io/component: pg-restore-drill}
+spec:
+  schedule: "30 4 * * 1"     # Mondays 04:30 UTC, after the Sunday full
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 4
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 10800
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels: {app.kubernetes.io/component: pg-restore-drill}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: pgbackrest
+          securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: drill
+              # Image must contain postgres 16 server + pgbackrest client;
+              # build from deploy/docker/pg-drill.Dockerfile (postgres:16 + pgbackrest apt pkg).
+              image: ghcr.io/cploutarchou/arb-chain-bot/pg-drill:16
+              command: ["/bin/sh", "/scripts/drill.sh"]
+              env:
+                - {name: RESTORE_TARGET, value: ""}   # empty = now-1h
+                - {name: PGUSER, value: arb}
+              envFrom: [{secretRef: {name: pgbackrest-credentials}}]
+              securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+              resources:
+                requests: {cpu: "1", memory: 2Gi}
+                limits: {cpu: "4", memory: 8Gi}
+              volumeMounts:
+                - {name: config, mountPath: /etc/pgbackrest, readOnly: true}
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: pgdata, mountPath: /pgdata}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: config
+              configMap: {name: pgbackrest-config}
+            - name: scripts
+              configMap: {name: pg-restore-drill-scripts, defaultMode: 0555}
+            - name: pgdata
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    resources: {requests: {storage: 200Gi}}
+            - name: tmp
+              emptyDir: {}

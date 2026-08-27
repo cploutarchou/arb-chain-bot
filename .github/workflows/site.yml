@@ -1,0 +1,52 @@
+name: Site
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "site/**"
+      - "docs/site/**"
+      - "docs/user-guide/**"
+      - "docs/campaigns/**"
+      - ".github/workflows/site.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "docs/site/**"
+      - "docs/user-guide/**"
+      - "docs/campaigns/**"
+      - ".github/workflows/site.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  site:
+    name: Marketing site (Next.js static export)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: install
+        run: npm ci
+      - name: lint
+        run: npm run lint
+      - name: typecheck
+        run: npm run typecheck
+      - name: copy-lint
+        run: npm run copy-lint
+      - name: build
+        run: npm run build
+      - name: upload static export
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-out
+          path: site/out
+          retention-days: 7

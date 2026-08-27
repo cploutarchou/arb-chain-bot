@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arb.arbdName" . }}-config
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+data:
+  # Non-secret runtime configuration for the given environment
+  # ({{ .Values.global.environment }}). Secrets come from the
+  # ExternalSecret-managed Secret, never from here.
+  ARB_MODE: {{ include "arb.mode" . | quote }}
+  ARB_HTTP_ADDR: {{ printf ":%d" (int .Values.arbd.httpPort) | quote }}
+  ARB_METRICS_ADDR: {{ printf ":%d" (int .Values.arbd.metricsPort) | quote }}
+  ARB_LOG_LEVEL: {{ .Values.arbd.logLevel | quote }}
+  ARB_RECORDING_DIR: "/recordings"
+  ARB_SYMBOLS: {{ .Values.arbd.symbols | quote }}
+  ARB_STARTING_ASSETS: {{ .Values.arbd.startingAssets | quote }}
+  ARB_PAPER_BALANCE: {{ .Values.arbd.paperBalance | quote }}
+  ARB_SHUTDOWN_GRACE: {{ .Values.arbd.shutdownGrace | quote }}
+  {{- with .Values.arbd.allowedOrigin }}
+  ARB_ALLOWED_ORIGIN: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.arbd.ai.provider }}
+  ARB_AI_PROVIDER: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.arbd.ai.model }}
+  ARB_AI_MODEL: {{ . | quote }}
+  {{- end }}
