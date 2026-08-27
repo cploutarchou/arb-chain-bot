@@ -367,6 +367,26 @@ applied by `app.Supervisor`, which re-enters one stable `Engine.Run` (so all
 existing engine seams keep working) after draining the recorder, pausing
 paper and waiting for the outbox — persisted history is never lost.
 
+**Settings expansion (T-059/T-060/T-061,
+`docs/design/settings-expansion.md`).** The same document gains
+`platform.mode` (restart-scoped; enum `MARKET_DATA|RECORD|PAPER|SHADOW` —
+`LIVE` is rejected by name, `REPLAY`/`BACKTEST` stay batch-only entry
+points), `platform.log_level` and `platform.allowed_origin` (hot), an `ai`
+section and `telegram.disabled` (hot — a negative field so its zero value
+on an already-persisted document means "keep delivering"). The
+hot/restart split follows what a
+*restart actually rebuilds*: the Supervisor re-enters `Engine.Run` only, so
+anything owned by a sibling Component (AI scheduler, Telegram bot,
+`api.Server`) is made hot through an atomic accessor rather than labelled
+"restart", which would silently mean "redeploy". Because the payload is
+JSONB, `Settings.WithDefaults` normalizes pre-expansion versions wherever a
+stored payload becomes a `Settings` (load, get, rollback) — otherwise a
+deploy would fail validation at boot. Secrets (Anthropic key, Telegram
+token) move to a `secrets` table encrypted with AES-256-GCM under
+`ARB_SECRET_KEY`, resolved through a vault-first/env-fallback
+`SecretSource`, write-only over the API, with a closed two-name registry:
+no exchange trading key is ever stored, and live trading stays disabled.
+
 ## 14. Observability
 
 OTel SDK with Prometheus exporter at `/metrics`; metric set per SKILL.md

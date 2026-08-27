@@ -111,6 +111,17 @@ type Engine struct {
 	sessionID string          // current paper/persistence session id; rotated by ResetPaper (BL-10)
 	outbox    *storage.Outbox // this run's outbox, nil without persistence (BL-18 queue depth)
 	latency   *latencyWindow  // this run's per-exchange latency samples (BL-18 percentiles)
+	// runToken (P1-1) is bumped, under e.mu, at the top of every Run call;
+	// each call captures its own value and only its OWN deferred cleanup
+	// may act on it, so a stale run's cleanup can never clobber a newer
+	// run's state.
+	runToken uint64
+	// pausePaperOnBoot/pausePaperOnBootSet (P2-2) carry the supervisor's
+	// SetPaperPaused decision into the NEXT Run call's PAPER-mode
+	// assembly, consumed (read-and-cleared) exactly once so it applies to
+	// that one run only.
+	pausePaperOnBoot    bool
+	pausePaperOnBootSet bool
 
 	metricsOnce   sync.Once // E4: RegisterEngine wired once across restarts
 	subscribeOnce sync.Once // E6: Strategy.Subscribe registered once across restarts
@@ -314,6 +325,35 @@ func (e *Engine) Catalog() []exchange.Market {
 // cancelling a run so it knows which session to close).
 func (e *Engine) SessionID() string {
 	return e.currentSessionID()
+}
+
+// SetPaperPaused (P2-2) tells the NEXT Run call's PAPER-mode assembly to
+// start paused (true) or running (false) instead of the unconditional
+// Resume() a direct call always used to do. Consumed exactly once — by
+// that Run call — then cleared, so it never leaks into a LATER, unrelated
+// run. Supervisor calls this right before every restart-driven launch
+// with the pause state the paper engine had immediately before the
+// restart, carrying it through even when the new run's own bootstrap
+// takes long enough to miss ReadyTimeout (Supervisor.Paper() can return
+// nil during that window, so re-pausing after the fact has nothing to
+// act on).
+func (e *Engine) SetPaperPaused(paused bool) {
+	e.mu.Lock()
+	e.pausePaperOnBoot, e.pausePaperOnBootSet = paused, true
+	e.mu.Unlock()
+}
+
+// consumePausePaperOnBoot reads and clears the pending SetPaperPaused
+// decision. set is false when SetPaperPaused was never called before
+// this Run (direct-constructed engines, tests, or the initial boot,
+// which is not a restart) — the caller then keeps today's unconditional
+// Resume() behavior.
+func (e *Engine) consumePausePaperOnBoot() (paused, set bool) {
+	e.mu.Lock()
+	paused, set = e.pausePaperOnBoot, e.pausePaperOnBootSet
+	e.pausePaperOnBoot, e.pausePaperOnBootSet = false, false
+	e.mu.Unlock()
+	return paused, set
 }
 
 // RunningWorkers returns the live scanner's Workers count (0 when no
@@ -522,10 +562,36 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.ready = false
 	e.outbox = nil
 	e.latency = &latencyWindow{}
+	// P1-1 (engine.go half): a per-run token so THIS call's deferred
+	// "ready = false" (below) can never clear a LATER run's readiness.
+	// Without it, a run that returns late (e.g. after a slow shutdown
+	// drain) would run its defer after a NEXT run has already set
+	// e.ready = true, wiping out the live run's readiness out from under
+	// it — exactly the failure mode a supervisor bug that briefly allows
+	// two overlapping runs would trigger.
+	e.runToken++
+	myToken := e.runToken
 	e.mu.Unlock()
 	e.oppMu.Lock()
 	e.recentOpps, e.rejectCounts, e.rejectPersistedAt = nil, nil, nil
 	e.oppMu.Unlock()
+
+	// P2-6: every resource THIS Run call creates (metadata retries,
+	// market upsert, the recorder control's session lifetime, spawned
+	// children) is scoped to runCtx, not the bare `ctx` parameter —
+	// runCtx is cancelled by Run's OWN deferred cleanup no later than
+	// when Run returns, for ANY reason (a fatal child error included,
+	// not only the caller cancelling `ctx`). Binding the recorder control
+	// to the wider `ctx` instead (the pre-fix shape) let an API-started
+	// recording session outlive a run that exited on an internal error:
+	// `ctx` itself is only cancelled by the SUPERVISOR, once it notices,
+	// so the recorder kept writing frames for an engine that was already
+	// gone. Created here (not at its previous, later position) so both
+	// paths that construct run-scoped resources before the child-spawn
+	// section (recorder control, PAPER-mode session registration) get it
+	// too.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 
 	host := e.RESTHost
 	if host == "" {
@@ -533,7 +599,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	rest := binance.NewRESTClient(host)
 
-	markets, err := e.bootstrapMetadata(ctx, rest)
+	markets, err := e.bootstrapMetadata(runCtx, rest)
 	if err != nil {
 		return err
 	}
@@ -578,7 +644,14 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessionID := newULID()
 	e.setSessionID(sessionID)
 	if e.Store != nil {
-		if err := e.Store.UpsertMarkets(ctx, scoped); err != nil {
+		// P2-1: persist the FULL bootstrap catalog (markets), not just the
+		// currently configured scope. storage.Catalog (the platform.Catalog
+		// the API profile falls back to when no live engine is attached)
+		// reads this same table; if only `scoped` ever landed here, adding
+		// a symbol through the console could never validate — it would
+		// look like an unknown_symbol even though the venue genuinely
+		// lists it, because the row for it was never written.
+		if err := e.Store.UpsertMarkets(runCtx, markets); err != nil {
 			e.log.Warn("market metadata sync failed", "error", err)
 		}
 		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID}
@@ -600,7 +673,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		StreamOfSymbol: streamTable,
 		NewSessionID:   newULID,
 	}
-	rctl.Bind(ctx)
+	rctl.Bind(runCtx)
 	if e.Store != nil {
 		streams := (&marketdata.Recorder{StreamOfSymbol: streamTable}).Streams()
 		rctl.OnSegment = func(recID string, startedAt time.Time, meta marketdata.SegmentMeta) {
@@ -634,6 +707,12 @@ func (e *Engine) Run(ctx context.Context) error {
 			return fmt.Errorf("engine: fee override %s: %w", sym, err)
 		}
 	}
+	// P1-2: platform.FeeSettings.validate now refuses token_discount:true
+	// for every venue (no pay-asset debit ledger exists), so this branch
+	// is unreachable through any document that has passed Apply/Rollback
+	// or boot's Load since that fix landed. It stays here, defensively,
+	// only for a settings row persisted BEFORE the fix — never a path a
+	// freshly-validated document can take.
 	if venue.Fees.TokenDiscount {
 		if d, ok := fees.VenueDiscount(binance.ID); ok {
 			d.Enabled = true
@@ -753,7 +832,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			for a, v := range initial {
 				balances[string(a)] = v.String()
 			}
-			if err := e.Store.EnsurePaperSession(ctx, sessionID, string(e.cfg.Mode), balances, 1, e.cfg.Seed); err != nil {
+			if err := e.Store.EnsurePaperSession(runCtx, sessionID, string(e.cfg.Mode), balances, 1, e.cfg.Seed); err != nil {
 				e.log.Warn("paper session registration failed", "error", err)
 			}
 		}
@@ -825,7 +904,16 @@ func (e *Engine) Run(ctx context.Context) error {
 				}
 			},
 		}
-		paperEng.Resume()
+		// P2-2: honor a pause decision carried in from the supervisor
+		// (SetPaperPaused, consumed exactly once here) instead of
+		// unconditionally resuming. A caller that never sets it (a
+		// direct-constructed engine in tests, or ProfileScanner without
+		// a Supervisor) keeps today's behavior exactly: start running.
+		if paused, set := e.consumePausePaperOnBoot(); set && paused {
+			paperEng.Pause()
+		} else {
+			paperEng.Resume()
+		}
 		scn.Sims = paperEng.Active
 	}
 
@@ -843,7 +931,15 @@ func (e *Engine) Run(ctx context.Context) error {
 	// engine (or a permanently dead one after a fatal exit).
 	defer func() {
 		e.mu.Lock()
-		e.ready = false
+		// P1-1 (engine.go half): only clear readiness if THIS run is
+		// still the live one (no later Run call has bumped e.runToken
+		// since). Guards against a stale run's deferred cleanup running
+		// after a newer run has already started and reported ready —
+		// which would otherwise make the newer run look dead to anything
+		// polling Status().Ready (e.g. Supervisor.waitReadyOrFail).
+		if e.runToken == myToken {
+			e.ready = false
+		}
 		e.mu.Unlock()
 	}()
 	e.notify(notification.SeverityInfo, "engine:ready", "Engine ready",
@@ -875,22 +971,20 @@ func (e *Engine) Run(ctx context.Context) error {
 		// engine cannot see (design §2.6).
 	}
 	if e.cfg.Mode == config.ModeRecord {
-		if _, err := rctl.Start(ctx); err != nil {
+		if _, err := rctl.Start(runCtx); err != nil {
 			return fmt.Errorf("engine: start recording: %w", err)
 		}
 	}
 
-	// E3: child goroutines must not outlive Run. runCtx is cancelled
-	// either when the parent ctx is (normal shutdown/restart) or when a
-	// child returns a fatal error (this Run's own decision); either way
-	// Run waits (bounded by ShutdownGrace) for every goroutine it spawned
-	// to actually return before it returns itself — otherwise a restart
+	// E3: child goroutines must not outlive Run. runCtx (created at the
+	// top of this call, P2-6) is cancelled either when the parent ctx is
+	// (normal shutdown/restart) or when a child returns a fatal error
+	// (this Run's own decision, via cancelRun() below); either way Run
+	// waits (bounded by ShutdownGrace) for every goroutine it spawned to
+	// actually return before it returns itself — otherwise a restart
 	// would produce two feeds, two scanners and two outboxes racing on
 	// e.scn, and the outbox's cancel-path drain (3s deadline) would never
 	// get to run before the next Run starts overwriting persisted state.
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
-
 	var wg sync.WaitGroup
 	errCh := make(chan error, 8)
 	spawn := func(fn func(context.Context) error) {

@@ -71,10 +71,22 @@ func (s *Server) platformRoutes(mux *http.ServeMux) {
 			next(w, r)
 		}
 	}
+	// GET /api/v1/platform/venues (requirement a, package D follow-up):
+	// the compiled venue table — id + discount profile (asset, rate,
+	// applies_to_api, and whether it's actually modeled, P1-2) — so the
+	// console renders the token_discount control (and why it is
+	// currently disabled) from data instead of hardcoding fees.go's
+	// constants. Not behind `gate` (platform.Service): this is a static,
+	// compiled-in table, not a Settings read.
+	mux.HandleFunc("GET /api/v1/platform/venues", s.requirePerm(auth.PermViewSystem, s.handlePlatformVenues))
 	mux.HandleFunc("GET /api/v1/platform/settings", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformGet)))
 	mux.HandleFunc("GET /api/v1/platform/settings/versions", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformVersions)))
 	mux.HandleFunc("GET /api/v1/platform/settings/version/{n}", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformVersion)))
-	mux.HandleFunc("POST /api/v1/platform/settings/preview", s.requireAuth(s.requireCSRF(gate(s.handlePlatformPreview))))
+	// P3-8: preview is read-only (a dry-run diff, never a write) but was
+	// gated on requireAuth alone — any authenticated session, regardless
+	// of role, could probe it. Real RBAC needs at least view:system, same
+	// as the GET routes above.
+	mux.HandleFunc("POST /api/v1/platform/settings/preview", s.requirePerm(auth.PermViewSystem, s.requireCSRF(gate(s.handlePlatformPreview))))
 	mux.HandleFunc("POST /api/v1/platform/settings", s.requireAuth(s.requireCSRF(gate(s.handlePlatformApply))))
 	mux.HandleFunc("POST /api/v1/platform/settings/rollback", s.requireAuth(s.requireCSRF(gate(s.handlePlatformRollback))))
 
@@ -96,6 +108,12 @@ func (s *Server) platformRoutes(mux *http.ServeMux) {
 
 func (s *Server) handlePlatformGet(w http.ResponseWriter, r *http.Request) {
 	WriteData(w, http.StatusOK, s.platformView(r, s.Platform.Current()))
+}
+
+// handlePlatformVenues serves the compiled venue table (requirement a):
+// static, not tied to s.Platform being configured in this profile.
+func (s *Server) handlePlatformVenues(w http.ResponseWriter, r *http.Request) {
+	WriteData(w, http.StatusOK, map[string]any{"venues": platform.CompiledVenueTable()})
 }
 
 // platformView assembles the GET/apply response shape: version,
@@ -325,7 +343,12 @@ func (s *Server) handleEngineRestartPost(w http.ResponseWriter, r *http.Request)
 		WriteError(w, http.StatusConflict, result.Code, result.Message, correlationID(r))
 		return
 	}
-	s.audit(r, principal.UserID, "engine.restart", "engine")
+	// P3-9: "requested" (this handler, the moment the request is
+	// accepted) is distinct from Supervisor's "engine.restart.completed"
+	// (fired once the new run is actually ready or has failed) — the two
+	// used to share one action name, making an audit reader unable to
+	// tell a request from its outcome.
+	s.audit(r, principal.UserID, "engine.restart.requested", "engine")
 	s.log.Info("engine restart requested", "actor", principal.UserID, "stop_recording", body.StopRecording)
 	WriteData(w, http.StatusAccepted, map[string]any{"restart": s.Restart.Status()})
 }

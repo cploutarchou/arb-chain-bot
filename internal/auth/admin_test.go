@@ -133,6 +133,26 @@ func TestSetUserDisabledRules(t *testing.T) {
 	}
 }
 
+// TestChangeOwnPasswordThrottled is the P3-13 regression test: repeated
+// wrong-current-password attempts against ChangeOwnPassword must lock
+// out, the same as Manager.Login already does for unauthenticated
+// attempts.
+func TestChangeOwnPasswordThrottled(t *testing.T) {
+	svc, _ := adminService(t)
+	svc.PasswordThrottle = NewThrottle(3, time.Minute, time.Hour)
+	ctx := context.Background()
+	u := mustCreate(t, svc, "throttled@example.test", RoleViewer)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.ChangeOwnPassword(ctx, u.ID, "wrong-password", "a-brand-new-password"); !errors.Is(err, ErrPasswordMismatch) {
+			t.Fatalf("attempt %d: got %v, want ErrPasswordMismatch", i, err)
+		}
+	}
+	if err := svc.ChangeOwnPassword(ctx, u.ID, "a-strong-password", "a-brand-new-password"); !errors.Is(err, ErrThrottled) {
+		t.Fatalf("after 3 failures: got %v, want ErrThrottled (even with the CORRECT password)", err)
+	}
+}
+
 func TestSetUserPasswordResetRules(t *testing.T) {
 	svc, store := adminService(t)
 	ctx := context.Background()
@@ -229,5 +249,83 @@ func TestListUsers(t *testing.T) {
 		if !strings.Contains(u.Email, "@example.test") {
 			t.Fatalf("unexpected user: %+v", u)
 		}
+		// P3-6: ListUsers must never hand back a password hash, even
+		// though MemoryStore itself stores one per user.
+		if u.PasswordHash != "" {
+			t.Fatalf("password hash leaked from ListUsers: %+v", u)
+		}
+	}
+}
+
+// TestCreateUserEmailCaseNormalized is the P3-7 regression test:
+// "Alice@Example.test" and "alice@example.test" must collide as the
+// same account.
+func TestCreateUserEmailCaseNormalized(t *testing.T) {
+	svc, store := adminService(t)
+	ctx := context.Background()
+	u := mustCreate(t, svc, "  Alice@Example.test  ", RoleViewer)
+	if u.Email != "alice@example.test" {
+		t.Fatalf("email not normalized: %q", u.Email)
+	}
+	if _, err := svc.CreateUser(ctx, "alice@example.test", RoleViewer, "a-strong-password"); !errors.Is(err, ErrDuplicateEmail) {
+		t.Fatalf("differently-cased duplicate = %v, want ErrDuplicateEmail", err)
+	}
+	if _, err := store.UserByEmail(ctx, "alice@example.test"); err != nil {
+		t.Fatalf("stored under the normalized key: %v", err)
+	}
+}
+
+// TestUpdateUserRoleLastAdminRaceIsAtomic is the P2-5 regression test:
+// two admins demoted CONCURRENTLY must not both succeed and leave zero
+// enabled admins. Before the fix, AdminService did list-then-check
+// (requireNotLastAdmin) as a round trip separate from the store write,
+// so two goroutines could each observe "the other one is still an
+// admin" and both proceed. Run with -race.
+func TestUpdateUserRoleLastAdminRaceIsAtomic(t *testing.T) {
+	svc, _ := adminService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "a@example.test", RoleAdmin)
+	b := mustCreate(t, svc, "b@example.test", RoleAdmin)
+	bystander := mustCreate(t, svc, "bystander@example.test", RoleViewer)
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	demote := func(targetID string) {
+		<-start
+		_, err := svc.UpdateUserRole(ctx, bystander.ID, targetID, RoleOperator)
+		results <- err
+	}
+	go demote(a.ID)
+	go demote(b.ID)
+	close(start)
+
+	r1, r2 := <-results, <-results
+	successes, lastAdminRefusals := 0, 0
+	for _, err := range []error{r1, r2} {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrLastAdmin):
+			lastAdminRefusals++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || lastAdminRefusals != 1 {
+		t.Fatalf("concurrent demotions: successes=%d refusals=%d (want exactly one of each — both succeeding would leave zero admins)",
+			successes, lastAdminRefusals)
+	}
+	users, err := svc.ListUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admins := 0
+	for _, u := range users {
+		if u.Role == RoleAdmin && !u.Disabled {
+			admins++
+		}
+	}
+	if admins != 1 {
+		t.Fatalf("enabled admins after the race = %d, want 1", admins)
 	}
 }

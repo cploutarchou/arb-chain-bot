@@ -59,6 +59,8 @@ func (s *Server) writeUserAdminError(w http.ResponseWriter, r *http.Request, err
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), correlationID(r))
 	case errors.Is(err, auth.ErrPasswordMismatch):
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "current password is incorrect", correlationID(r))
+	case errors.Is(err, auth.ErrThrottled):
+		WriteError(w, http.StatusTooManyRequests, "throttled", "too many attempts; try again later", correlationID(r))
 	default:
 		s.log.Error("user management failed", "error", err)
 		WriteError(w, http.StatusInternalServerError, "user_management_failed", "user management failed", correlationID(r))

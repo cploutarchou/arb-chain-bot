@@ -476,36 +476,134 @@ data-flow,security,risk}.md`.
   WS ping/connection caps, fee asset convention).
 
 ### T-057 Platform settings + supervised engine restart
-- status: IMPLEMENTED (backend) (2026-08-27) — `docs/design/platform-settings-and-restart.md`.
+- status: IMPLEMENTED (backend) (2026-08-27, code-reviewed and fixed
+  2026-08-27) — `docs/design/platform-settings-and-restart.md`.
   Closes console-ux-audit BL-13b (editable symbols/starting assets) and
   BL-15 (venues & fees) on the backend. New versioned `platform_settings`
   document (separate from `strategy.Params`: the section→permission
   mapping in rbac.go:72-77 fails open to OPERATOR, and symbol validation
   needs exchangeInfo) in `internal/platform`, migration 000006, and an
   `app.Supervisor` that re-enters one stable `Engine.Run` on
-  `POST /api/v1/engine/restart`. Engine re-entrancy fixed (E1-E10: reset
-  before bootstrap, retained catalog, bounded child-goroutine drain via
-  WaitGroup, accessor-based metrics/Hub registration done once,
-  Strategy.Subscribe registered once, paper pause state carried across
-  restarts, `paper_sessions.ended_at` now written). Env vars are
-  first-boot seeds only; a settings version that cannot build a topology
-  is rejected at apply/rollback time (`ValidateAgainstCatalog`, D8), never
-  discovered for the first time at restart. `LiveExecutor` untouched; no
-  exchange API keys anywhere in this feature.
-  Frontend (design §4, BL-12) is NOT built — routes/permissions/response
-  shapes are frozen and ready for it.
+  `POST /api/v1/engine/restart`. Env vars are first-boot seeds only; a
+  settings version that cannot build a topology is rejected at
+  apply/rollback time (`ValidateAgainstCatalog`, D8), never discovered
+  for the first time at restart. `LiveExecutor` untouched; no exchange
+  API keys anywhere in this feature. Frontend (design §4, BL-12) landed
+  separately (T-057 frontend, package B/C/D) on top of the routes/
+  permissions/response shapes frozen here.
+  **A follow-up code review (this entry, 2026-08-27) found the original
+  landing's restart/re-entrancy claims were not fully true and fixed
+  every P1/P2 finding plus the cheap P3 items:**
+  - Generation-tagged engine exits (`runExit{gen,err}`): the original
+    single untagged `errCh` let a grace-timed-out restart's abandoned
+    run be silently discarded, and its LATE exit could be misattributed
+    to a newer restart's bookkeeping — in the worst case two
+    `Engine.Run` calls alive at once (two feeds/scanners/outboxes racing
+    on the same `*Engine`). Fixed: every exit carries the generation
+    that produced it; `waitEngineStop`/`waitReadyOrFail` ignore/observe
+    exits from other generations; a grace timeout keeps the abandoned
+    generation's cancel func and sets `pendingGen`, which `Request`
+    refuses new restarts against until that generation's exit is
+    actually observed — never discarding a live run's cancel.
+  - `Engine.Run`'s deferred `ready = false` now checks a per-run token
+    before clearing readiness, so a stale run's cleanup can never clear
+    a newer run's `Ready` state.
+  - `waitReadyOrFail`'s 30s poll used to return `nil` (mark ready) on
+    timeout even though the engine had not actually finished
+    bootstrapping. Fixed: it returns a distinct timeout sentinel; state
+    stays `restarting` and `Supervisor.Run`'s own readiness ticker
+    resolves it later (now a ticker + `Supervisor.ReadyTimeout`,
+    configurable, not a hardcoded busy-poll).
+  - The paper-pause decision is now carried INTO the engine
+    (`Engine.SetPaperPaused`, consumed once at the `paperEng.Resume()`
+    boot site) instead of being re-applied by the supervisor AFTER
+    readiness — which had nothing to act on while `Supervisor.Paper()`
+    returns nil mid-bootstrap, so a paused paper engine could silently
+    resume across a slow restart. A grace-timeout (or any other early
+    return from `restart()`) now also restores the pause state it
+    disturbed, so a later restart's own "was it running before" capture
+    never reads a permanently-stuck-paused stale object.
+  - `token_discount: true` is now refused outright by
+    `FeeSettings.validate` for every venue, with a corrected comment on
+    `fees.NetOutput`: the 25% discount was applied to fee math with NO
+    pay-asset (e.g. BNB) balance ever debited anywhere, making paper P&L
+    optimistic by exactly the discount amount on every fee-bearing leg.
+    No pay-asset ledger was built (that touches money math, out of
+    scope for a review-fix pass). New `GET /api/v1/platform/venues`
+    (`view:system`) exposes the compiled venue/discount table
+    (asset, rate, `applies_to_api`, and an honest `modeled: false`) so
+    the console can render — and correctly disable — the toggle from
+    data instead of hardcoding fees.go's constants.
+  - The engine used to persist only the currently-scoped symbol subset
+    to the `markets` table (`UpsertMarkets(ctx, scoped)`); the
+    API-profile fallback catalog (`storage.Catalog`) reads that same
+    table, so a symbol the operator had never selected could never be
+    added through the console (a false `unknown_symbol`). Fixed:
+    persists the full bootstrap catalog (`UpsertMarkets(ctx, markets)`).
+  - A platform-settings `Load` failure against a configured database
+    used to silently fall back to a fresh, env-reseeded `MemoryStore` —
+    discarding whatever was actually persisted with only a log line.
+    Fixed to fail boot hard, matching `storage.Open`'s existing policy
+    for the same class of failure.
+  - The last-admin check (`AdminService.UpdateUserRole`/
+    `SetUserDisabled`) was check-then-act across two independent store
+    calls — a real race under concurrent demotions of two different
+    admins. Fixed: the guard is now atomic inside the store itself (a
+    single pgx transaction with deterministic `ORDER BY id ... FOR
+    UPDATE` locking to avoid a cross-transaction deadlock; one lock
+    acquisition in `MemoryStore`).
+  - The recording-active restart guard was checked only once, at
+    `Request()` time — a session could start in the window before the
+    single-threaded restart loop actually processed the request. Fixed:
+    re-checked inside `restart()` itself, unwinding the state machine
+    back to Ready/Pending (not left stuck in `restarting`) on refusal —
+    the same unwind also fixes a dead `default:` branch in `Request`
+    that could otherwise strand the state machine.
+  - `RecorderControl.Bind` was bound to `Engine.Run`'s outer `ctx`
+    parameter rather than the internally-cancelled `runCtx`; a run that
+    exited on an internal fatal error (not the caller cancelling `ctx`)
+    left an API-started recording session orphaned until the supervisor
+    eventually noticed. Fixed: bound to `runCtx`, guaranteed cancelled
+    no later than `Run` returning, for any reason.
+  - Smaller items: `Restarts` no longer counts the initial boot (only
+    actual restarts); `PendingVersion` clears when the last pending
+    reason clears; `platform.Service`'s `swap`/`Subscribe`/
+    `MemoryStore.Get`/`Active` now hand out cloned `Settings` (no
+    aliasing); `AdminService.ListUsers`/`UpdateUserRole`/
+    `SetUserDisabled` never return a password hash; email is
+    case-normalized on `CreateUser`; the platform-settings preview route
+    now requires `view:system` (was `requireAuth` only); the restart
+    audit action is split into `engine.restart.requested` (API layer,
+    on accept) and `engine.restart.completed` (supervisor, on actual
+    readiness); `POST /api/v1/auth/password` is now throttled per user
+    (`AdminService.PasswordThrottle`); migration 000005's down migration
+    uses `DROP COLUMN IF EXISTS`.
+  - **Not fixed, pre-existing, tracked separately (P3-11):** `Portfolio.
+    Reset` zeroes realized P&L/drawdown, but `risk.Context.DailyLoss`/
+    `Drawdown` are not wired to read it — a circuit breaker's daily-loss/
+    drawdown limits do not see the effect of a paper reset. Independent
+    of this review's restart work; left open.
 - dependencies: T-034 (config service pattern), T-040
-- acceptance: `internal/platform` validate/catalog/service unit tests;
+- acceptance: `internal/platform` validate/catalog/service unit tests
+  (including `TestTokenDiscountRejected`, `TestCompiledVenueTable`);
   `internal/app` engine re-entrancy test (`Engine.Run` twice, no
-  goroutine leak, no double strategy subscription) and supervisor unit
-  tests (fake `EngineRunner`: re-entry-after-return-only, stop-recording
-  ordering, paper pause preserved, guard-rail refusals, second-run
-  failure survives, restart timeout with no re-entry, pending-reasons for
-  both documents); `internal/api` handler tests (RBAC, CSRF, confirm
-  token, 409 guard rails, `field_timing`); `internal/storage` integration
-  tests for `platform_settings`/`EndPaperSession`/`ListMarkets` run
-  against a disposable Postgres (never the dev compose DB on :5432). All
-  green with `-race`; `golangci-lint run ./...` clean.
+  goroutine leak, no double strategy subscription), the P2-2/P2-6
+  boot-time recorder/pause tests, and supervisor unit tests (fake
+  `EngineRunner`: re-entry-after-return-only, stop-recording ordering,
+  paper pause preserved, guard-rail refusals, second-run failure
+  survives, restart timeout with no re-entry and no generation overlap
+  (`TestSupervisorGracefulTimeoutNeverOverlapsRunsAndGatesRestarts`),
+  ready-timeout stays `restarting` then resolves with pause preserved
+  (`TestSupervisorReadyTimeoutStaysRestartingThenResolvesPausePreserved`),
+  recording-guard re-check unwinds to Ready, pending-reasons for both
+  documents); `internal/api` handler tests (RBAC, CSRF, confirm token,
+  409 guard rails, `field_timing`, the new `/platform/venues` route);
+  `internal/auth` last-admin concurrent-race and password-throttle
+  tests; `internal/storage` integration tests for `platform_settings`/
+  `EndPaperSession`/`ListMarkets`/the unscoped-catalog fix/the pgx
+  last-admin race, run against a disposable Postgres (never the dev
+  compose DB on :5432). All green with `-race`; `golangci-lint run
+  ./...` clean.
 
 ### T-058 Console package D: concurrency fix + BL-17/18/19/20/21/26/27/31/32
 - status: DONE (2026-08-27). All nine items (BL-17, BL-18, BL-19, BL-20,
@@ -850,6 +948,67 @@ data-flow,security,risk}.md`.
   applied via the `migrate/migrate` image — never the dev-compose DB —
   plus every other package in the module, all passing, none skipped
   except the DB-backed suites when `ARB_TEST_DATABASE_URL` is unset).
+
+### T-059 Operating mode + provider settings + hot log level
+- status: DESIGNED (2026-08-27) — `docs/design/settings-expansion.md` §2, §4.
+  Moves the remaining operator-relevant env-only fields into the T-057
+  versioned document: `platform.mode` (restart-scoped, enum
+  MARKET_DATA/RECORD/PAPER/SHADOW — LIVE rejected by name, REPLAY/BACKTEST
+  rejected as batch runs), `platform.log_level` and
+  `platform.allowed_origin` (hot), a new `ai` section (enabled, provider,
+  model, cadence, budget — hot, which requires always constructing
+  `ai.Service`/`ai.Scheduler` behind an `ai.Switch`), and
+  `telegram.disabled` (hot, via the existing `allowSet`; **negative field
+  on purpose** — an `enabled` bool would zero-value to false on a persisted
+  document and silently mute commands and pushes on upgrade). No migration:
+  the document is JSONB. **`Settings.WithDefaults(cfg)` lands first** — a
+  persisted pre-T-059 payload has no `platform`/`ai` keys, so without
+  normalization at every load/get/rollback path `Validate` fails and
+  `buildPlatform` takes the P2-4 hard-failure branch, i.e. the process
+  refuses to boot after deploy. Same class: `Seed`/`WithDefaults` map every
+  non-settable `ARB_MODE` (`REPLAY`, `BACKTEST`, **`SHADOW`** — all legal
+  values today) to `MARKET_DATA`, or a `ARB_MODE=SHADOW` deployment seeds a
+  document its own validator rejects.
+- dependencies: T-057
+- acceptance: `internal/platform` validation table incl. `LIVE`/`live`/
+  `REPLAY`/`SHADOW`; `WithDefaults` tested against raw JSON literals that
+  omit the new sections AND that carry a `telegram` section with only
+  `allowlist` (a round-tripped struct would not exercise either branch);
+  `ModeTable`/`Settable` agree with `Validate` for every `config.Mode`
+  constant; reflect-over-sections test for
+  `PermissionForSection`; `internal/app` mode-from-settings restart test;
+  `internal/ai` switch/cadence/budget tests; `-race` green.
+
+### T-060 Secrets vault (AES-256-GCM, write-only API)
+- status: DESIGNED (2026-08-27) — `docs/design/settings-expansion.md` §3.
+  `secrets` table (migration **000008**), AES-256-GCM under
+  `ARB_SECRET_KEY` (base64, exactly 32 bytes) with the secret name as AAD
+  and a `key_id` fingerprint per row; closed two-entry registry
+  (`anthropic_api_key`, `telegram_bot_token`) so it can never become a
+  store for exchange trading keys; `SecretSource` chain (vault first, env
+  fallback) resolved by the AI advisor at every settings swap and by
+  Telegram at process start. Write-only API: `PUT`/`DELETE
+  /api/v1/secrets/{name}` (ADMIN, CSRF, audited), `GET /api/v1/secrets`
+  returns presence/source/updated-by only — never a value, never a last-4.
+  No `ARB_SECRET_KEY` → vault disabled, platform still runs on env secrets.
+- dependencies: T-057 (audit sink, RBAC); parallelizable with T-059
+- acceptance: `internal/secrets` crypto tests (wrong key, AAD mismatch,
+  key_id mismatch reported not returned, nonce uniqueness); `internal/api`
+  RBAC/CSRF denial plus a log-capture assertion that the submitted value
+  appears in no emitted log record; `internal/storage` round-trip against a
+  disposable Postgres.
+
+### T-061 Venue availability + capabilities route
+- status: DESIGNED (2026-08-27) — `docs/design/settings-expansion.md` §5.
+  `platform.VenueTable()` lists OKX/Bybit/Bitget/Gate/MEXC honestly as
+  `available:false` with the blocking task id, while `CompiledVenues` stays
+  the enforcement gate. New `GET /api/v1/platform/capabilities` (modes,
+  venues, ai_providers with availability + reason);
+  `/api/v1/platform/venues` becomes an alias over the same function. No
+  keys anywhere.
+- dependencies: T-059 (mode availability list shares the shape)
+- acceptance: `internal/api` capabilities shape test; enabling an
+  unavailable venue returns `400 connector_unavailable` naming the task.
 
 ---
 

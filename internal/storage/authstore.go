@@ -119,30 +119,118 @@ func (a *AuthStore) CreateUser(ctx context.Context, u auth.User) error {
 	return nil
 }
 
+// lastAdminGuardRows locks, in one deterministic order (ORDER BY id),
+// every row the last-admin check needs: the target row itself plus every
+// currently-enabled admin row. Locking the target and the admin set in a
+// SINGLE statement — rather than two separate `SELECT ... FOR UPDATE`
+// queries — is what makes this deadlock-safe: two concurrent
+// transactions targeting DIFFERENT admins (T1: demote A, T2: demote B)
+// would otherwise be free to lock A-then-B and B-then-A respectively.
+// Ordering by id gives every transaction the same lock-acquisition
+// order regardless of which admin it targets, so they queue instead of
+// deadlocking (P2-5).
+func lastAdminGuardRows(ctx context.Context, tx pgxIface, id string) (targetRole string, targetDisabled bool, targetFound bool, otherEnabledAdmins int, err error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, role, status = 'disabled' FROM users
+		WHERE id = $1 OR (role = 'ADMIN' AND status <> 'disabled')
+		ORDER BY id
+		FOR UPDATE`, id)
+	if err != nil {
+		return "", false, false, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rowID, role string
+		var disabled bool
+		if err := rows.Scan(&rowID, &role, &disabled); err != nil {
+			return "", false, false, 0, err
+		}
+		if rowID == id {
+			targetRole, targetDisabled, targetFound = role, disabled, true
+		}
+		if role == "ADMIN" && !disabled && rowID != id {
+			otherEnabledAdmins++
+		}
+	}
+	return targetRole, targetDisabled, targetFound, otherEnabledAdmins, rows.Err()
+}
+
+// pgxIface is the subset of pgx.Tx (and *pgxpool.Pool, for tests that
+// bypass a transaction) this package's transactional helpers need.
+type pgxIface interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// UpdateUserRole changes a user's role, refusing (auth.ErrLastAdmin) a
+// demotion that would leave zero enabled ADMIN accounts. The guard is
+// enforced INSIDE the same transaction as the write (P2-5): the earlier
+// shape — AdminService listing users, deciding, then calling this method
+// — was check-then-act across two independent round trips, so two
+// concurrent demotions of two DIFFERENT admins could each see "at least
+// one other admin" and both succeed, leaving none.
 func (a *AuthStore) UpdateUserRole(ctx context.Context, id string, role auth.Role) error {
-	tag, err := a.s.Pool.Exec(ctx, `UPDATE users SET role = $2 WHERE id = $1`, id, string(role))
+	tx, err := a.s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	curRole, curDisabled, found, otherAdmins, err := lastAdminGuardRows(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if !found {
 		return auth.ErrUnknownUser
 	}
-	return nil
+	if curRole == string(auth.RoleAdmin) && !curDisabled && role != auth.RoleAdmin && otherAdmins == 0 {
+		return auth.ErrLastAdmin
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET role = $2 WHERE id = $1`, id, string(role)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
+// SetUserDisabled disables or re-enables a user, with the same atomic
+// last-admin guard as UpdateUserRole (P2-5) when disabling one.
 func (a *AuthStore) SetUserDisabled(ctx context.Context, id string, disabled bool) error {
 	status := "active"
 	if disabled {
 		status = "disabled"
 	}
-	tag, err := a.s.Pool.Exec(ctx, `UPDATE users SET status = $2 WHERE id = $1`, id, status)
+	if !disabled {
+		// Enabling never removes an admin from the enabled set, so the
+		// guard is unnecessary — a plain conditional UPDATE is enough.
+		tag, err := a.s.Pool.Exec(ctx, `UPDATE users SET status = $2 WHERE id = $1`, id, status)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return auth.ErrUnknownUser
+		}
+		return nil
+	}
+
+	tx, err := a.s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	curRole, curDisabled, found, otherAdmins, err := lastAdminGuardRows(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if !found {
 		return auth.ErrUnknownUser
 	}
-	return nil
+	if curRole == string(auth.RoleAdmin) && !curDisabled && otherAdmins == 0 {
+		return auth.ErrLastAdmin
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET status = $2 WHERE id = $1`, id, status); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (a *AuthStore) SetUserPassword(ctx context.Context, id, passwordHash string) error {
