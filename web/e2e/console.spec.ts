@@ -827,6 +827,187 @@ test("Perpetuals min carry APR filter sends a fraction, not a raw percent", asyn
   await expect.poll(() => seenQuery, { timeout: 10_000 }).toBe("0.1");
 });
 
+test("Alert rule form converts min carry APR between percent and an exact fraction, for both carry and basis, and never sends min_spread_bps for either", async ({
+  page,
+}) => {
+  // Same class of bug as the Perpetuals filter above, plus two more: (1)
+  // Number()*100/100 reintroduces binary-float noise on a value that
+  // round-trips through storage (0.07 * 100 === 7.000000000000001 in
+  // JS) — assert the exact string "0.07", not just "close to". (2) the
+  // form used to only show the carry-APR field for kind="carry", not
+  // "basis", even though rules.go Validate requires min_carry_apr for
+  // both.
+  await login(page);
+  await page.goto("/scanner-alerts");
+
+  const seenBodies: Record<string, unknown>[] = [];
+  await page.route("**/api/v1/screener/rules", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    seenBodies.push(body);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: { rule: { id: `e2e-rule-${seenBodies.length}`, ...body } },
+        error: null,
+      }),
+    });
+  });
+
+  const cases = [
+    ["carry", "7", "0.07"],
+    ["basis", "12.5", "0.125"],
+  ] as const;
+  for (let i = 0; i < cases.length; i++) {
+    const [kind, pct] = cases[i]!;
+    await expect(page.getByRole("button", { name: "New rule…" })).toBeVisible({
+      timeout: 10_000,
+    });
+    await page.getByRole("button", { name: "New rule…" }).click();
+    await page.getByLabel("Name").fill(`e2e ${kind} rule`);
+    await page.getByLabel("Kind").selectOption(kind);
+    await expect(page.getByLabel("Min carry APR (%)")).toBeVisible();
+    await expect(page.getByLabel("Min spread (bps)")).toHaveCount(0);
+
+    // Advanced model inputs: mmr must never be pre-filled with a default
+    // — a fabricated margin rate would let a carry/basis rule pass the
+    // MMR gate silently (rule_params.go: nil = unknown = MMR_UNKNOWN skip).
+    await page
+      .getByRole("button", { name: "Show advanced model inputs" })
+      .click();
+    const mmrInput = page.getByLabel(/Maintenance margin rate/);
+    await expect(mmrInput).toHaveValue("");
+    await expect(mmrInput).toHaveAttribute("placeholder", /unknown/);
+
+    await page.getByLabel("Min carry APR (%)").fill(pct);
+    await page.getByRole("button", { name: "Save rule" }).click();
+    await expect.poll(() => seenBodies.length, { timeout: 10_000 }).toBe(i + 1);
+  }
+
+  expect(seenBodies[0]?.min_carry_apr).toBe("0.07");
+  expect(seenBodies[0]?.min_spread_bps).toBeUndefined();
+  expect(seenBodies[1]?.min_carry_apr).toBe("0.125");
+  expect(seenBodies[1]?.min_spread_bps).toBeUndefined();
+});
+
+test("Alert rule form loads an existing carry rule's stored fraction as an exact percent, round-trips it unchanged, and preserves untouched advanced params on save", async ({
+  page,
+}) => {
+  const existing = {
+    id: "e2e-existing-carry",
+    name: "Existing carry rule",
+    enabled: true,
+    kind: "carry",
+    min_carry_apr: "0.07",
+    min_liquidity_quote: "500",
+    min_lifetime_s: 30,
+    buy_venues: [],
+    sell_venues: [],
+    quotes: ["USDT"],
+    bases_allow: [],
+    bases_deny: [],
+    cooldown_s: 300,
+    telegram: true,
+    auto_paper: false,
+    paper_size_quote: "100",
+    // strategy is a param the RuleForm's Advanced section does not
+    // expose an input for — it must survive an edit-save untouched.
+    params: { mmr: "0.005", strategy: "carry" },
+  };
+  await page.route("**/api/v1/screener/rules", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: { rules: [existing] }, error: null }),
+    });
+  });
+  const putBodies: Record<string, unknown>[] = [];
+  await page.route(
+    "**/api/v1/screener/rules/e2e-existing-carry",
+    async (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      putBodies.push(body);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: { rule: { id: existing.id, ...body } },
+          error: null,
+        }),
+      });
+    },
+  );
+
+  await login(page);
+  await page.goto("/scanner-alerts");
+  // The table's threshold column converts the stored fraction too — it
+  // must never suffix the raw "0.07" with "% APR".
+  await expect(page.getByText("7% APR")).toBeVisible();
+  await expect(page.getByText("0.07% APR")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByLabel("Min carry APR (%)")).toHaveValue("7");
+  await page
+    .getByRole("button", { name: "Show advanced model inputs" })
+    .click();
+  await expect(page.getByLabel(/Maintenance margin rate/)).toHaveValue("0.005");
+
+  await page.getByRole("button", { name: "Save rule" }).click();
+  await expect.poll(() => putBodies.length, { timeout: 10_000 }).toBe(1);
+  expect(putBodies[0]?.min_carry_apr).toBe("0.07");
+  expect(putBodies[0]?.params).toMatchObject({
+    mmr: "0.005",
+    strategy: "carry",
+  });
+});
+
+test("Screener include_suspect/include_unknown_liquidity toggles are off by default, send the query params when checked, and the excluded counts render", async ({
+  page,
+}) => {
+  await login(page);
+  const seenQueries: URLSearchParams[] = [];
+  await page.route("**/api/v1/screener/spreads**", async (route) => {
+    seenQueries.push(new URL(route.request().url()).searchParams);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          rows: [],
+          total: 0,
+          generated_at: new Date().toISOString(),
+          model: "no-transfer, top-of-book",
+          excluded: { suspect: 3, liquidity_unknown: 5 },
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto("/screener");
+  await expect
+    .poll(() => seenQueries.length, { timeout: 10_000 })
+    .toBeGreaterThan(0);
+  expect(seenQueries[0]?.get("include_suspect")).toBeNull();
+  expect(seenQueries[0]?.get("include_unknown_liquidity")).toBeNull();
+
+  await expect(page.getByText("Excluded: suspect")).toBeVisible();
+  await expect(page.getByText("3", { exact: true }).first()).toBeVisible();
+
+  await page.getByLabel("Include suspect lanes (asset-identity guard)").check();
+  await page.getByLabel("Include unknown-liquidity lanes").check();
+  await expect
+    .poll(() => seenQueries[seenQueries.length - 1]?.get("include_suspect"), {
+      timeout: 10_000,
+    })
+    .toBe("1");
+  expect(
+    seenQueries[seenQueries.length - 1]?.get("include_unknown_liquidity"),
+  ).toBe("1");
+});
+
 test.describe("Scanner Suite", () => {
   test.beforeAll(async ({ browser }) => {
     const page = await browser.newPage();
@@ -848,9 +1029,12 @@ test.describe("Scanner Suite", () => {
       "Funding",
       "Calculator",
       "Alert Rules",
+      "Screener Reports",
       "Auto-Paper",
     ]) {
-      await expect(nav.getByRole("link", { name: label })).toBeVisible();
+      await expect(
+        nav.getByRole("link", { name: label, exact: true }),
+      ).toBeVisible();
     }
 
     const notAvailable = /Screener backend not available in this build\./;
@@ -860,6 +1044,10 @@ test.describe("Scanner Suite", () => {
       ["/funding", new RegExp(`Funding|${notAvailable.source}`)],
       ["/calculator", /Spreads calculator/],
       ["/scanner-alerts", new RegExp(`Alert Rules|${notAvailable.source}`)],
+      [
+        "/screener-reports",
+        new RegExp(`Screener Reports|${notAvailable.source}`),
+      ],
       ["/auto-paper", new RegExp(`Auto-Paper|${notAvailable.source}`)],
     ];
     for (const [path, marker] of pages) {
@@ -928,5 +1116,233 @@ test.describe("Scanner Suite", () => {
         .getByRole("button", { name: "New rule…" })
         .or(page.getByText("Screener backend not available in this build.")),
     ).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("Screener Reports lists reports, gates 'Run now' to ADMIN, and the detail view renders the gate checklist, stats and stored markdown safely with the SIMULATED footer", async ({
+    page,
+  }) => {
+    const summary = {
+      id: "rep-1",
+      period_start: "2026-08-25T00:00:00Z",
+      period_end: "2026-08-26T00:00:00Z",
+      period_label: "day",
+      strategy: "cross_venue_spot",
+      rule_id: "",
+      n: 42,
+      net_pnl_quote: "12.34",
+      gate_passed: 1,
+      gate_total: 8,
+      created_at: "2026-08-26T00:05:00Z",
+    };
+    const listBody = {
+      reports: [summary],
+      last_run: {
+        day: "2026-08-25",
+        started_at: "2026-08-26T00:05:00Z",
+        duration_ms: 1200,
+        // Go's []Summary(nil) marshals as JSON null when a run produced
+        // nothing (generator.go RunResult.Reports has no omitempty) —
+        // exercise that shape here, not just the populated one, so the
+        // "Last run reports" Stat's null-guard is actually covered.
+        reports: null,
+        errors: [],
+      },
+      next_run_utc: "2026-08-27T00:05:00Z",
+      generated_at: "2026-08-26T00:06:00Z",
+    };
+    const detailBody = {
+      report: {
+        id: "rep-1",
+        period_start: summary.period_start,
+        period_end: summary.period_end,
+        strategy: "cross_venue_spot",
+        rule_id: "",
+        created_at: summary.created_at,
+        // Deliberately includes a pipe table AND a stray inline "<script>"
+        // tag — the renderer must show the tag as literal text, never
+        // execute or inject it (no dangerouslySetInnerHTML anywhere).
+        md:
+          "# Report\n\nSome narrative text with <script>window.__xss=1</script>.\n\n" +
+          "- bullet one\n- bullet two\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+        payload: {
+          window: {
+            label: "day",
+            start: summary.period_start,
+            end: summary.period_end,
+          },
+          strategy: "cross_venue_spot",
+          rule_id: "",
+          rule_name: "",
+          stats: {
+            n: 42,
+            wins: 20,
+            matched_pairs: 10,
+            net_pnl_quote: "12.34",
+            fees_quote: "1.1",
+            funding_quote: "0",
+            funding_rows: 0,
+            pnl_after_rebalance: "12.34",
+            matched_pair_net: "10.0",
+            unwind_cost_quote: "0",
+            partial_leg_pnl_quote: "0",
+            conservative_net_quote: "10.0",
+            net_bps_mean: "5.2",
+            net_bps_median: "4.8",
+            hit_rate: "0.55",
+            hit_rate_wilson95_low: "0.40",
+            hit_rate_wilson95_high: "0.69",
+            lifetime_s_mean: "12.5",
+            lifetime_s_median: "10",
+            lifetime_n: 42,
+            max_drawdown_quote: "2.0",
+            max_drawdown_frac: "0.02",
+            allocated_capital_quote: "100",
+            inventory_drift: [],
+            skipped: {},
+            realised_slip_bps_mean: "1.2",
+            realised_slip_bps_p95: "3.4",
+            realised_slip_n: 42,
+            slip_allowance_bps: "2",
+            concentration: "0.3",
+            largest_loss_quote: "5.0",
+            median_win_quote: "1.0",
+            days: 1,
+            weekend_days: 0,
+            first_sample_at: "2026-08-25T01:00:00Z",
+            last_sample_at: "2026-08-25T23:00:00Z",
+            wilcoxon: null,
+            bootstrap: null,
+          },
+          gate: [
+            {
+              item: 1,
+              name: "Duration and coverage",
+              status: "fail",
+              reason: "no evidence yet: regime days not computed",
+            },
+            {
+              item: 4,
+              name: "Statistical test",
+              status: "pass",
+              reason: "Wilcoxon rejects H0, bootstrap CI lower bound > 0",
+            },
+          ],
+          gate_passed: 1,
+          gate_total: 8,
+          generated_at: summary.created_at,
+          data_age_ms: 500,
+          model:
+            "Measurement, not a recommendation. Simulated results are hypothetical.",
+          notes: ["n_regime reads not computed"],
+          files: { markdown: "screener-reports/2026-08-25/x.md" },
+        },
+      },
+    };
+
+    await page.route("**/api/v1/screener/reports**", async (route) => {
+      const url = new URL(route.request().url());
+      const method = route.request().method();
+      if (url.pathname === "/api/v1/screener/reports" && method === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ data: listBody, error: null }),
+        });
+        return;
+      }
+      if (
+        url.pathname === "/api/v1/screener/reports/run" &&
+        method === "POST"
+      ) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            data: {
+              run: {
+                day: "2026-08-26",
+                started_at: new Date().toISOString(),
+                duration_ms: 500,
+                reports: [summary],
+                errors: [],
+              },
+            },
+            error: null,
+          }),
+        });
+        return;
+      }
+      if (
+        url.pathname === "/api/v1/screener/reports/rep-1" &&
+        method === "GET"
+      ) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ data: detailBody, error: null }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+
+    // OPERATOR: read-only — no "Run now…", but the fixed hypothetical-
+    // performance footer is still present on the page.
+    await login(page, OPERATOR.email, OPERATOR.password);
+    await page.goto("/screener-reports");
+    await expect(
+      page.getByRole("heading", { name: "Screener Reports" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run now…" })).toHaveCount(0);
+    await expect(page.getByText(/SIMULATED\. Paper result/)).toBeVisible();
+    // last_run.reports: null must render as 0, not crash the page.
+    await expect(page.getByText("Last run reports")).toBeVisible();
+    await expect(
+      page.getByText("Last run reports").locator("..").getByText("0"),
+    ).toBeVisible();
+
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL("**/login");
+
+    // ADMIN: Run now is present, requires the ConfirmDialog, and refreshes
+    // the list on success.
+    await login(page);
+    await page.goto("/screener-reports");
+    await expect(page.getByRole("button", { name: "Run now…" })).toBeVisible();
+    await page.getByRole("button", { name: "Run now…" }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Run screener reports now?",
+    });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Run now", exact: true }).click();
+    await expect(page.getByText(/Ran for 2026-08-26/)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // List row shows the list-only fields; hit rate/CI is not fabricated
+    // here (report.Summary carries no hit_rate — only GET /{id} does).
+    await expect(page.getByText("12.34")).toBeVisible();
+    await expect(page.getByText("see report")).toBeVisible();
+
+    await page.getByRole("link", { name: "View", exact: true }).click();
+    await page.waitForURL("**/screener-reports/rep-1");
+    await expect(
+      page.getByRole("heading", { name: "Screener Report" }),
+    ).toBeVisible();
+    await expect(page.getByText("Duration and coverage")).toBeVisible();
+    await expect(
+      page.getByText("no evidence yet: regime days not computed"),
+    ).toBeVisible();
+    await expect(page.getByText("bullet one")).toBeVisible();
+    // The <script> tag in the stored markdown must render as inert text,
+    // never execute — assert no global it would set exists.
+    await expect(page.getByText(/<script>/)).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => (window as unknown as { __xss?: number }).__xss,
+      ),
+    ).toBeUndefined();
+    await expect(page.getByText(/SIMULATED\. Paper result/)).toBeVisible();
   });
 });

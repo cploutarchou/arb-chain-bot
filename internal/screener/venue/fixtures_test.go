@@ -92,6 +92,42 @@ var fixtureRoutes = map[screener.Venue][][2]string{
 		{"/api/v3/brokerage/market/product_book?product_id=", "product_book_{product_id}.json"},
 		{"/currencies", "exchange_currencies.json"},
 	},
+	screener.VenueCryptoCom: {
+		{"/public/get-instruments", "instruments.json"},
+		{"/public/get-tickers", "tickers.json"},
+		// One recorded valuation per (type, instrument): the instrument
+		// name is substituted from the request's query value.
+		{"/public/get-valuations?valuation_type=mark_price", "val_mark_{instrument_name}.json"},
+		{"/public/get-valuations?valuation_type=funding_hist", "val_funding_{instrument_name}.json"},
+		{"/public/get-valuations?valuation_type=estimated_funding_rate", "val_est_{instrument_name}.json"},
+	},
+	screener.VenueBitfinex: {
+		{"/v2/conf/", "conf.json"},
+		{"/v2/tickers", "tickers.json"},
+		{"/v2/status/deriv", "deriv_status.json"},
+	},
+	screener.VenueBingX: {
+		{"/openApi/spot/v1/common/symbols", "spot_symbols.json"},
+		{"/openApi/spot/v2/quote/bookTicker", "spot_bookTicker.json"},
+		{"/openApi/swap/v2/quote/contracts", "contracts.json"},
+		{"/openApi/swap/v2/quote/ticker", "swap_ticker.json"},
+		{"/openApi/swap/v2/quote/premiumIndex", "premiumIndex.json"},
+	},
+	screener.VenueWhiteBIT: {
+		{"/api/v4/public/markets", "markets.json"},
+		{"/api/v1/public/tickers", "tickers_v1.json"},
+		{"/api/v4/public/futures", "futures.json"},
+		{"/api/v4/public/assets", "assets.json"},
+	},
+	screener.VenueBitMart: {
+		{"/spot/v1/symbols/details", "symbols_details.json"},
+		{"/spot/quotation/v3/tickers", "tickers_v3.json"},
+		{"/spot/v1/currencies", "currencies.json"},
+		{"/contract/public/details", "contract_details.json"},
+		{"/contract/public/funding-rate-v2", "funding_rate_v2.json"},
+		// Served for any symbol (the collector round-robins mark price).
+		{"/contract/public/markprice-kline", "markprice_kline.json"},
+	},
 }
 
 // fixtureServer serves testdata/<venue>/ for one venue and counts

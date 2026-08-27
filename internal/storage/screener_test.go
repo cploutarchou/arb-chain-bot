@@ -193,6 +193,59 @@ func TestScreenerEventsListAndInsert(t *testing.T) {
 	}
 }
 
+// TestScreenerEventsDeliveredRoundTrip covers T-086's per-channel
+// delivery outcomes: seeded at insert (telegram sent synchronously,
+// email/webhook pending) and patched afterwards by SetEventDelivered
+// (the async dispatch worker's write), without disturbing the other
+// channels' entries.
+func TestScreenerEventsDeliveredRoundTrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	es := s.ScreenerEvents()
+
+	t0 := time.Unix(1_800_000_100, 0).UTC()
+	ev := screener.Event{
+		ID: "ev-delivered", RuleID: "rule-delivered", Kind: screener.RuleKindSpread,
+		Base: "BTC", Quote: "USDT", OpenedAt: t0, PeakNetBps: "10",
+		Delivered: map[string]screener.DeliveryOutcome{
+			"telegram": {Status: "sent", At: t0},
+			"email":    {Status: "pending", At: t0},
+			"webhook":  {Status: "pending", At: t0},
+		},
+	}
+	if err := es.InsertEvent(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	got, err := es.ListEvents(ctx, "rule-delivered", 10)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ListEvents = %+v err=%v", got, err)
+	}
+	if got[0].Delivered["telegram"].Status != "sent" || got[0].Delivered["email"].Status != "pending" {
+		t.Fatalf("seeded delivered = %+v", got[0].Delivered)
+	}
+
+	// The async worker patches email to "sent" without touching webhook.
+	if err := es.SetEventDelivered(ctx, "ev-delivered", "email", screener.DeliveryOutcome{Status: "sent", At: t0.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := es.SetEventDelivered(ctx, "ev-delivered", "webhook", screener.DeliveryOutcome{Status: "failed", Reason: "endpoint returned 500", At: t0.Add(2 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = es.ListEvents(ctx, "rule-delivered", 10)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ListEvents = %+v err=%v", got, err)
+	}
+	d := got[0].Delivered
+	if d["telegram"].Status != "sent" || d["email"].Status != "sent" || d["webhook"].Status != "failed" || d["webhook"].Reason != "endpoint returned 500" {
+		t.Fatalf("patched delivered = %+v", d)
+	}
+
+	// Unknown event id fails closed.
+	if err := es.SetEventDelivered(ctx, "no-such-event", "email", screener.DeliveryOutcome{Status: "sent", At: t0}); err != screener.ErrNotFound {
+		t.Fatalf("SetEventDelivered on unknown id = %v", err)
+	}
+}
+
 func TestScreenerTemplatesPerUser(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
