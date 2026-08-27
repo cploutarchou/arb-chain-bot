@@ -138,7 +138,7 @@ hold (tested). Threshold for text is 4.5, for boundaries 3.0.
 | `--border` #232a3b | 1.35 | 1.27 | 1.1 | decorative only — never the sole boundary of a control |
 | `--border-strong` #616a7e | **3.56** | **3.36** | **3.14** | ≥3 boundary on all surfaces |
 | `--on-accent` #0b0e14 on `--accent` fill | **6.00** | | | AA |
-| `--on-critical` #0b0e14 on `--critical` fill | **6.29** | | | AA |
+| `--on-critical` #0b0e14 on `--critical` fill | **5.79** | | | AA |
 | `--text-dim` @ 0.4 (disabled) | 1.97 | | | exempt (inactive control) |
 
 **Light theme**

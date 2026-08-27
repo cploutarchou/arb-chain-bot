@@ -67,9 +67,16 @@ type Signal struct {
 	CarryAPR      decimal.Decimal // predicted rate annualised (display)
 
 	LiquidityQuote decimal.Decimal
-	AgeAMs         int64
-	AgeBMs         int64
-	FundingAgeMs   int64
+	// LiquidityUnknown: a leg's collector publishes no top-of-book size;
+	// LiquidityQuote is zero and the signal is never active
+	// (LIQUIDITY_UNKNOWN). Suspect: the shared asset-identity guard
+	// (screener.GuardLane) refused the lane (SUSPECT_MISMATCH).
+	LiquidityUnknown bool
+	Suspect          bool
+	SuspectReason    string
+	AgeAMs           int64
+	AgeBMs           int64
+	FundingAgeMs     int64
 
 	// Inputs at signal time (the executor re-reads the book after
 	// latency; these are what the alert text and event peak report).
@@ -112,6 +119,9 @@ type Inputs struct {
 	PerpFees       FeeLookup
 	FundingHistory screener.FundingStore
 	PollInterval   time.Duration
+	// MaxPlausibleSpreadBps is settings.max_plausible_spread_bps for the
+	// guard; zero means screener.DefaultMaxPlausibleSpreadBps.
+	MaxPlausibleSpreadBps decimal.Decimal
 }
 
 // dataAgeOK applies §1.1: each leg's age ≤ poll interval and the legs'
@@ -218,10 +228,14 @@ func spotSignals(in Inputs, r screener.Rule, now time.Time) []Signal {
 				Rule: r, Strategy: screener.StrategyCrossVenueSpot, At: now,
 				Lane:     Lane{Base: row.Base, Quote: row.Quote, VenueA: row.BuyVenue, VenueB: row.SellVenue},
 				GrossBps: row.SpreadBpsGross, NetBps: row.SpreadBpsNet,
-				ExecBps:        row.SpreadBpsNet.Sub(slip).Sub(slip).Sub(buffer),
-				LiquidityQuote: row.LiquidityQuote,
-				AgeAMs:         row.BuyAgeMs, AgeBMs: row.SellAgeMs,
+				ExecBps:          row.SpreadBpsNet.Sub(slip).Sub(slip).Sub(buffer),
+				LiquidityUnknown: row.LiquidityUnknown,
+				Suspect:          row.Suspect, SuspectReason: row.SuspectReason,
+				AgeAMs: row.BuyAgeMs, AgeBMs: row.SellAgeMs,
 				SpotA: qa, SpotB: qb, FeeA: row.BuyFeeBps, FeeB: row.SellFeeBps,
+			}
+			if row.LiquidityQuote != nil {
+				s.LiquidityQuote = *row.LiquidityQuote
 			}
 			s.DataAgeOK = dataAgeOK(now.Sub(qa.At), now.Sub(qb.At), in.PollInterval)
 			s.Active, s.Reason = spotActive(r, s)
@@ -239,6 +253,10 @@ func spotActive(r screener.Rule, s Signal) (bool, string) {
 	switch {
 	case !s.DataAgeOK:
 		return false, "DATA_AGE"
+	case s.Suspect:
+		return false, screener.SkipSuspectMismatch
+	case s.LiquidityUnknown:
+		return false, screener.SkipLiquidityUnknown
 	case s.ExecBps.LessThan(minSpread):
 		return false, "below_min_spread"
 	case s.LiquidityQuote.LessThan(r.MinLiquidityQuote):
@@ -302,6 +320,8 @@ func perpSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time)
 		// notional only; the perp leg's depth is unknown and reported
 		// as such (the executor cannot apply the §1.3 haircut to it).
 		s.LiquidityQuote = spot.Ask.Mul(spot.AskQty)
+		g := screener.GuardSpotPerp(spot, p, in.MaxPlausibleSpreadBps)
+		s.LiquidityUnknown, s.Suspect, s.SuspectReason = g.LiquidityUnknown, g.Suspect, g.SuspectReason
 
 		predicted := p.PredictedFundingRate
 		if predicted.IsZero() {
@@ -353,6 +373,10 @@ func carryActive(r screener.Rule, s Signal) (bool, string) {
 	switch {
 	case !s.DataAgeOK:
 		return false, "DATA_AGE"
+	case s.Suspect:
+		return false, screener.SkipSuspectMismatch
+	case s.LiquidityUnknown:
+		return false, screener.SkipLiquidityUnknown
 	case !s.PredictedBps.IsPositive():
 		return false, "predicted_funding_not_positive"
 	case s.EdgeBps.LessThan(r.MinEdgeBps()):
@@ -369,6 +393,10 @@ func harvestActive(r screener.Rule, s Signal) (bool, string) {
 	switch {
 	case !s.DataAgeOK:
 		return false, "DATA_AGE"
+	case s.Suspect:
+		return false, screener.SkipSuspectMismatch
+	case s.LiquidityUnknown:
+		return false, screener.SkipLiquidityUnknown
 	case !s.FHatBps.IsPositive():
 		return false, "funding_not_positive"
 	case s.FHatBps.LessThan(r.MinFundingBps()):

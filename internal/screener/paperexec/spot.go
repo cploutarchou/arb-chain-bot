@@ -23,6 +23,14 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 		x.skip(ctx, s, ev, now, SkipDataAge, errf("ages %dms/%dms vs poll %s", s.AgeAMs, s.AgeBMs, poll))
 		return
 	}
+	// Task 1d: the SAME guard the spreads table and the evaluator apply,
+	// re-run here at decision time against the current book (peers for
+	// the median test) — the executor never acts on a lane whose two
+	// prices cannot be one asset, nor on one with no size to fill.
+	if g := screener.GuardLane(qa, qb, x.svc.Book.QuotesFor(s.Lane.Base, s.Lane.Quote), x.maxPlausibleSpreadBps()); g.SkipReason() != "" {
+		x.skip(ctx, s, ev, now, g.SkipReason(), guardDetail(g))
+		return
+	}
 	fA, okA := x.spotFee(s.Lane.VenueA)
 	fB, okB := x.spotFee(s.Lane.VenueB)
 	if !okA || !okB {
@@ -222,6 +230,13 @@ func (x *Executor) midFor(v screener.Venue, base, quote string) (decimal.Decimal
 		return decimal.Decimal{}, false
 	}
 	return q.Bid.Add(q.Ask).Div(decTwo), true
+}
+
+func guardDetail(g screener.LaneGuard) string {
+	if g.Detail != "" {
+		return g.Detail
+	}
+	return "top-of-book size not published by the venue's bulk ticker"
 }
 
 func ageOK(a, b, poll time.Duration) bool {

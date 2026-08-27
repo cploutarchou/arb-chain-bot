@@ -19,10 +19,40 @@ type Settings struct {
 	// / next-funding time is not in the bulk ticker (T-066: OKX, Bitget,
 	// MEXC), round-robin over the contract list; last-known values are
 	// carried for the rest. 0 means the collector default (10).
-	FundingCallsPerPoll int                     `json:"funding_calls_per_poll"`
-	MinLiquidityQuote   decimal.Decimal         `json:"min_liquidity_quote"`
-	Venues              map[Venue]VenueSettings `json:"venues"`
-	Paper               PaperSettings           `json:"paper"`
+	FundingCallsPerPoll int             `json:"funding_calls_per_poll"`
+	MinLiquidityQuote   decimal.Decimal `json:"min_liquidity_quote"`
+	// MaxPlausibleSpreadBps is the asset-identity guard (guard.go): a
+	// cross-venue lane whose two mids differ by more than this is
+	// flagged suspect_mismatch (same ticker, different asset) and is
+	// excluded from the spreads table, the alert evaluator and the
+	// paper executor. Default 2000 (20 %); 100..100000; hot. Zero in a
+	// stored document (predating the field) means the default — Load
+	// normalises it so the API always shows the effective value.
+	MaxPlausibleSpreadBps decimal.Decimal         `json:"max_plausible_spread_bps"`
+	Venues                map[Venue]VenueSettings `json:"venues"`
+	Paper                 PaperSettings           `json:"paper"`
+}
+
+var (
+	minPlausibleSpreadBps = decimal.NewFromInt(100)
+	maxPlausibleSpreadBps = decimal.NewFromInt(100000)
+)
+
+// EffectiveMaxPlausibleSpreadBps returns max_plausible_spread_bps, or
+// the default when the document has none (see the field comment).
+func (s Settings) EffectiveMaxPlausibleSpreadBps() decimal.Decimal {
+	if !s.MaxPlausibleSpreadBps.IsPositive() {
+		return DefaultMaxPlausibleSpreadBps
+	}
+	return s.MaxPlausibleSpreadBps
+}
+
+// Normalised fills defaults for fields a stored document predates so
+// the active snapshot never exposes a zero that means "default".
+func (s Settings) Normalised() Settings {
+	c := s.Clone()
+	c.MaxPlausibleSpreadBps = s.EffectiveMaxPlausibleSpreadBps()
+	return c
 }
 
 // VenueSettings is one venue's screener configuration. Fees are the
@@ -80,6 +110,9 @@ func (s Settings) Validate() error {
 	}
 	if s.MinLiquidityQuote.IsNegative() {
 		return fmt.Errorf("%w: min_liquidity_quote must be >= 0", ErrInvalid)
+	}
+	if v := s.MaxPlausibleSpreadBps; !v.IsZero() && (v.LessThan(minPlausibleSpreadBps) || v.GreaterThan(maxPlausibleSpreadBps)) {
+		return fmt.Errorf("%w: max_plausible_spread_bps must be 100..100000, got %s", ErrInvalid, v)
 	}
 	if len(s.Venues) == 0 {
 		return fmt.Errorf("%w: at least one venue must be configured", ErrInvalid)
@@ -147,8 +180,10 @@ func Defaults() Settings {
 		PollIntervalS:       5,
 		FundingCallsPerPoll: 10,
 		MinLiquidityQuote:   decimal.NewFromInt(500),
-		Venues:              venues,
-		Paper:               PaperSettings{Balances: map[Venue]map[string]decimal.Decimal{}},
+		// 20 %: see Settings.MaxPlausibleSpreadBps / guard.go.
+		MaxPlausibleSpreadBps: DefaultMaxPlausibleSpreadBps,
+		Venues:                venues,
+		Paper:                 PaperSettings{Balances: map[Venue]map[string]decimal.Decimal{}},
 	}
 }
 
@@ -163,6 +198,8 @@ func FieldTiming(s Settings) map[string]string {
 		"poll_interval_s":        "hot",
 		"funding_calls_per_poll": "hot",
 		"min_liquidity_quote":    "hot",
+		// guard.go reads the active snapshot on every request/tick.
+		"max_plausible_spread_bps": "hot",
 	}
 	ids := make([]Venue, 0, len(s.Venues))
 	for id := range s.Venues {
