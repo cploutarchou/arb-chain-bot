@@ -8,6 +8,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/campaign"
+	"github.com/cploutarchou/arb-chain-bot/internal/jobrun"
 	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
 )
 
@@ -92,6 +93,14 @@ func (s *Server) opsRoutes(mux *http.ServeMux) {
 		switch {
 		case errors.Is(err, campaign.ErrBusy):
 			WriteError(w, http.StatusConflict, "campaign_busy", err.Error(), correlationID(r))
+			return
+		case errors.Is(err, jobrun.ErrNotStarted):
+			// review P3(h): the runner's own Run() component hasn't
+			// pinned its lifetime context yet (a startup race, not a bad
+			// request) — 503, not 400, and worth its own code so the
+			// console can distinguish "try again in a moment" from "fix
+			// your request".
+			WriteError(w, http.StatusServiceUnavailable, "not_ready", "campaign runner is starting up; try again shortly", correlationID(r))
 			return
 		case err != nil:
 			WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), correlationID(r))

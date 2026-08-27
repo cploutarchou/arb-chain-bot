@@ -59,24 +59,48 @@ func (w *latencyWindow) Snapshot() LatencySnapshot {
 }
 
 // rateSampler turns a cumulative counter into a per-second rate by
-// delta-sampling across calls (BL-18: message rates without adding a
-// hot-path timer). The first call after construction/reset has no prior
-// sample and reports zero, honestly, rather than a nonsensical spike.
+// delta-sampling on a fixed cadence (BL-18: message rates without adding
+// a hot-path timer). The first sample after construction/reset has no
+// prior point and reports zero, honestly, rather than a nonsensical
+// spike.
+//
+// sample() MUST be driven by exactly one writer on a fixed tick (the
+// engine's staleness-sweep ticker in Run) — it advances the delta
+// window as a side effect. The earlier shape had HTTP handlers call the
+// delta-advancing method directly on every poll; with more than one
+// poller in flight (two browser tabs, web + Telegram, etc.) each
+// request "consumed" part of the interval, so whichever request landed
+// second saw an understated rate — the interval it measured was shorter
+// than the wall-clock gap since the true previous sample. current() is
+// the read side: any number of concurrent callers may call it and it
+// never mutates the window, so readers can no longer race the sampler.
 type rateSampler struct {
-	mu      sync.Mutex
-	lastAt  time.Time
-	lastVal int64
+	mu        sync.Mutex
+	lastAt    time.Time
+	lastVal   int64
+	rate      float64
+	sampledAt time.Time
 }
 
-func (s *rateSampler) rate(now time.Time, val int64) float64 {
+// sample advances the delta window by one tick. Call it from exactly one
+// goroutine on a fixed cadence (see Engine.Run's staleness sweep).
+func (s *rateSampler) sample(now time.Time, val int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var r float64
 	if !s.lastAt.IsZero() {
 		if dt := now.Sub(s.lastAt).Seconds(); dt > 0 {
-			r = float64(val-s.lastVal) / dt
+			s.rate = float64(val-s.lastVal) / dt
 		}
 	}
 	s.lastAt, s.lastVal = now, val
-	return r
+	s.sampledAt = now
+}
+
+// current returns the most recently sampled rate and when it was taken.
+// It is a plain read: safe for any number of concurrent callers, and it
+// never advances the delta window (contrast with sample()).
+func (s *rateSampler) current() (rate float64, sampledAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rate, s.sampledAt
 }

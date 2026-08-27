@@ -7,19 +7,19 @@ import (
 )
 
 // readModel adapts engine state to the API's read groups. Every method
-// is nil-safe before readiness and answers honest emptiness. rate is a
-// pointer so every copy of readModel handed out by NewReadModel (each
-// interface method call receives one, since Health has a value
-// receiver) shares the same delta-sampling state across polls.
+// is nil-safe before readiness and answers honest emptiness. The
+// message-rate sampler now lives on the Engine (BL-18 review P2-1):
+// readModel only ever reads it, so any number of concurrent pollers
+// (multiple browser tabs, web + Telegram) see the same value instead of
+// each stealing part of the previous poller's delta window.
 type readModel struct {
-	e    *Engine
-	s    *strategy.Service
-	rate *rateSampler
+	e *Engine
+	s *strategy.Service
 }
 
 // NewReadModel wires the adapter (exported for component assembly).
 func NewReadModel(e *Engine, s *strategy.Service) readModel {
-	return readModel{e: e, s: s, rate: &rateSampler{}}
+	return readModel{e: e, s: s}
 }
 
 func (r readModel) RecentOpportunities(limit int) any {
@@ -123,13 +123,17 @@ func (r readModel) Health() any {
 	r.e.mu.RUnlock()
 	if feed != nil {
 		frames := feed.Stats.Frames.Load()
+		var msgsPerSec float64
+		if rate := r.e.currentMsgRate(); rate != nil {
+			msgsPerSec, _ = rate.current()
+		}
 		out["feed"] = map[string]any{
 			"frames":       frames,
 			"reconnects":   feed.Stats.Reconnects.Load(),
 			"api_errors":   feed.Stats.APIErrors.Load(),
 			"resyncs":      feed.Stats.Resyncs.Load(),
 			"seq_gaps":     feed.Stats.SeqGaps.Load(),
-			"msgs_per_sec": r.rate.rate(time.Now(), frames),
+			"msgs_per_sec": msgsPerSec,
 		}
 		if window := r.e.currentLatency(); window != nil {
 			out["feed"].(map[string]any)["latency_ms"] = window.Snapshot()

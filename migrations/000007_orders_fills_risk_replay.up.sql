@@ -3,6 +3,19 @@
 -- on opportunities (BL-27), and the console-driven replay-run job table
 -- (BL-17). risk_events already exists (migration 000001) — nothing to
 -- add there.
+--
+-- review P3(i): CREATE INDEX below takes an ACCESS EXCLUSIVE lock on its
+-- table for the duration of the build (no CONCURRENTLY — illegal inside
+-- a transaction, and this migration deliberately keeps its
+-- BEGIN/COMMIT wrapper for atomicity). On an EMPTY/small table (true for
+-- every environment this migration set has ever run against — compose's
+-- `migrate` service runs it BEFORE arbd starts, so orders/fills are
+-- still empty) the build is effectively instant and the lock is
+-- invisible. On an established production table with meaningful data
+-- already in orders/fills, the same statement would hold that lock for
+-- the whole build and block concurrent readers/writers for however long
+-- that takes — run it in a maintenance window, or CREATE INDEX
+-- CONCURRENTLY outside a transaction, in that case.
 
 BEGIN;
 

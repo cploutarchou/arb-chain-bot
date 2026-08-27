@@ -444,8 +444,14 @@ runs **inside** the service's writer lock via `ApplyAuthorized`.
 // GET  /api/v1/platform/settings → {version, created_by, created_at,
 //        settings, plan, restart:RestartStatus,
 //        field_timing: {"venues.binance.symbols":"restart","telegram.allowlist":"hot"}}
-// POST /api/v1/platform/settings          {"settings": {…}}
-// POST /api/v1/platform/settings/preview  {"settings": {…}}  → identical body, no write
+// POST /api/v1/platform/settings          {"settings": {…}, "parent_version": n}
+//   parent_version is REQUIRED (review P3(g), T-058): every web-console
+//   apply/rollback follows a GET, so the client always has a real
+//   version to echo back; omitting it is 400 parent_version_required,
+//   not a silently unchecked write. Telegram/system callers go through
+//   ApplyAuthorized directly (expectedParent=0), not this HTTP path, so
+//   they are unaffected.
+// POST /api/v1/platform/settings/preview  {"settings": {…}}  → identical body, no write, no parent_version needed
 //   → {"diff": {"venues.binance.symbols": {"old":"[…]","new":"[…]"}},
 //      "sections": ["venues"], "requires_restart": true,
 //      "plan": {"markets":7,"triangles":6,"rejected_untradeable":2}}

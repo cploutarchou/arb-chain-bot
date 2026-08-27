@@ -293,7 +293,7 @@ func TestPlatformApplyRejectsUnbuiltVenueAndWarnsOnIdleAdvisor(t *testing.T) {
 
 	doc := platformTestSettings()
 	doc.Venues["okx"] = doc.Venues["binance"]
-	rec := postPlatform(t, mux, cookie, csrf, "/api/v1/platform/settings", map[string]any{"settings": doc})
+	rec := postPlatform(t, mux, cookie, csrf, "/api/v1/platform/settings", map[string]any{"settings": doc, "parent_version": 1})
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "connector_unavailable") || !strings.Contains(rec.Body.String(), "T-050") {
 		t.Fatalf("okx apply = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -301,7 +301,7 @@ func TestPlatformApplyRejectsUnbuiltVenueAndWarnsOnIdleAdvisor(t *testing.T) {
 	// LIVE is refused by name through the API too.
 	doc = platformTestSettings()
 	doc.Platform.Mode = "LIVE"
-	rec = postPlatform(t, mux, cookie, csrf, "/api/v1/platform/settings", map[string]any{"settings": doc})
+	rec = postPlatform(t, mux, cookie, csrf, "/api/v1/platform/settings", map[string]any{"settings": doc, "parent_version": 1})
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "live trading is permanently disabled") {
 		t.Fatalf("LIVE apply = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -313,7 +313,7 @@ func TestPlatformApplyRejectsUnbuiltVenueAndWarnsOnIdleAdvisor(t *testing.T) {
 	}
 	doc = platformTestSettings()
 	doc.AI.Enabled = true
-	rec = postPlatform(t, mux, cookie, csrf, "/api/v1/platform/settings", map[string]any{"settings": doc})
+	rec = postPlatform(t, mux, cookie, csrf, "/api/v1/platform/settings", map[string]any{"settings": doc, "parent_version": 1})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"warnings":["ai.enabled is true but the advisor is not running: no anthropic_api_key"]`) {
 		t.Fatalf("ai apply = %d: %s", rec.Code, rec.Body.String())
 	}

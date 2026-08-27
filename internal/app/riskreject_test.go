@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -49,5 +50,76 @@ func TestShouldPersistRiskRejectBoundsMapSize(t *testing.T) {
 	e.oppMu.Unlock()
 	if size > 4096 {
 		t.Fatalf("cooldown map grew unbounded: %d entries", size)
+	}
+}
+
+// TestShouldPersistRiskRejectAtCapStillUpdatesKnownKeys is the review
+// P2-2 regression: once the map is AT capacity, a key that is already
+// IN the map and whose cooldown has expired must still be allowed
+// through (it updates in place, it does not grow the map) — the bug was
+// that the old cap check ran unconditionally and refused this case too,
+// so risk_events silently stopped recording for triangles that kept
+// rejecting for the SAME reason once any 4096 distinct pairs had ever
+// been seen.
+func TestShouldPersistRiskRejectAtCapStillUpdatesKnownKeys(t *testing.T) {
+	e := &Engine{}
+	now := time.Unix(1_700_000_000, 0)
+
+	// Fill the map to capacity with distinct, never-repeating keys.
+	for i := 0; i < 4096; i++ {
+		key := fmt.Sprintf("tri-%d", i)
+		if !e.shouldPersistRiskReject(key, "MIN_EDGE", now) {
+			t.Fatalf("seeding entry %d: expected due", i)
+		}
+	}
+	e.oppMu.Lock()
+	size := len(e.rejectPersistedAt)
+	e.oppMu.Unlock()
+	if size < 4096 {
+		t.Fatalf("setup: map not at capacity: %d entries", size)
+	}
+
+	// A NEW, never-before-seen key must be refused (still bounded) while
+	// at capacity and before any entries expire.
+	if e.shouldPersistRiskReject("brand-new-triangle", "MIN_EDGE", now) {
+		t.Fatal("a genuinely new key at capacity must be refused")
+	}
+
+	// An EXISTING key whose cooldown has expired must still be allowed
+	// through even though the map is at capacity — this is the bug: the
+	// old code refused it too.
+	later := now.Add(riskRejectCooldown + time.Second)
+	if !e.shouldPersistRiskReject("tri-0", "MIN_EDGE", later) {
+		t.Fatal("an existing key past its cooldown must persist even at capacity (P2-2 regression)")
+	}
+
+	// The cap-refusal warning logs at most once, not once per refused
+	// call.
+	e.oppMu.Lock()
+	logged := e.rejectCapLogged
+	e.oppMu.Unlock()
+	if !logged {
+		t.Fatal("expected the at-capacity warning to have been recorded")
+	}
+}
+
+// TestShouldPersistRiskRejectAtCapPrunesExpiredEntries covers the other
+// half of the P2-2 fix: once entries whose cooldown has elapsed exist in
+// an at-capacity map, a genuinely NEW key must be able to reclaim that
+// space instead of being refused forever.
+func TestShouldPersistRiskRejectAtCapPrunesExpiredEntries(t *testing.T) {
+	e := &Engine{}
+	now := time.Unix(1_700_000_000, 0)
+
+	for i := 0; i < 4096; i++ {
+		key := fmt.Sprintf("tri-%d", i)
+		if !e.shouldPersistRiskReject(key, "MIN_EDGE", now) {
+			t.Fatalf("seeding entry %d: expected due", i)
+		}
+	}
+
+	later := now.Add(riskRejectCooldown + time.Second)
+	if !e.shouldPersistRiskReject("brand-new-triangle", "MIN_EDGE", later) {
+		t.Fatal("a new key must reclaim space once earlier entries have expired")
 	}
 }

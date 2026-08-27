@@ -73,6 +73,42 @@ func TestReportCSVNeutralizesFormulaPrefixedValues(t *testing.T) {
 	}
 }
 
+// TestReportCSVDoesNotMangleNegativeNumbers is the review P3(f)
+// regression: a well-formed number that happens to start with - or +
+// (realized PnL, drawdown, bps deltas — the common case in this
+// financial report, not the exception) must reach the exported CSV as a
+// plain numeric cell, not an apostrophe-prefixed text cell. The
+// apostrophe defense stays in force for genuinely formula-shaped values
+// (TestReportCSVNeutralizesFormulaPrefixedValues already covers that).
+func TestReportCSVDoesNotMangleNegativeNumbers(t *testing.T) {
+	rep := Report{
+		PnL:      []AssetSection{{Asset: "USDT", Realized: "-16.94204", Fees: "0.01", Drawdown: "-25"}},
+		Slippage: SlippageSection{AvgBps: "+1.5"},
+	}
+	raw, err := rep.CSV()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd := csv.NewReader(strings.NewReader(string(raw)))
+	records, err := rd.ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]string{}
+	for _, row := range records[1:] {
+		found[row[0]+"."+row[1]] = row[2]
+	}
+	if got := found["pnl[0].realized"]; got != "-16.94204" {
+		t.Fatalf("pnl[0].realized = %q, want the untouched number -16.94204 (no apostrophe prefix)", got)
+	}
+	if got := found["pnl[0].drawdown"]; got != "-25" {
+		t.Fatalf("pnl[0].drawdown = %q, want -25", got)
+	}
+	if got := found["slippage.avg_bps"]; got != "+1.5" {
+		t.Fatalf("slippage.avg_bps = %q, want +1.5", got)
+	}
+}
+
 func TestReportCSVRowsSectionColumnIsAlwaysTheTopLevelField(t *testing.T) {
 	rep := Report{
 		SystemHealth: SystemSection{Mode: "PAPER", Ready: true},

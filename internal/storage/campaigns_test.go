@@ -65,3 +65,43 @@ func TestCampaignRunVerdictsRoundTrip(t *testing.T) {
 		t.Fatal("run missing from list")
 	}
 }
+
+// TestCampaignRunOwnerHeartbeatRoundTrip covers migration 000009's
+// owner_id/heartbeat_at columns (review P3(h)): a row with both set
+// round-trips exactly, and a row with neither comes back as an honest
+// zero value, not an error — jobrun.Reclaimable treats that zero as
+// "always reclaimable", so the NULL round trip matters for correctness,
+// not just plumbing.
+func TestCampaignRunOwnerHeartbeatRoundTrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	hb := t0.Add(5 * time.Second)
+	stamped := campaign.Run{
+		ID: "run-hb", Recording: "REC1", Request: campaign.Request{Recording: "REC1"},
+		Status: campaign.StatusRunning, CreatedAt: t0,
+		OwnerID: "owner-abc123", HeartbeatAt: hb,
+	}
+	if err := s.UpsertCampaignRun(ctx, stamped); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetCampaignRun(ctx, "run-hb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OwnerID != "owner-abc123" || !got.HeartbeatAt.Equal(hb) {
+		t.Fatalf("owner/heartbeat round trip = %+v, want owner=owner-abc123 heartbeat=%v", got, hb)
+	}
+
+	bare := campaign.Run{ID: "run-nohb", Recording: "REC1", Request: campaign.Request{Recording: "REC1"}, Status: campaign.StatusQueued, CreatedAt: t0}
+	if err := s.UpsertCampaignRun(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	got2, err := s.GetCampaignRun(ctx, "run-nohb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.OwnerID != "" || !got2.HeartbeatAt.IsZero() {
+		t.Fatalf("unstamped row = %+v, want owner=\"\" heartbeat=zero", got2)
+	}
+}
