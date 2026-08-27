@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
@@ -101,6 +102,36 @@ type Server struct {
 	Triangles TriangleReader
 	// Replays, when set, backs the console-driven replay routes (BL-17).
 	Replays ReplayService
+	// Mode, when set, reports the operating mode for /system/status
+	// (T-059: the engine's RUNNING mode in engine profiles, the
+	// configured document's mode in the API profile). nil falls back to
+	// the boot cfg.Mode.
+	Mode func() string
+	// Secrets, when set, backs the write-only secrets routes (T-060).
+	Secrets SecretsAdmin
+	// AIStatus, when set, backs GET /api/v1/ai/status and the
+	// "warnings" field on a platform-settings apply.
+	AIStatus func() AIRuntimeStatus
+
+	// allowedOrigin is platform.allowed_origin (hot, D7): the websocket
+	// origin check reads it through an atomic accessor because the
+	// Supervisor never rebuilds the api.Server.
+	allowedOrigin atomic.Pointer[string]
+}
+
+// AIRuntimeStatus is the advisor's runtime status line (settings-
+// expansion §4.1): the configured intent (enabled) versus what is
+// actually installed (running), with the reason when they differ.
+type AIRuntimeStatus struct {
+	Enabled       bool       `json:"enabled"`
+	Running       bool       `json:"running"`
+	Reason        string     `json:"reason,omitempty"`
+	Provider      string     `json:"provider"`
+	Model         string     `json:"model"`
+	KeySource     string     `json:"key_source,omitempty"` // vault | env
+	AnalysesToday int        `json:"analyses_today"`
+	MaxPerDay     int        `json:"max_per_day"`
+	LastAnalysis  *time.Time `json:"last_analysis,omitempty"`
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -126,10 +157,34 @@ func NewServer(cfg config.Bootstrap, log *slog.Logger, info BuildInfo) *Server {
 	if info.Version == "" {
 		info.Version = "dev"
 	}
-	return &Server{cfg: cfg, log: log, info: info, start: time.Now(), csrfKey: newCSRFKey()}
+	s := &Server{cfg: cfg, log: log, info: info, start: time.Now(), csrfKey: newCSRFKey()}
+	origin := cfg.AllowedOrigin
+	s.allowedOrigin.Store(&origin)
+	return s
 }
 
 func (s *Server) Name() string { return "api" }
+
+// SetAllowedOrigin applies platform.allowed_origin at runtime (hot).
+func (s *Server) SetAllowedOrigin(origin string) {
+	s.allowedOrigin.Store(&origin)
+}
+
+// AllowedOrigin returns the origin currently admitted cross-origin.
+func (s *Server) AllowedOrigin() string {
+	if p := s.allowedOrigin.Load(); p != nil {
+		return *p
+	}
+	return s.cfg.AllowedOrigin
+}
+
+// mode resolves the reported operating mode (see Mode).
+func (s *Server) mode() string {
+	if s.Mode != nil {
+		return s.Mode()
+	}
+	return string(s.cfg.Mode)
+}
 
 // Run serves until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context) error {
@@ -185,7 +240,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/system/status", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
 		WriteData(w, http.StatusOK, map[string]any{
-			"mode":       string(s.cfg.Mode),
+			"mode":       s.mode(),
 			"version":    s.info.Version,
 			"commit":     s.info.Commit,
 			"uptime_sec": int64(time.Since(s.start).Seconds()),
@@ -230,6 +285,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.replayRoutes(mux)
 	s.usersRoutes(mux)
 	s.platformRoutes(mux)
+	s.secretsRoutes(mux)
 	s.telegramRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):

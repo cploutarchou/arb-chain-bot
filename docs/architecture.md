@@ -387,6 +387,22 @@ token) move to a `secrets` table encrypted with AES-256-GCM under
 `SecretSource`, write-only over the API, with a closed two-name registry:
 no exchange trading key is ever stored, and live trading stays disabled.
 
+Implemented surface (backend): `platform.ModeTable`/`VenueTable`/
+`AIProviderTable` are the single source for `GET /api/v1/platform/
+capabilities` (and the `/platform/venues` alias); `ai.Switch` holds the
+swappable advisor, `ai.Scheduler` re-arms from `ai.schedule` at every
+wake, and `ai.Service` enforces `budget.max_analyses_per_day`
+(per-process UTC counter) and passes `max_output_tokens` to the provider;
+`app.SetLogLevel` drives a package-scoped `slog.LevelVar`;
+`api.Server.SetAllowedOrigin` feeds the websocket origin check; `app.
+Supervisor` names a mode transition in `pending_reasons`
+(`"platform settings v9: mode MARKET_DATA→PAPER"`) and `Engine.Mode()`
+reports the running mode (snapshotted per run). Tables: `secrets(name PK,
+ciphertext, nonce, key_id, updated_at, updated_by)`. Routes: `GET/PUT/
+DELETE /api/v1/secrets[/{name}]`, `GET /api/v1/ai/status`. Audit actions:
+`secret.write`, `secret.delete` (entity `secret:{name}`, no before
+payload). The `health` topic's `mode` is now `{running, configured}`.
+
 ## 14. Observability
 
 OTel SDK with Prometheus exporter at `/metrics`; metric set per SKILL.md

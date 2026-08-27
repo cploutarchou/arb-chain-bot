@@ -71,10 +71,14 @@ type Service struct {
 	// not care about symbol/triangle validity may omit it); the wiring
 	// always sets it in production.
 	Catalog Catalog
-	// Mode, when non-empty, makes Apply/Rollback enforce
-	// Settings.ValidatePaperMode (an enabled venue needs paper_enabled
-	// set while the process runs in PAPER mode).
-	Mode config.Mode
+
+	// seed is the bootstrap Load was given. It survives only as the v1
+	// seed and the WithDefaults fallback (T-059 §2.2/D3): every stored
+	// payload that becomes a Settings — Load, Get, rollback — is passed
+	// through Settings.WithDefaults(seed) so a pre-expansion row without
+	// "platform"/"ai" keys keeps validating after the deploy.
+	seed    config.Bootstrap
+	seedSet bool
 
 	mu     sync.Mutex // serializes writers (Apply/Rollback/Load)
 	cur    atomic.Pointer[Snapshot]
@@ -91,9 +95,16 @@ func NewService(store Store, log *slog.Logger, audit func(context.Context, Audit
 func (s *Service) Load(ctx context.Context, cfg config.Bootstrap) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.seed, s.seedSet = cfg, true
 	snap, ok, err := s.store.Active(ctx)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if _, note := SeedMode(cfg.Mode); note != "" {
+		// Named substitution (§2.2): ARB_MODE=SHADOW/REPLAY/BACKTEST is a
+		// legal env value that the document's own validator refuses, so
+		// the seed (and the WithDefaults fallback) run as MARKET_DATA.
+		s.log.Warn(note)
 	}
 	if !ok {
 		def := Seed(cfg)
@@ -118,7 +129,8 @@ func (s *Service) Load(ctx context.Context, cfg config.Bootstrap) (Snapshot, err
 		}
 		s.log.Info("platform settings seeded", "version", version)
 	} else {
-		s.log.Info(fmt.Sprintf("env symbol/asset/balance/allowlist variables ignored; platform settings v%d is authoritative", snap.Version))
+		s.log.Info(fmt.Sprintf("env symbol/asset/balance/allowlist/mode/ai variables ignored; platform settings v%d is authoritative", snap.Version))
+		snap.Settings = s.withDefaults(snap.Settings)
 	}
 	if err := snap.Settings.Validate(); err != nil {
 		return Snapshot{}, fmt.Errorf("platform: stored active version %d invalid: %w", snap.Version, err)
@@ -190,16 +202,33 @@ func (s *Service) RollbackAuthorized(ctx context.Context, actor, source string, 
 // RollbackAuthorizedExpect is RollbackAuthorized with the same
 // optimistic-concurrency check as ApplyAuthorizedExpect.
 func (s *Service) RollbackAuthorizedExpect(ctx context.Context, actor, source string, version int64, authorize Authorize, expectedParent int64) (Snapshot, error) {
-	old, err := s.store.Get(ctx, version)
+	old, err := s.Get(ctx, version)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	return s.applyLocked(ctx, actor, source, "settings.rollback", old.Settings, authorize, expectedParent)
 }
 
-// Get returns one stored version.
+// Get returns one stored version, normalized through WithDefaults (D3)
+// so a pre-expansion payload reads — and rolls back — as a complete
+// document.
 func (s *Service) Get(ctx context.Context, version int64) (Snapshot, error) {
-	return s.store.Get(ctx, version)
+	snap, err := s.store.Get(ctx, version)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snap.Settings = s.withDefaults(snap.Settings)
+	return snap, nil
+}
+
+// withDefaults applies Settings.WithDefaults against the Load seed; a
+// service that was never Loaded (impossible in production wiring) has
+// nothing to fill from and returns the document unchanged.
+func (s *Service) withDefaults(doc Settings) Settings {
+	if !s.seedSet {
+		return doc
+	}
+	return doc.WithDefaults(s.seed)
 }
 
 // List returns recent versions, newest first.
@@ -215,12 +244,9 @@ func (s *Service) PlanDiff(doc Settings) (map[string]strategy.Change, error) {
 
 func (s *Service) applyLocked(ctx context.Context, actor, source, action string, doc Settings, authorize Authorize, expectedParent int64) (Snapshot, error) {
 	if err := doc.Validate(); err != nil {
-		return Snapshot{}, fmt.Errorf("%w: %s", ErrInvalid, err)
-	}
-	if s.Mode != "" {
-		if err := doc.ValidatePaperMode(s.Mode); err != nil {
-			return Snapshot{}, fmt.Errorf("%w: %s", ErrInvalid, err)
-		}
+		// Both sentinels stay reachable through errors.Is: the API maps
+		// ErrConnectorUnavailable to its own code before ErrInvalid.
+		return Snapshot{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if s.Catalog != nil {
 		// D8: a document that cannot build a topology is rejected HERE,

@@ -40,6 +40,8 @@ const exchangeInfoFixture = `{
 }`
 
 func testEngineSettings() platform.Settings {
+	// T-059: the fixture predates the platform/ai sections; WithDefaults
+	// fills them from a PAPER seed exactly as Service.Load would.
 	return platform.Settings{
 		Venues: map[string]platform.VenueSettings{
 			"binance": {
@@ -53,7 +55,7 @@ func testEngineSettings() platform.Settings {
 			},
 		},
 		Paper: platform.PaperSettings{Balances: map[string]string{"USDT": "10000"}},
-	}
+	}.WithDefaults(config.Bootstrap{Mode: config.ModePaper, AIModel: "claude-sonnet-5"})
 }
 
 // newTestEngine builds an engine wired against a fake exchangeInfo

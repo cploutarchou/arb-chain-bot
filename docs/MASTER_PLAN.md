@@ -950,7 +950,8 @@ data-flow,security,risk}.md`.
   except the DB-backed suites when `ARB_TEST_DATABASE_URL` is unset).
 
 ### T-059 Operating mode + provider settings + hot log level
-- status: DESIGNED (2026-08-27) — `docs/design/settings-expansion.md` §2, §4.
+- status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §2, §4;
+  console sections (design §6) are the frontend follow-up.
   Moves the remaining operator-relevant env-only fields into the T-057
   versioned document: `platform.mode` (restart-scoped, enum
   MARKET_DATA/RECORD/PAPER/SHADOW — LIVE rejected by name, REPLAY/BACKTEST
@@ -980,7 +981,8 @@ data-flow,security,risk}.md`.
   `internal/ai` switch/cadence/budget tests; `-race` green.
 
 ### T-060 Secrets vault (AES-256-GCM, write-only API)
-- status: DESIGNED (2026-08-27) — `docs/design/settings-expansion.md` §3.
+- status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §3;
+  the Security console section is the frontend follow-up.
   `secrets` table (migration **000008**), AES-256-GCM under
   `ARB_SECRET_KEY` (base64, exactly 32 bytes) with the secret name as AAD
   and a `key_id` fingerprint per row; closed two-entry registry
@@ -999,7 +1001,8 @@ data-flow,security,risk}.md`.
   disposable Postgres.
 
 ### T-061 Venue availability + capabilities route
-- status: DESIGNED (2026-08-27) — `docs/design/settings-expansion.md` §5.
+- status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §5;
+  the venue cards/availability badges are the frontend follow-up.
   `platform.VenueTable()` lists OKX/Bybit/Bitget/Gate/MEXC honestly as
   `available:false` with the blocking task id, while `CompiledVenues` stays
   the enforcement gate. New `GET /api/v1/platform/capabilities` (modes,
@@ -1306,3 +1309,34 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   `go vet`, and `golangci-lint run ./...` clean repo-wide. Frontend
   (design §4, BL-12) is explicitly NOT built this round — T-057 is
   IMPLEMENTED (backend); the console UI is a follow-up.
+- 2026-08-27 (T-059/T-060/T-061 backend): settings expansion implemented
+  per `docs/design/settings-expansion.md`. `internal/platform` gains the
+  `platform` (mode/log_level/allowed_origin) and `ai` sections,
+  `telegram.disabled`, `ModeTable`/`Settable`/`ValidateMode` (LIVE and
+  REPLAY/BACKTEST refused by name, SHADOW enumerated but unavailable),
+  `AIProviderTable`, `VenueTable` (okx/bybit/bitget/gate/mexc listed with
+  the blocking task; `ErrConnectorUnavailable` → `400
+  connector_unavailable`), `WithDefaults` applied at Load/Get/rollback
+  with the raw-JSON-literal tests, and every non-settable `ARB_MODE`
+  seeded as `MARKET_DATA` with a named log line. `internal/ai` gains
+  `Switch` (always-constructed Service/Scheduler; disabled is a skip, not
+  a failure), a re-armable scheduler reading `ai.schedule` at every wake,
+  the per-process daily cap and `MaxTokens`. `internal/app`: hot
+  `SetLogLevel` (package `slog.LevelVar`), `Engine.Mode()` from the
+  applied document (per-run snapshot), paper routes wired
+  unconditionally, `allowSet` mute, supervisor pending reason naming the
+  mode transition, `buildSecrets`/`buildAdvisor` over the secrets chain.
+  New `internal/secrets` (AES-256-GCM, name as AAD, `key_id`, closed
+  two-name registry, vault→env `Chain`, `Manager` status view) with
+  migration 000008 and `internal/storage/secrets.go`. `internal/api`:
+  `GET /platform/capabilities`, `/platform/venues` alias, `GET/PUT/DELETE
+  /secrets`, `GET /ai/status`, hot `allowed_origin`, apply-time
+  `warnings`, `field_timing` extended. Tests: platform (mode table, AI
+  bounds, origin/log level, upgrade at load/get/rollback, seed mapping,
+  reflect-over-sections), secrets crypto suite, ai switch/cadence/budget/
+  max_tokens, app mode-from-settings restart with a real engine, log
+  level, allowSet, api RBAC/CSRF/unknown/unavailable + log-capture,
+  capabilities shape; storage round-trip against a disposable Postgres.
+  `go test -race ./...`, `go vet`, `gofmt` clean; `golangci-lint` reports
+  one pre-existing gosec finding in `internal/simulation/paper.go`
+  (out of scope for this task). Console work (design §6) NOT built.

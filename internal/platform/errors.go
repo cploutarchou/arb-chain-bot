@@ -20,6 +20,11 @@ var ErrUnknownSymbol = errors.New("platform: unknown symbol")
 // (callers map it to 400 no_triangles).
 var ErrNoTriangles = errors.New("platform: no triangles")
 
+// ErrConnectorUnavailable reports a venue that VenueTable lists but
+// this build has no connector for (callers map it to 400
+// connector_unavailable; the message names the blocking task).
+var ErrConnectorUnavailable = errors.New("platform: connector unavailable")
+
 // ErrForbidden wraps authorization refusals from a section Authorize
 // gate (callers map it to 403).
 var ErrForbidden = errors.New("platform: change not permitted for this actor")

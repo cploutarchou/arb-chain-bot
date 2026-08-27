@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 )
@@ -60,7 +61,7 @@ func TestCatalogPersistedUnscopedValidatesUnconfiguredSymbol(t *testing.T) {
 			},
 		},
 		Paper: platform.PaperSettings{Balances: map[string]string{"USDT": "10000"}},
-	}
+	}.WithDefaults(config.Bootstrap{Mode: config.ModePaper, AIModel: "claude-sonnet-5"})
 	if err := doc.Validate(); err != nil {
 		t.Fatalf("doc.Validate: %v", err)
 	}

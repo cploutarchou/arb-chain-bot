@@ -186,6 +186,81 @@ install and are ignored afterward. Open **Settings** in the console:
   campaign run is in progress or a recording is active without
   `stop_recording`, and while a restart is already under way.
 
+## 3d. Operating mode, AI advisor, log level, origin and secrets (T-059..T-061)
+
+The same versioned document (`platform_settings`) now also carries the
+fields that used to be env-only. Every one of them is validated,
+versioned, audited, and tagged by the backend's `field_timing` as either
+**Immediate** (hot) or **On restart**; the environment seeds **version 1
+only** and is ignored afterward (the boot log says so).
+
+| Setting | Path | Timing | Notes |
+|---|---|---|---|
+| Operating mode | `platform.mode` | On restart | `MARKET_DATA`, `RECORD`, `PAPER`. `SHADOW` is listed but `available:false` (not wired into the engine). `LIVE` is refused by name — this platform never places real orders; `REPLAY`/`BACKTEST` are batch runs started from Replays/Campaigns, not process modes. An `ARB_MODE` of `SHADOW`/`REPLAY`/`BACKTEST` seeds `MARKET_DATA` and logs the substitution. |
+| Log level | `platform.log_level` | Immediate | `debug|info|warn|error`. `debug` logs every rejected opportunity — a measurable cost on the consumer path. |
+| Console origin | `platform.allowed_origin` | Immediate | Strict `scheme://host[:port]`. Same-host origins are always admitted, so a wrong value cannot lock the console out. |
+| AI advisor | `ai.*` | Immediate | `enabled`, `provider` (`anthropic` or `fake`; `openai` is listed as not built), `model`, `schedule.{hourly_minutes,daily_hours,weekly_hours}` (0 disables a cadence), `budget.{max_analyses_per_day,max_output_tokens}`. The daily cap is a per-process UTC counter and resets on a process restart. Enabling `anthropic` without a resolvable key is accepted and answered with a `warnings` entry; `GET /api/v1/ai/status` then reports `enabled:true, running:false, reason:"no anthropic_api_key"`. |
+| Telegram mute | `telegram.disabled` | Immediate | Mutes commands and pushes together. The field is deliberately negative so documents written before it existed keep delivering. |
+
+Routes (all under `/api/v1`, `view:system` to read, `system:config` +
+CSRF to write):
+
+- `GET /platform/capabilities` — `{modes, venues, ai_providers,
+  log_levels, secrets:{vault_configured,key_id|reason}, field_timing}`.
+  Every list entry is `{id, available, reason?}`; the console renders
+  from this, never from hardcoded enums. `GET /platform/venues` is an
+  alias over the same venue table (binance available; okx/bybit/bitget/
+  gate/mexc listed with the task that blocks them). Enabling an unbuilt
+  venue is `400 connector_unavailable` naming that task.
+- `GET /ai/status` (`view:dashboard`) — `{enabled, running, reason,
+  provider, model, key_source, analyses_today, max_per_day,
+  last_analysis}`.
+- `GET /system/status` reports the **running** mode; the `health` hub
+  topic carries `mode: {running, configured}` so a pending mode change
+  can be annotated until the restart applies it.
+
+**Changing the mode.** Apply the new `platform.mode`, then **Restart
+engine…**. Leaving `RECORD` with an active recording is refused
+(`409 recording_active`) unless you tick *Stop the active recording*;
+the Supervisor then stops it before cancelling so the last segment
+closes cleanly. Entering `PAPER` requires `paper_enabled` on every
+enabled venue and a `paper.balances` entry per starting asset — both
+are validated at apply time, never discovered at restart — and the new
+run mints a fresh paper session. Leaving `PAPER` closes the outgoing
+session; persisted cycles and opportunities are kept, in-memory balances
+reset.
+
+**Secrets vault.** Provider credentials (`anthropic_api_key`,
+`telegram_bot_token` — a closed registry; no exchange key can be stored)
+live in the `secrets` table (migration 000008), encrypted with
+AES-256-GCM under `ARB_SECRET_KEY`. Generate a key once and keep it out
+of the repo:
+
+```sh
+ARB_SECRET_KEY=$(head -c 32 /dev/urandom | base64)   # must decode to exactly 32 bytes
+```
+
+- Unset or invalid key → the vault stays closed (logged at boot), the
+  platform keeps running on the env-provided values, `GET /secrets`
+  answers `vault_configured:false` with the reason, and writes answer
+  `503 vault_unavailable`. The vault also needs `ARB_DATABASE_URL`.
+- `GET /api/v1/secrets` (`view:system`) lists presence, source
+  (`vault`/`env`), readability, `updated_at`/`updated_by` and `applies`
+  — never a value, never a prefix.
+- `PUT /api/v1/secrets/{name}` `{"value":"…"}` (`system:config`, CSRF)
+  stores the value (trimmed; printable ASCII; ≥20 and ≤4096 chars) and
+  audits `secret.write`. The Anthropic key applies **immediately**
+  (the advisor is rebuilt on the next settings swap and on the write);
+  the Telegram token applies on the next **process** restart — the
+  response's `applies` field says which.
+- `DELETE /api/v1/secrets/{name}` removes the row so resolution falls
+  back to the environment; audited as `secret.delete`.
+- A row written under a different `ARB_SECRET_KEY` is reported
+  `present:true, readable:false, reason:"encrypted under key …; this
+  process holds …"` and resolution falls through to env. Rotating the
+  master key is manual: `DELETE` every row, restart with the new key,
+  `PUT` every value.
+
 ## 4. Optional: full paper deployment
 
 ```sh

@@ -79,6 +79,11 @@ func (s *Server) platformRoutes(mux *http.ServeMux) {
 	// constants. Not behind `gate` (platform.Service): this is a static,
 	// compiled-in table, not a Settings read.
 	mux.HandleFunc("GET /api/v1/platform/venues", s.requirePerm(auth.PermViewSystem, s.handlePlatformVenues))
+	// GET /api/v1/platform/capabilities (T-061): modes, venues, AI
+	// providers — three lists, one shape, one source each — plus the
+	// secrets-vault status and the field_timing map. Static except for
+	// the vault status; not behind `gate` for the same reason as venues.
+	mux.HandleFunc("GET /api/v1/platform/capabilities", s.requirePerm(auth.PermViewSystem, s.handlePlatformCapabilities))
 	mux.HandleFunc("GET /api/v1/platform/settings", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformGet)))
 	mux.HandleFunc("GET /api/v1/platform/settings/versions", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformVersions)))
 	mux.HandleFunc("GET /api/v1/platform/settings/version/{n}", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformVersion)))
@@ -110,10 +115,27 @@ func (s *Server) handlePlatformGet(w http.ResponseWriter, r *http.Request) {
 	WriteData(w, http.StatusOK, s.platformView(r, s.Platform.Current()))
 }
 
-// handlePlatformVenues serves the compiled venue table (requirement a):
-// static, not tied to s.Platform being configured in this profile.
+// handlePlatformVenues serves the venue table (requirement a; T-061
+// makes it a thin alias over platform.VenueTable — one source function,
+// two routes, no divergence; fields are additive only).
 func (s *Server) handlePlatformVenues(w http.ResponseWriter, r *http.Request) {
-	WriteData(w, http.StatusOK, map[string]any{"venues": platform.CompiledVenueTable()})
+	WriteData(w, http.StatusOK, map[string]any{"venues": platform.VenueTable()})
+}
+
+// handlePlatformCapabilities serves the T-061 capability tables.
+func (s *Server) handlePlatformCapabilities(w http.ResponseWriter, r *http.Request) {
+	out := map[string]any{
+		"modes":        platform.ModeTable(),
+		"venues":       platform.VenueTable(),
+		"ai_providers": platform.AIProviderTable(),
+		"log_levels":   platform.LogLevels,
+		"secrets":      s.secretsVaultStatus(),
+	}
+	if s.Platform != nil {
+		snap := s.Platform.Current()
+		out["field_timing"] = platform.FieldTiming(snap.Settings, s.botRunning())
+	}
+	WriteData(w, http.StatusOK, out)
 }
 
 // platformView assembles the GET/apply response shape: version,
@@ -136,7 +158,24 @@ func (s *Server) platformView(r *http.Request, snap platform.Snapshot) map[strin
 	if s.Restart != nil {
 		view["restart"] = s.Restart.Status()
 	}
+	if warnings := s.platformWarnings(snap.Settings); len(warnings) > 0 {
+		view["warnings"] = warnings
+	}
 	return view
+}
+
+// platformWarnings computes the accepted-with-a-warning conditions
+// (settings-expansion §4.1): ai.enabled with the anthropic provider and
+// no resolvable key is saved — the operator may legitimately write the
+// settings before the key — but the response says the advisor is idle.
+func (s *Server) platformWarnings(doc platform.Settings) []string {
+	var out []string
+	if doc.AI.Enabled && doc.AI.Provider == "anthropic" && s.AIStatus != nil {
+		if st := s.AIStatus(); !st.Running && st.Reason != "" {
+			out = append(out, "ai.enabled is true but the advisor is not running: "+st.Reason)
+		}
+	}
+	return out
 }
 
 func (s *Server) botRunning() bool {
@@ -310,6 +349,9 @@ func (s *Server) writePlatformError(w http.ResponseWriter, r *http.Request, err 
 		WriteError(w, http.StatusBadRequest, "no_triangles", err.Error(), correlationID(r))
 	case errors.Is(err, platform.ErrCatalogNotReady):
 		WriteError(w, http.StatusServiceUnavailable, "settings_unavailable", err.Error(), correlationID(r))
+	case errors.Is(err, platform.ErrConnectorUnavailable):
+		// Checked before ErrInvalid: Validate wraps both (T-061 D12).
+		WriteError(w, http.StatusBadRequest, "connector_unavailable", err.Error(), correlationID(r))
 	case errors.Is(err, platform.ErrInvalid):
 		WriteError(w, http.StatusBadRequest, "invalid_settings", err.Error(), correlationID(r))
 	default:
