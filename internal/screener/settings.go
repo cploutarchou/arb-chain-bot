@@ -13,10 +13,16 @@ import (
 // (design §2/§7): poll cadence, per-venue enablement/fees, and paper
 // balances used by the (not-yet-wired, T-071) auto-paper executor.
 type Settings struct {
-	PollIntervalS     int                     `json:"poll_interval_s"`
-	MinLiquidityQuote decimal.Decimal         `json:"min_liquidity_quote"`
-	Venues            map[Venue]VenueSettings `json:"venues"`
-	Paper             PaperSettings           `json:"paper"`
+	PollIntervalS int `json:"poll_interval_s"`
+	// FundingCallsPerPoll bounds how many per-instrument funding
+	// requests a collector issues per poll on venues whose funding rate
+	// / next-funding time is not in the bulk ticker (T-066: OKX, Bitget,
+	// MEXC), round-robin over the contract list; last-known values are
+	// carried for the rest. 0 means the collector default (10).
+	FundingCallsPerPoll int                     `json:"funding_calls_per_poll"`
+	MinLiquidityQuote   decimal.Decimal         `json:"min_liquidity_quote"`
+	Venues              map[Venue]VenueSettings `json:"venues"`
+	Paper               PaperSettings           `json:"paper"`
 }
 
 // VenueSettings is one venue's screener configuration. Fees are the
@@ -68,6 +74,9 @@ func (s Settings) Clone() Settings {
 func (s Settings) Validate() error {
 	if s.PollIntervalS < 2 || s.PollIntervalS > 60 {
 		return fmt.Errorf("%w: poll_interval_s must be 2..60, got %d", ErrInvalid, s.PollIntervalS)
+	}
+	if s.FundingCallsPerPoll < 0 || s.FundingCallsPerPoll > 50 {
+		return fmt.Errorf("%w: funding_calls_per_poll must be 0..50, got %d", ErrInvalid, s.FundingCallsPerPoll)
 	}
 	if s.MinLiquidityQuote.IsNegative() {
 		return fmt.Errorf("%w: min_liquidity_quote must be >= 0", ErrInvalid)
@@ -135,10 +144,11 @@ func Defaults() Settings {
 		}
 	}
 	return Settings{
-		PollIntervalS:     5,
-		MinLiquidityQuote: decimal.NewFromInt(500),
-		Venues:            venues,
-		Paper:             PaperSettings{Balances: map[Venue]map[string]decimal.Decimal{}},
+		PollIntervalS:       5,
+		FundingCallsPerPoll: 10,
+		MinLiquidityQuote:   decimal.NewFromInt(500),
+		Venues:              venues,
+		Paper:               PaperSettings{Balances: map[Venue]map[string]decimal.Decimal{}},
 	}
 }
 
@@ -150,8 +160,9 @@ func Defaults() Settings {
 // change once they land).
 func FieldTiming(s Settings) map[string]string {
 	out := map[string]string{
-		"poll_interval_s":     "hot",
-		"min_liquidity_quote": "hot",
+		"poll_interval_s":        "hot",
+		"funding_calls_per_poll": "hot",
+		"min_liquidity_quote":    "hot",
 	}
 	ids := make([]Venue, 0, len(s.Venues))
 	for id := range s.Venues {

@@ -219,3 +219,23 @@ Sources: https://github.com/gateio/gateapi-python/blob/master/docs/SpotApi.md , 
 | MEXC | yes, +size | funding yes; mark/index UNVERIFIED | `collectCycle` h per symbol | per symbol | no (key) | MEDIUM-HIGH |
 
 Design consequences: Gate spot rows carry `liquidity: unknown` (no sizes in bulk); OKX and Bitget/MEXC funding need per-symbol calls (paced, low cadence); currency/chain status is `unknown (venue requires API key)` everywhere except Gate; fee defaults for OKX/Bybit/Bitget/Gate/MEXC are marked unverified in the settings UI until re-checked against a rendered fee page.
+
+---
+
+## 8. Re-verification log — 2026-08-27 (T-066 implementation)
+
+Facts re-checked against official sources while building `internal/screener/venue/`; each supersedes the entry above where they differ.
+
+- **Bitget docs moved.** `bitget.com/api-doc/spot/*` and `/contract/*` now redirect to the UTA (v3) intro; the v2 pages render under `/api-doc/classic/…`. Verified there (VERIFIED, 2026-08-27):
+  - `GET /api/v2/spot/market/tickers` — 20 req/1 s (IP); `symbol, lastPr, bidPr, askPr, bidSz, askSz, ts` (https://www.bitget.com/api-doc/classic/spot/market/Get-Tickers)
+  - `GET /api/v2/spot/public/symbols` — 20 req/1 s; `status` enum `offline|gray|online|halt`; `pricePrecision`, `quantityPrecision` (decimal places), `minTradeUSDT` (https://www.bitget.com/api-doc/classic/spot/market/Get-Symbols)
+  - `GET /api/v2/mix/market/tickers?productType=USDT-FUTURES` — 20 req/1 s; `bidPr, askPr, bidSz, askSz, indexPrice, markPrice, fundingRate, ts` (https://www.bitget.com/api-doc/classic/contract/market/Get-All-Symbol-Ticker)
+  - `GET /api/v2/mix/market/contracts` — 20 req/s; `symbolStatus` enum `listed|normal|maintain|limit_open|restrictedAPI|off`; `pricePlace`, `volumePlace`, `sizeMultiplier`, `minTradeNum`, `minTradeUSDT`, `fundInterval` (hours), `symbolType perpetual|delivery` (https://www.bitget.com/api-doc/classic/contract/market/Get-All-Symbols-Contracts)
+  - `GET /api/v2/mix/market/current-fund-rate` — 20 req/1 s, per symbol; `fundingRate, fundingRateInterval (1|2|4|8 h), nextUpdate (ms), min/maxFundingRate` (https://www.bitget.com/api-doc/classic/contract/market/Get-Current-Funding-Rate)
+  - Still UNVERIFIED: ban status code / cool-down (classic rate-limit page 404s); chain status; fees. Collector uses a 10 req/s venue gate.
+- **MEXC contract bulk ticker mark/index: VERIFIED.** `GET /api/v1/contract/ticker` (20 req/2 s) returns `indexPrice`, `fairPrice` (mark), `fundingRate`, `bid1`, `ask1`, `timestamp` as bare JSON numbers (https://mexcdevelop.github.io/apidocs/contract_v1_en/). `funding_rate/{symbol}`: `collectCycle` (h), `nextSettleTime` (ms). `contract/detail` 1 req/5 s: `baseCoin, quoteCoin, settleCoin, contractSize, priceUnit, volUnit, state, apiAllowed`.
+- **OKX per-endpoint limits (VERIFIED, https://www.okx.com/docs-v5/en/):** tickers 20/2 s, instruments 20/2 s, mark-price 10/2 s, funding-rate 10/2 s, all per IP. `mark-price` fields `instId, markPx, ts`. Live SWAP instruments carry `baseCcy=""`; base/quote for linear swaps come from `ctValCcy`/`settleCcy`.
+- **Bybit (VERIFIED, https://bybit-exchange.github.io/docs/v5/rate-limit):** 600 req / 5 s per IP; excess → HTTP 403 "access too frequent", ≥10 min ban. Spot bulk ticker has no per-symbol timestamp (receive time used).
+- **Binance:** `exchangeInfo.rateLimits` live on 2026-08-27: spot REQUEST_WEIGHT 6000/min, futures 2400/min. Retry-After on 429/418 is seconds (https://developers.binance.com/docs/binance-spot-api-docs/rest-api/limits).
+- **Gate (SDK docs, VERIFIED):** `Contract.funding_next_apply` (unix s, float) and `status prelaunch|trading|delisting|delisted|circuit_breaker` (…/docs/Contract.md); `SpotCurrencyChain {name, addr, withdraw_disabled, withdraw_delayed, deposit_disabled}` (…/docs/SpotCurrencyChain.md); batch `/spot/tickers` may return `""` for `lowest_ask`/`highest_bid` (observed live). `Contract` has no base/quote fields — resolved by looking the contract name up in `/spot/currency_pairs.id`. Rate limits remain UNVERIFIED (docs 403 to non-browser fetch); collector uses 10 req/s.
+- **Fees:** only Binance verified from its fee pages; OKX/Bybit/Bitget/Gate/MEXC stay UNVERIFIED and are flagged `Verified=false` in `venue.Registry()`.

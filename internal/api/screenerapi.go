@@ -88,10 +88,15 @@ func (s *Server) screenerRoutes(mux *http.ServeMux) {
 func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
 	snap := s.Screener.Current()
 	ids := screener.OrderedVenues
+	collectors, live := s.Screener.CollectorStatus()
+	liveBy := make(map[screener.Venue]screener.VenueStatus, len(live))
+	for _, st := range live {
+		liveBy[st.ID] = st
+	}
 	venues := make([]map[string]any, 0, len(ids))
 	for _, id := range ids {
 		vs, configured := snap.Settings.Venues[id]
-		venues = append(venues, map[string]any{
+		row := map[string]any{
 			"id":             id,
 			"name":           screenerVenueNames[id],
 			"enabled":        configured && vs.Enabled,
@@ -102,7 +107,19 @@ func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
 			"perp_contracts": 0,
 			"rate_limited":   false,
 			"error":          "collectors not started",
-		})
+		}
+		if st, ok := liveBy[id]; ok {
+			row["online"] = st.Online
+			row["last_poll_at"] = st.LastPollAt
+			row["poll_ms"] = st.PollMS
+			row["spot_pairs"] = st.SpotPairs
+			row["perp_contracts"] = st.PerpContracts
+			row["rate_limited"] = st.RateLimited > 0
+			row["rate_limited_count"] = st.RateLimited
+			row["polls"] = st.Polls
+			row["error"] = st.LastError
+		}
+		venues = append(venues, row)
 	}
 	WriteData(w, http.StatusOK, map[string]any{
 		"venues":          venues,
@@ -110,7 +127,7 @@ func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
 		"spreads_per_sec": 0,
 		"poll_interval_s": snap.Settings.PollIntervalS,
 		"updated_at":      time.Now().UTC(),
-		"collectors":      "not_started",
+		"collectors":      collectors,
 	})
 }
 
@@ -451,12 +468,37 @@ func (s *Server) handleScreenerEvents(w http.ResponseWriter, r *http.Request) {
 	WriteData(w, http.StatusOK, map[string]any{"events": events})
 }
 
-// handleScreenerAutoPaper always answers an empty summary (T-071 wires
-// the executor; this task only owns the shape) — never fabricated data.
+// handleScreenerAutoPaper serves the T-071 executor's read model
+// (design §7; statistics per strategy-models §7). When no executor runs
+// in this profile the document is empty and says so ("executor":
+// "not_running") — never fabricated data. Read-only: screener:view.
 func (s *Server) handleScreenerAutoPaper(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC()
+	src := s.Screener.AutoPaper()
+	if src == nil {
+		WriteData(w, http.StatusOK, map[string]any{
+			"positions":    []any{},
+			"summary":      map[string]any{"per_rule": []any{}},
+			"balances":     []any{},
+			"generated_at": now,
+			"executor":     "not_running",
+			"model":        "paper only; no executor in this profile",
+		})
+		return
+	}
+	view, err := src.AutoPaperView(r.Context(), now)
+	if err != nil {
+		s.log.Error("screener auto-paper view failed", "error", err)
+		WriteError(w, http.StatusInternalServerError, "auto_paper_failed", "reading the auto-paper ledger failed", correlationID(r))
+		return
+	}
 	WriteData(w, http.StatusOK, map[string]any{
-		"positions": []any{},
-		"summary":   map[string]any{"per_rule": []any{}},
+		"positions":    view.Positions,
+		"summary":      view.Summary,
+		"balances":     view.Balances,
+		"generated_at": view.GeneratedAt,
+		"executor":     "running",
+		"model":        view.Model,
 	})
 }
 
