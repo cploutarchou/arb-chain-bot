@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api/client";
 
 export type PollState<T> =
   | { kind: "loading" }
-  | { kind: "error"; message: string; status?: number }
+  | { kind: "error"; message: string; status?: number; code?: string }
   | { kind: "ready"; data: T };
 
 // usePoll fetches immediately and then on an interval; errors keep the
@@ -20,7 +20,7 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs = 5000, deps: unknow
         .catch((err: unknown) => {
           if (cancelled) return;
           if (err instanceof ApiError) {
-            setState({ kind: "error", message: err.message, status: err.status });
+            setState({ kind: "error", message: err.message, status: err.status, code: err.apiError?.code });
           } else {
             setState({ kind: "error", message: "Backend unreachable" });
           }

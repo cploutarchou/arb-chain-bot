@@ -187,7 +187,7 @@ data-flow,security,risk}.md`.
   behavior tested.
 
 ### T-023 Auth, sessions, RBAC
-- priority: P0 · component: auth · status: DONE (Argon2id/PHC, revocable sessions, throttle, CSRF, RBAC matrix pinned; HTTP-layer denial tests; pgx session/user stores follow with T-022)
+- priority: P0 · component: auth · status: DONE (Argon2id/PHC, revocable sessions, throttle, CSRF, RBAC matrix pinned; HTTP-layer denial tests; pgx session/user stores follow with T-022; BL-11 users & roles console API: `GET/POST /api/v1/users`, `POST /api/v1/users/{id}/role|disable|enable|password`, `POST /api/v1/auth/password` — all PermUserManage (ADMIN) + CSRF + audit except the self-service password change, which is requireAuth-only; `auth.AdminService` enforces self-target/last-admin protection and revokes sessions on any credential/role change; works with or without a database via `auth.MemoryStore`)
 - description: Argon2id, server-side sessions, CSRF double-submit, login
   throttling, RBAC middleware + service-layer checks, audit events.
 - dependencies: T-003
@@ -200,7 +200,12 @@ data-flow,security,risk}.md`.
   groups; opportunities (memory ring + DB history), paper cycles +
   per-cycle orders, portfolio snapshot, pnl, risk (limits + breakers +
   reject histogram), audit list, deep /system/health; /readyz gates on
-  DB reachability; honest 404s for absent components)
+  DB reachability; honest 404s for absent components; BL-10 `POST
+  /api/v1/paper/reset` — PermPaperReset (ADMIN) + CSRF + audit, body
+  `{"confirm":"RESET"}` (400 otherwise), 404 outside PAPER mode, 409 if
+  the engine is running or a simulation is in flight; rebuilds the
+  reservation ledger and portfolio to configured initial balances and
+  starts a new paper session row while preserving historical cycles)
 - description: /api/v1 groups (auth, dashboard, scanner, opportunities,
   paper, portfolio, pnl, risk, system, audit, config) with envelope/
   pagination/correlation conventions; WS topic hub with seq + snapshot +
@@ -373,52 +378,846 @@ data-flow,security,risk}.md`.
 - dependencies: T-040
 
 ### T-046 Profitability validation campaign
-- status: BLOCKED only on real recorded feeds — the campaign machinery
-  itself is BUILT and tested: `internal/backtest` replays a recording
-  through the complete pipeline (books → real scanner → deterministic
-  risk engine → simulated executor with mid-wait book drift →
-  portfolio) under the §80 stress grid (fee+X bps, latency ×N, fill
-  and world depth haircuts); `cmd/campaign` runs grid × seeds and
-  writes the honest report with the mandatory "profitable only under
-  perfect conditions" flag; `Dockerfile` + compose `record`/`campaign`
-  profiles + docs/deployment.md make the capture a one-command deploy.
-  Remaining: run `make record` on a network-enabled host for real
-  Binance sessions across regimes, then `make campaign RECORDING=…`.
-  No profitability claim is made without those runs.
+- status: IN_PROGRESS — one sample recorded and campaigned; acceptance
+  wants multiple sessions across regimes (calm, volatile, weekend).
+- campaign 1 (2026-08-27): recording `01M0ZPK16CXTR91MMJQ60HC2K3`
+  (Binance, BTCUSDT/ETHUSDT/ETHBTC/BTCUSDC/ETHUSDC/USDCUSDT, starting
+  assets USDT/USDC; 2026-08-26 18:51:15 → 20:22:02 UTC, **1 h 31 m —
+  below the 6 h minimum**; 223k frames in two segments; the session was
+  cut short when the paper compose profile was brought up on the same
+  host). Full §80 grid (8 scenarios × seeds 1,2,3), USDT=10000, 10/10
+  bps base fees. Report: docs/campaigns/01M0ZPK16CXTR91MMJQ60HC2K3/.
+  Verdict (verbatim): "NO CYCLES EXECUTED in the baseline — the
+  recording produced no qualified opportunities; no profitability
+  statement can be made from it." Every scenario evaluated 1,878,468
+  candidate cycles per three seeds and qualified none (1,878,066
+  rejected, 402 skipped on unhealthy books); the numbers are identical
+  across the stress grid because rejection happens before execution.
+  This is a valid research outcome consistent with
+  final-platform-selection.md §6 (a calm European-evening window,
+  Regular-tier 30 bps three-leg cost, 10 bps of buffers) — not evidence
+  of profitability and not yet evidence against it. The
+  "profitable only under perfect conditions" flag did not apply (there
+  was nothing to flag).
+- findings from this run: (1) recording sessions started from the
+  console after the feed had synced carried no REST snapshot and could
+  not be replayed at all (fixed 2026-08-27: snapshot capture on session
+  start; sessions `01M0ZXKJ…` and `01M0ZYMB…` recorded before the fix
+  are not replayable); (2) the final segment of a session ended by a
+  process shutdown is closed but not always registered in
+  `market_recording_metadata` (campaigns read segments from disk, so
+  results are unaffected; registration to be made shutdown-safe);
+  (3) the campaign output records rejection counts but not reasons —
+  a per-reason histogram in `backtest.Result` is needed before a
+  no-qualification verdict can be explained (why: min edge, book age,
+  depth, quality) — tracked as T-062.
+- next: sessions of ≥ 6 h across regimes on the fixed build (console
+  Start, no compose rebuilds during a session), then campaigns per
+  session; compare regimes before any claim.
 - dependencies: T-032, T-042
 
 ### T-047 Research-debt re-verification
-- status: BLOCKED in this dev environment — exchange documentation
-  sites are unreachable through the sandbox proxy (verified 2026-08-26:
-  developers.binance.com and binance.com both blocked), so the
-  UNVERIFIED items from docs/research/final-platform-selection.md §7
-  cannot be re-checked against primary sources here. Re-run in a
-  network-enabled environment before live-adjacent phases (T-050+).
+- status: DONE (2026-08-26, executed from a network-enabled host).
+  Every UNVERIFIED item from docs/research/final-platform-selection.md
+  §7 was re-pulled from current official sources with source + access
+  date recorded in place (fees.md, exchanges.md, final-platform-selection
+  §7.1/§7.2, okx-connector-checklist.md §14). Resolved: OKX fee ladder
+  (no OKB tier on the current schedule; volume/assets tiers), OKX
+  `market/books` 40 req/2 s and `books-full` 10 req/2 s, Kraken Depth
+  max 500, Coinbase WS 8 conn/s/IP. Corrected: Kraken Tier 1 fees
+  0.40/0.80 % since 2026-07-09 (3-leg 240 bps), Binance U/u two-phase
+  rule, Binance 5 msg/s WS client limit, `account/commission.discount`
+  is a multiplier, no Regular-tier zero-fee promo in a liquid Binance
+  triangle as of 2026-08-26. Explicitly demoted to named runtime-verified
+  assumptions (with burn-in checks): Bitget spot-demo coverage and
+  per-endpoint limits, Coinbase private REST rps and per-connection
+  subscription cap, Gate per-IP WS caps and fee page (HTTP 403 to
+  non-browser clients), Kraken public REST rate, OKX demo-data realism
+  and observed seqId reset. OKX checklist A–I executed in full, including
+  a live `books` capture (0 chain breaks, checksum fixed to 0). No
+  platform decision changed.
+- dependencies: none
 
 ## P3 — OPTIONAL / LATER
 
 ### T-050 Second exchange: OKX connector
-- status: BLOCKED (by SKILL.md §79 first-exchange definition of done)
-- description: strict prevSeqId chain validator, demo-env support,
-  capability descriptor; re-verify docs first (T-047).
-- pre-work (2026-08-26): docs/research/okx-connector-checklist.md — the
-  complete verification protocol (checklists A–I mapped to the exact
-  code seams, design decisions §12, exit criteria §13) to execute from
-  a network-enabled host alongside T-047. OKX doc/API hosts are
-  egress-blocked from this dev environment, so nothing in it is newly
-  verified; the task's status is unchanged.
+- status: BLOCKED (by SKILL.md §79 first-exchange definition of done —
+  gate 1 of okx-connector-checklist.md §0: the T-046 campaign verdict).
+  Research gate (T-047) is cleared.
+- description / acceptance (restated 2026-08-26 from the verified facts,
+  okx-connector-checklist.md §14): `books` channel connector with in-band
+  snapshots (`prevSeqId = -1`) and a strict `prevSeqId == last seqId`
+  validator that (a) accepts keep-alives (`seqId == prevSeqId`, empty
+  sides) as continuity, (b) accepts the documented maintenance reset
+  (`seqId < prevSeqId` with matching `prevSeqId`) under a distinct
+  metric label, (c) resyncs by unsubscribe/resubscribe on any other
+  break; checksum ignored (deprecated, fixed to 0); text `ping`/`pong`
+  keep-alive under the 30 s idle cut; pre-emptive reconnect on
+  `event: notice` code `64008`; 480 requests/hour subscription budget
+  with one multi-arg subscribe per connection; metadata from
+  `/public/instruments` mapping `tickSz`/`lotSz`/`minSz`, both size caps
+  and the quote caps `maxLmtAmt`/`maxMktAmt`, `state` (`live` →
+  TRADING, else HALTED), `MinNotional` = 0; `instruments` WS channel or
+  periodic refresh for rule changes; demo-env support via
+  `openapi.okx.com` + `x-simulated-trading: 1` / `wspap.okx.com`;
+  capability descriptor `{BookInitInBand, IntegrityUpdateChain,
+  RequiresRESTDriftCheck: false, FeeInReceived, HasSpotTestEnv: true,
+  ForcedDisconnect: false (+64008 handler)}`; venue-parameterized
+  replayer and campaign (`-exchange`); burn-in checks for the demoted
+  items (§14 "D" rows) before the descriptor is trusted.
+- pre-work (2026-08-26): docs/research/okx-connector-checklist.md —
+  protocol (A–I, §12, §13) and, since the 2026-08-26 re-verification,
+  the executed record (§14).
 
-### T-051 Additional exchange (Bybit vs Bitget decision)
-- status: BLOCKED (Phase 21; fresh research required)
+### T-051 Additional exchanges: Bybit, Bitget, Gate (order by fresh research)
+- status: BLOCKED (Phase 21; fresh research required). Venue roster set
+  2026-08-26: Binance (live), OKX (T-050), then Bybit, Bitget and Gate —
+  all wanted, sequencing decided by a re-run of the exchanges.md /
+  fees.md scoring at that time (Bybit's classic-channel gap blind spot,
+  Bitget's v3 numeric-JSON prices, Gate's 403-only docs are the known
+  connector risks). Kraken and Coinbase are out (fee-eliminated and not
+  wanted).
 
-### T-052 MFA (TOTP) enrollment
-- status: TODO · architecture reserved in auth flow.
+### T-062 Campaign rejection-reason histogram
+- status: TODO. `backtest.Result` and the §80 report should carry a
+  per-reason rejection histogram (the scanner already classifies
+  rejections) so a "no qualified opportunities" verdict says why —
+  minimum net edge, book age, depth exhaustion, data quality — and
+  the stress grid can show which reason dominates under each axis.
 
-### T-053 Parquet analytical derivatives of recordings
-- status: TODO (only with measured analytical need)
+### T-056 MEXC research round
+- status: DONE (2026-08-26) — docs/research/mexc.md. Score 65/100
+  (between Gate 63 and Bitget 73): cheapest venue on paper (0/5 bps base;
+  `exchangeInfo` publishes 0/0 on 245 USDC-quoted pairs incl. BTCUSDC,
+  ETHUSDC, USDCUSDT → a 5 bps cycle *if* it applies to API flow —
+  unverified, every platform promo excludes API users), protobuf-only
+  order-book stream with a Binance-class version chain and a documented
+  off-snapshot blind spot, 30 subscriptions/connection, no spot
+  test/demo environment, IOC/FOK effectively absent (GTC-only in
+  practice), conflicting official rate-limit numbers. Enters the Phase 21
+  scoring round (T-051) as a fee-driven challenger with five named
+  burn-ins (API fee via `tradeFee`, IOC behaviour, real IP/UID budget,
+  WS ping/connection caps, fee asset convention).
 
-### T-054 Email notification channel
-- status: TODO (NotificationService adapter)
+### T-057 Platform settings + supervised engine restart
+- status: IMPLEMENTED (backend) (2026-08-27, code-reviewed and fixed
+  2026-08-27) — `docs/design/platform-settings-and-restart.md`.
+  Closes console-ux-audit BL-13b (editable symbols/starting assets) and
+  BL-15 (venues & fees) on the backend. New versioned `platform_settings`
+  document (separate from `strategy.Params`: the section→permission
+  mapping in rbac.go:72-77 fails open to OPERATOR, and symbol validation
+  needs exchangeInfo) in `internal/platform`, migration 000006, and an
+  `app.Supervisor` that re-enters one stable `Engine.Run` on
+  `POST /api/v1/engine/restart`. Env vars are first-boot seeds only; a
+  settings version that cannot build a topology is rejected at
+  apply/rollback time (`ValidateAgainstCatalog`, D8), never discovered
+  for the first time at restart. `LiveExecutor` untouched; no exchange
+  API keys anywhere in this feature. Frontend (design §4, BL-12) landed
+  separately (T-057 frontend, package B/C/D) on top of the routes/
+  permissions/response shapes frozen here.
+  **A follow-up code review (this entry, 2026-08-27) found the original
+  landing's restart/re-entrancy claims were not fully true and fixed
+  every P1/P2 finding plus the cheap P3 items:**
+  - Generation-tagged engine exits (`runExit{gen,err}`): the original
+    single untagged `errCh` let a grace-timed-out restart's abandoned
+    run be silently discarded, and its LATE exit could be misattributed
+    to a newer restart's bookkeeping — in the worst case two
+    `Engine.Run` calls alive at once (two feeds/scanners/outboxes racing
+    on the same `*Engine`). Fixed: every exit carries the generation
+    that produced it; `waitEngineStop`/`waitReadyOrFail` ignore/observe
+    exits from other generations; a grace timeout keeps the abandoned
+    generation's cancel func and sets `pendingGen`, which `Request`
+    refuses new restarts against until that generation's exit is
+    actually observed — never discarding a live run's cancel.
+  - `Engine.Run`'s deferred `ready = false` now checks a per-run token
+    before clearing readiness, so a stale run's cleanup can never clear
+    a newer run's `Ready` state.
+  - `waitReadyOrFail`'s 30s poll used to return `nil` (mark ready) on
+    timeout even though the engine had not actually finished
+    bootstrapping. Fixed: it returns a distinct timeout sentinel; state
+    stays `restarting` and `Supervisor.Run`'s own readiness ticker
+    resolves it later (now a ticker + `Supervisor.ReadyTimeout`,
+    configurable, not a hardcoded busy-poll).
+  - The paper-pause decision is now carried INTO the engine
+    (`Engine.SetPaperPaused`, consumed once at the `paperEng.Resume()`
+    boot site) instead of being re-applied by the supervisor AFTER
+    readiness — which had nothing to act on while `Supervisor.Paper()`
+    returns nil mid-bootstrap, so a paused paper engine could silently
+    resume across a slow restart. A grace-timeout (or any other early
+    return from `restart()`) now also restores the pause state it
+    disturbed, so a later restart's own "was it running before" capture
+    never reads a permanently-stuck-paused stale object.
+  - `token_discount: true` is now refused outright by
+    `FeeSettings.validate` for every venue, with a corrected comment on
+    `fees.NetOutput`: the 25% discount was applied to fee math with NO
+    pay-asset (e.g. BNB) balance ever debited anywhere, making paper P&L
+    optimistic by exactly the discount amount on every fee-bearing leg.
+    No pay-asset ledger was built (that touches money math, out of
+    scope for a review-fix pass). New `GET /api/v1/platform/venues`
+    (`view:system`) exposes the compiled venue/discount table
+    (asset, rate, `applies_to_api`, and an honest `modeled: false`) so
+    the console can render — and correctly disable — the toggle from
+    data instead of hardcoding fees.go's constants.
+  - The engine used to persist only the currently-scoped symbol subset
+    to the `markets` table (`UpsertMarkets(ctx, scoped)`); the
+    API-profile fallback catalog (`storage.Catalog`) reads that same
+    table, so a symbol the operator had never selected could never be
+    added through the console (a false `unknown_symbol`). Fixed:
+    persists the full bootstrap catalog (`UpsertMarkets(ctx, markets)`).
+  - A platform-settings `Load` failure against a configured database
+    used to silently fall back to a fresh, env-reseeded `MemoryStore` —
+    discarding whatever was actually persisted with only a log line.
+    Fixed to fail boot hard, matching `storage.Open`'s existing policy
+    for the same class of failure.
+  - The last-admin check (`AdminService.UpdateUserRole`/
+    `SetUserDisabled`) was check-then-act across two independent store
+    calls — a real race under concurrent demotions of two different
+    admins. Fixed: the guard is now atomic inside the store itself (a
+    single pgx transaction with deterministic `ORDER BY id ... FOR
+    UPDATE` locking to avoid a cross-transaction deadlock; one lock
+    acquisition in `MemoryStore`).
+  - The recording-active restart guard was checked only once, at
+    `Request()` time — a session could start in the window before the
+    single-threaded restart loop actually processed the request. Fixed:
+    re-checked inside `restart()` itself, unwinding the state machine
+    back to Ready/Pending (not left stuck in `restarting`) on refusal —
+    the same unwind also fixes a dead `default:` branch in `Request`
+    that could otherwise strand the state machine.
+  - `RecorderControl.Bind` was bound to `Engine.Run`'s outer `ctx`
+    parameter rather than the internally-cancelled `runCtx`; a run that
+    exited on an internal fatal error (not the caller cancelling `ctx`)
+    left an API-started recording session orphaned until the supervisor
+    eventually noticed. Fixed: bound to `runCtx`, guaranteed cancelled
+    no later than `Run` returning, for any reason.
+  - Smaller items: `Restarts` no longer counts the initial boot (only
+    actual restarts); `PendingVersion` clears when the last pending
+    reason clears; `platform.Service`'s `swap`/`Subscribe`/
+    `MemoryStore.Get`/`Active` now hand out cloned `Settings` (no
+    aliasing); `AdminService.ListUsers`/`UpdateUserRole`/
+    `SetUserDisabled` never return a password hash; email is
+    case-normalized on `CreateUser`; the platform-settings preview route
+    now requires `view:system` (was `requireAuth` only); the restart
+    audit action is split into `engine.restart.requested` (API layer,
+    on accept) and `engine.restart.completed` (supervisor, on actual
+    readiness); `POST /api/v1/auth/password` is now throttled per user
+    (`AdminService.PasswordThrottle`); migration 000005's down migration
+    uses `DROP COLUMN IF EXISTS`.
+  - **Not fixed, pre-existing, tracked separately (P3-11):** `Portfolio.
+    Reset` zeroes realized P&L/drawdown, but `risk.Context.DailyLoss`/
+    `Drawdown` are not wired to read it — a circuit breaker's daily-loss/
+    drawdown limits do not see the effect of a paper reset. Independent
+    of this review's restart work; left open.
+- dependencies: T-034 (config service pattern), T-040
+- acceptance: `internal/platform` validate/catalog/service unit tests
+  (including `TestTokenDiscountRejected`, `TestCompiledVenueTable`);
+  `internal/app` engine re-entrancy test (`Engine.Run` twice, no
+  goroutine leak, no double strategy subscription), the P2-2/P2-6
+  boot-time recorder/pause tests, and supervisor unit tests (fake
+  `EngineRunner`: re-entry-after-return-only, stop-recording ordering,
+  paper pause preserved, guard-rail refusals, second-run failure
+  survives, restart timeout with no re-entry and no generation overlap
+  (`TestSupervisorGracefulTimeoutNeverOverlapsRunsAndGatesRestarts`),
+  ready-timeout stays `restarting` then resolves with pause preserved
+  (`TestSupervisorReadyTimeoutStaysRestartingThenResolvesPausePreserved`),
+  recording-guard re-check unwinds to Ready, pending-reasons for both
+  documents); `internal/api` handler tests (RBAC, CSRF, confirm token,
+  409 guard rails, `field_timing`, the new `/platform/venues` route);
+  `internal/auth` last-admin concurrent-race and password-throttle
+  tests; `internal/storage` integration tests for `platform_settings`/
+  `EndPaperSession`/`ListMarkets`/the unscoped-catalog fix/the pgx
+  last-admin race, run against a disposable Postgres (never the dev
+  compose DB on :5432). All green with `-race`; `golangci-lint run
+  ./...` clean.
+
+### T-058 Console package D: concurrency fix + BL-17/18/19/20/21/26/27/31/32
+- status: DONE (2026-08-27). All nine items (BL-17, BL-18, BL-19, BL-20,
+  BL-21, BL-26, BL-27, BL-31, BL-32) plus the optimistic-concurrency fix
+  landed. Backend-only (`internal/*`); `web/` untouched (a frontend
+  agent owns it concurrently). Per-item status below, written
+  incrementally as each item landed rather than once at the end — kept
+  as the honest record of what shipped and why, not rewritten into a
+  single clean narrative after the fact.
+- **Optimistic concurrency (item 1, DONE).** `POST /api/v1/config`,
+  `/config/rollback`, `/platform/settings`, `/platform/settings/rollback`
+  accept an optional `parent_version`. `strategy.Service` and
+  `platform.Service` gained `ApplyAuthorizedExpect`/
+  `RollbackAuthorizedExpect(..., expectedParent int64)`; the check runs
+  INSIDE the writer lock right after `cur := s.Current()` — before the
+  no-change diff check, so a stale write against an unchanged payload
+  reports `stale_version`, not `no_change`. A new `WriteErrorData`
+  envelope helper carries `{"current_version": n}` alongside the 409
+  `stale_version` error code. `strategy.StaleVersionError` /
+  `platform.StaleVersionError` wrap `ErrStaleVersion` via `Is`. Omitting
+  `parent_version` keeps today's unchecked behavior (no client break).
+  Tests: `internal/api/configapi_test.go`
+  (`TestConfigApplyOptimisticConcurrency`,
+  `TestConfigRollbackOptimisticConcurrency`),
+  `internal/api/platformapi_test.go` (mirrored).
+- **BL-31 persisted risk events (item 6, DONE).** `risk_events` already
+  existed in migration 000001 — no new migration for this item.
+  `storage.RiskEvent` + `Store.InsertRiskEvent`/`ListRiskEvents`; a new
+  `Record.Kind = "risk_event"` outbox arm. Breaker transitions
+  (`internal/app/engine.go`'s `risk.NewRegistry` callback) and risk
+  rejections (`consumeEvents`, where `e.countReject` already ran) both
+  enqueue. **Rejections are throttled, breaker transitions are not**:
+  unthrottled rejection volume (a real fixture ran 4988 rejected vs 12
+  qualified per period) would make the reject path the dominant outbox
+  write, saturate the bounded queue, and trip `OnPersistError` —
+  degrading persistence of opportunities/cycles too, since `Outbox.write`
+  is one `INSERT` per record through a single writer. Fixed by
+  `Engine.shouldPersistRiskReject`: only the FIRST rejection per
+  `(triangle_id, reason_code)` per 60s cooldown is persisted (map bounded
+  at 4096 keys, same guard pattern as `rejectCounts`); the unthrottled
+  total stays visible via `RejectCounts()`/`GET /api/v1/risk`. Tests:
+  `internal/app/riskreject_test.go`.
+  `GET /api/v1/risk/events?hours=&limit=` (`PermViewRisk`) returns
+  `{window_hours, events, n}`. `Outbox` also gained `Depth()`/
+  `Capacity()` for BL-18. Tests: `internal/storage/storage_test.go`
+  (`TestRiskEventPersistence`, DB-backed), `internal/api/reads_test.go`.
+- **BL-32 report detail + CSV (item 9, DONE).** `storage.Reports.GetReport`
+  (`ErrReportNotFound` → 404). `GET /api/v1/reports/{id}` returns the
+  full structured `reporting.Report` (already section-shaped JSON — the
+  console renders it, no reformatting needed). `GET
+  /api/v1/reports/{id}/csv` via new `reporting.Report.CSV()`/`CSVRows()`:
+  a reflection-based flatten to `(section, field, value)` rows (Report's
+  own top-level JSON fields ARE the sections; slices get `[i]` suffixes),
+  RFC 4180 via `encoding/csv`, with a leading-`=+-@` neutralization
+  (leading apostrophe) against CSV-formula injection in free-text fields
+  (incident titles, AI summaries). Tests: `internal/reporting/csv_test.go`
+  (round-trips through the standard `encoding/csv` reader, injection
+  neutralization, section-column invariant), `internal/storage/
+  reports_test.go` (DB-backed), `internal/api/reportsapi_test.go`.
+- **BL-18 system health (item 2, DONE).** `GET /api/v1/system/health`
+  no longer gates on `needEngine` — process stats, DB pool stats, queue
+  depths, and supervisor state are all available with no engine (API
+  profile) and were previously invisible there. New sections merged from
+  whatever is actually present: `process` (goroutines, heap/sys bytes,
+  cumulative GC pause ns, `num_gc`, uptime — `runtime.MemStats`, always
+  present), `database` (`storage.Store.PoolStats()`, a plain struct
+  wrapping `pgxpool.Stat()` so `internal/api` never imports pgxpool),
+  `queues.outbox`/`queues.paper`/`queues.recorder` (new `Depth()`/
+  `Capacity()` on `storage.Outbox`, `marketdata.Recorder`, and
+  `paper.Engine.QueueDepth/Capacity`), `restart` (`Restart.Status()`),
+  and the pre-existing engine-derived map (`ready`/`triangles`/`scanner`/
+  `feed`/`books`/`paper`) merged at the top level via `s.Reads.Health()`.
+  `feed` gained `msgs_per_sec` (delta-sampled from the cumulative frame
+  counter across polls via a new `rateSampler`, first call reports 0
+  honestly) and `latency_ms` (`{n, p50_ms, p95_ms, p99_ms}` from a new
+  256-sample ring buffer, `internal/app/latency.go` — OTel histograms
+  are write-only from this process's own point of view, so this is the
+  queryable side-channel; sampling is independent of whether `Metrics`
+  registered, since it must work even when OTel is unconfigured).
+  Per-exchange reconnects/sequence-errors were already present
+  (`feed.reconnects`/`feed.seq_gaps`); not duplicated. Tests:
+  `internal/api/healthapi_test.go`, `internal/app/readmodel_test.go`.
+- **BL-21 Telegram status (item 7, DONE).** `GET /api/v1/telegram/status`
+  (`PermViewSystem`) — 200 always, `enabled:false` when no token/empty
+  allowlist rather than 404 ("not configured" is itself the answer). New
+  `telegram.Client.GetMe`, `Bot.Status()` (messages/errors counters
+  already existed; added last-poll and last-getMe timestamps/ok/error and
+  `probeGetMe` called once per `Run` — a fresh connectivity check on
+  every process start/supervised restart), `PushSink.Status()` (pushed/
+  errors counters, last-push timestamp). The token never appears in any
+  of these — allowlist is chat ids only. Tests:
+  `internal/telegram/bot_test.go` (`TestBotStatusReflectsGetMeAndPoll`,
+  `TestBotStatusRecordsGetMeFailureHonestly`,
+  `TestPushSinkStatusTracksSuccessAndFailure`),
+  `internal/api/telegramapi_test.go`.
+- **BL-20 orders/fills (item 3, DONE).** `GET /api/v1/orders`/`GET
+  /api/v1/fills` (`PermViewPortfolio`, store-backed), global (not scoped
+  to one cycle like `/paper/cycles/{id}/orders`), filters `symbol`
+  (via `markets.symbol`, reliably populated even by `InsertCycle`'s
+  defensive market-ref insert), `triangle` (via
+  `orders→paper_cycles→opportunities.triangle_id`), `cycle`, `status`,
+  `from`/`to`, `limit`. Cursor pagination keys on the row's OWN column —
+  `orders(created_at DESC, id)` / `fills(ts DESC, id)`, migration
+  000007's new indexes — never a joined column, so the page stays an
+  index scan under any filter combination. The cursor is base64(`<
+  RFC3339Nano timestamp>|<id>`); RFC3339Nano (not RFC3339) because
+  Postgres `timestamptz` is microsecond-precision and three legs commonly
+  share one second. Every row carries the full cross-link chain
+  (`opportunity_id`, `triangle_id`, `symbol`) via `LEFT JOIN
+  opportunities`/`markets` (LEFT because `paper_cycles.opportunity_id` is
+  nullable — an INNER join would silently drop unattributable rows).
+  Tests: `internal/storage/orders_fills_test.go` (filters, cross-links,
+  and `TestOrdersGlobalCursorPaginatesRowsSharingATimestamp` — three
+  same-timestamp rows page without skip/repeat), `internal/api/
+  reads_test.go`.
+- **BL-19 PnL & analytics (item 4, DONE).** `GET
+  /api/v1/pnl/breakdown?by=exchange|triangle|asset|market|hour|
+  config_version&hours=`, `GET /api/v1/pnl/series?hours=`, `GET
+  /api/v1/analytics/distributions?hours=` (all `PermViewPortfolio`,
+  store-backed, `internal/storage/analytics.go`). `by=exchange/triangle/
+  config_version` INNER-join `opportunities` (nullable
+  `opportunity_id` FK) and report `unattributed` alongside `n` so
+  `n + unattributed` always equals the cycles in the window; `by=asset/
+  hour` need no join (both columns live on `paper_cycles` itself, so
+  every cycle counts, `unattributed` is always 0). `by=market` is
+  deliberately NOT a P&L split: a cycle's P&L spans all three legs and
+  attributing it to one market's leg would be a fabricated number, so
+  it reports leg activity (order count, average latency) instead, with
+  a `notes` entry saying so explicitly — see `PnLBreakdown`'s doc
+  comment. `pnl/series` accumulates cumulative P&L and running drawdown
+  in `shopspring/decimal` (never float64 — the architecture brief calls
+  float64-on-money P0). `analytics/distributions` returns edge
+  (`opportunities.net_return_bps`, QUALIFIED only),
+  slippage (`paper_cycles.slippage_bps`, NULL-filtered — only cycles
+  that reached leg 3 carry a meaningful value, same filter
+  `reports.go`'s `CycleAggregates` already uses), and latency
+  (`orders.latency_ms`) histograms: min/max/avg/p50/p95/p99 plus 10
+  fixed-width buckets, every one carrying `n` even at 0. Tests:
+  `internal/storage/analytics_test.go`, `internal/api/pnlapi_test.go`.
+- **BL-27 opportunity detail (item 5b, DONE).** `GET
+  /api/v1/opportunities/{id}` (`PermViewOpportunity`, store-backed).
+  Migration 000007 added `opportunities.decision`/`.book_versions`
+  columns; `InsertOpportunity` now populates both for new rows (the
+  legacy `{legs, risk_checks}` shape is UNCHANGED and still written
+  too, so nothing that read it before breaks). `GetOpportunity` reads
+  `decision` directly when present; for historical rows (column NULL)
+  it reconstructs a `Decision` from the legacy `legs.risk_checks` object
+  and marks it `legacy:true` with a `notes` entry — BL-27 was "partly
+  done" already (the checks were persisted, just not addressably) and
+  this says so rather than claiming the feature was missing.
+  `book_versions` comes from `Opportunity.BookVersions()` (already
+  exported, not re-derived). "Simulation result when recorded" needed
+  no new column: `paper_cycles` is already keyed by `opportunity_id` —
+  `GetOpportunity` LEFT-JOIN-equivalents it (a second query, honest nil
+  when no cycle exists yet). Found-but-out-of-scope: `InsertOpportunity`
+  has always written `op.DataQuality` into BOTH the `confidence` and
+  `data_quality` columns (`Opportunity` has no `Confidence` field) — a
+  pre-existing duplication bug, not part of any BL-17..BL-32 item, left
+  as found. Tests: `internal/storage/opportunity_detail_test.go`,
+  `internal/api/opportunitydetail_test.go` (DB-backed; also asserts
+  `/opportunities/history` still wins over `/opportunities/{id}` —
+  Go 1.22 `ServeMux`'s literal-beats-wildcard specificity rule).
+- **BL-26 triangle detail (item 5a, DONE).** `GET /api/v1/triangles/{id}`
+  (`PermViewDashboard`, matching `/triangles/quality`'s permission).
+  New `api.TriangleReader` interface + `Server.Triangles` field
+  (deliberately NOT a `ReadModel` method — growing that interface would
+  force every `ReadModel` fake across the api package's tests to
+  implement an unrelated method; same small-interface precedent as
+  `RestartController`/`RecorderController`/`CampaignService`).
+  `internal/app.triangleReader` implements it by resolving
+  `e.currentScanner()` fresh on every call (never a captured per-run
+  local — the one invariant `engine.go`'s header calls the review
+  checklist for every change in that file, and this is a new file in
+  the same package touching the same live state). Per leg: market/side/
+  from/to, current book top + age (`orderbook.Set.View`), a fee
+  waterfall via `fees.Schedule.Taker` (called, never re-derived), and a
+  reference-size (100 units, documented as NOT a live opportunity's
+  actual sizing) VWAP/depth preview via `pricing.QuoteLeg` — the
+  existing exported pricing entry point, not new arithmetic. Recent
+  cycles (new `Store.ListCyclesByTriangle`) and a quality score (reusing
+  `Store.QualitySamples` + `quality.Score`, filtered to the one
+  triangle) are store-backed and present independently of whether an
+  engine is running, same "merge whatever is actually present" pattern
+  `system/health` uses. Tests: `internal/app/triangles_test.go`
+  (real harness via `newTestEngine`/`runOnce`), `internal/api/
+  trianglesapi_test.go` (including a route-precedence test for
+  `/triangles/quality` vs `/triangles/{id}`), `internal/storage/
+  orders_fills_test.go`'s `TestListCyclesByTriangle`.
+- **BL-17 console-driven replays (item 8, DONE).** New `internal/replay`
+  package, deliberately thin: `internal/backtest.Run` already drives a
+  recording through `marketdata.Replayer` → the real scanner → risk →
+  the replay executor deterministically (T-046), and
+  `internal/campaign.Runner` already has the exact background-job shape
+  this needs (one at a time, progress, persisted row, orphan
+  reconciliation on restart) — `replay.Runner` mirrors it almost
+  line-for-line rather than inventing a second pattern.
+  `replay.Request` is intentionally narrow, matching the task's literal
+  shape (`{recording, config_version, speed}`): a replay is a one-click
+  "run the CURRENT (or a pinned) strategy against this recording" check,
+  not a second campaign-configuration surface (campaigns already own
+  the assets/balances/fee-bps/multi-seed grid). `config_version`, when
+  set, resolves via `strategy.Service.Get` (new narrow `ParamsSource`
+  interface) and FAILS THE RUN if it doesn't — it is never silently
+  substituted with `strategy.DefaultParams()` the way `backtest.Run`
+  itself falls back on an invalid zero-value `Params` (that fallback
+  exists for callers who don't ask for a version at all; item 8's
+  request explicitly named one, so silence there would be dishonest).
+  `speed` is accepted, validated, and persisted for the console's audit
+  trail but has NO execution effect: `backtest.Run` is a deterministic
+  discrete-event replay (steps to the next recorded frame or latency
+  deadline, not to wall-clock time), so there is no wall-clock pace to
+  scale — documented on the `Request.Speed` field rather than silently
+  ignored or, worse, faked. A real wall-clock-paced replay would need to
+  drive `marketdata.Replayer` directly against a live scanner instance,
+  a materially heavier feature the task's endpoint shape doesn't
+  describe; flagged here as the one sub-piece not built, with the reason.
+  One fixed seed (not a multi-seed grid): a replay answers "what does
+  the CURRENT strategy do against this recording", one question, so a
+  varying seed would only add noise nobody asked for. "Top opportunities"
+  is a documented PROXY: `backtest.Run` exposes `Result.Cycles`
+  (attempted-and-settled) and `Result.Qualified`/`Result.Evaluations`
+  (raw funnel counts) but no raw qualified-opportunity list — `Top` is
+  `Result.Cycles` sorted by `NetBps` descending, capped at 10, and the
+  API/struct field comments say "executed cycles" explicitly (Qualified
+  can exceed `len(Cycles)`: a cycle can still fail past qualification on
+  a reservation conflict or TTL expiry).
+  `POST /api/v1/replays` (`PermCampaignRun` + CSRF, audited
+  `replay.start`), `GET /api/v1/replays` / `GET /api/v1/replays/{id}`
+  (`PermViewSystem`, matching campaigns' read bar) — `internal/api/
+  replayapi.go`, new `Server.Replays ReplayService` field, registered in
+  `routes()`. Storage: `internal/storage/replays.go`
+  (`UpsertReplayRun`/`ListReplayRuns`/`GetReplayRun` against
+  `replay_runs`); unlike `campaign_runs`, no serialized `request` JSONB
+  blob — `replay.Request` is exactly the three plain columns the table
+  already has, so `Get`/`List` reconstruct it from them directly.
+  `speed` is cast `::text` when scanned (not read as a raw NUMERIC into
+  float64), matching the project-wide convention used for
+  `orders.latency_ms`/fee columns elsewhere in `internal/storage`.
+  Wiring: `internal/app/components.go` constructs `replays :=
+  &replay.Runner{Sources: store, Strategy: stratSvc, Store: store, ...}`
+  next to `campaigns`, registers it as a `Component`, registers the
+  `replays` hub topic (same snapshot/publish shape as `campaigns`), and
+  sets `apiServer.Replays`.
+  Restart-guard decision (made explicitly, not inherited): a replay run
+  never touches the live `*Engine` — `backtest.Run` builds its own
+  books/scanner/portfolio in-process — so, unlike a campaign's
+  relationship to a settings-scoped restart, a concurrent restart cannot
+  corrupt a replay run. The guard exists anyway (new
+  `Supervisor.Replays ReplayBusy` field, new `ErrReplayRunning` sentinel
+  mapped to refusal code `replay_running` in `restartProxy`) purely so
+  an operator restarting the engine gets an honest reason instead of the
+  restart and the replay silently fighting for the same CPU core.
+  Campaigns and replays are two INDEPENDENT single-flight gates — the
+  task says "one at a time" for replays, not "one at a time across both
+  job kinds" — so a campaign and a replay may run concurrently today;
+  noted here as a deliberate choice, not an oversight, in case it needs
+  revisiting once real contention is measured.
+  Tests: `internal/replay/execute_test.go` (Request validation, a real
+  `backtest.Run` call against the same synthetic profitable-cycle
+  fixture `internal/backtest`'s own tests use, the honest
+  config_version-failure paths, missing-segments), `internal/replay/
+  runner_test.go` (lifecycle/busy/publish, failure recording, orphan
+  reconciliation on restart, Runner-level config_version-failure
+  plumbing — mirrors `internal/campaign/runner_test.go`'s four tests
+  almost exactly), `internal/storage/replays_test.go` (DB-backed
+  upsert/get/list round trip including NULL config_version/speed),
+  `internal/api/replayapi_test.go` (permissions, CSRF, validation, busy
+  conflict, id-route precedence), `internal/app/supervisor_test.go`
+  (`TestSupervisorRefusalsReplayBusy`, mirroring
+  `TestSupervisorRefusalsCampaignBusy`).
+- **Two findings fixed in already-landed items, caught by an
+  advisor review before this entry was closed out:**
+  1. `orders_created_idx`/`fills_ts_idx` (item 3, BL-20) were created as
+     `(created_at DESC, id)` — the trailing tiebreak column defaults to
+     ASC, but the handler orders `created_at DESC, id DESC`. A mismatched
+     tiebreak direction can force Postgres to add a Sort node on top of
+     the index scan instead of walking the index in order, undercutting
+     the "stays an index scan under any filter combination" claim above.
+     Fixed in migration 000007 (only ever applied to the disposable test
+     Postgres, so amending it in place was free) to
+     `(created_at DESC, id DESC)` / `(ts DESC, id DESC)`; verified via
+     `\d orders_created_idx`/`pg_indexes` that the DESC/DESC index was
+     actually created after a down→up re-apply.
+  2. `by=hour` (item 4, BL-19) truncated with
+     `date_trunc('hour', c.started_at)::text` — on a `timestamptz` this
+     formats in the DATABASE CONNECTION's session TimeZone, so two
+     clients (or the same client after a `SET TIME ZONE`) could bucket
+     the identical row under different hour keys, silently corrupting
+     the grouping. Every other handler in this task standardizes on UTC
+     (`time.Now().UTC()`); the query now does too:
+     `date_trunc('hour', c.started_at AT TIME ZONE 'UTC')::text`.
+  3. `replay.Run`'s `evaluations`/`qualified`/`cycles` fields carried
+     `omitempty` in their first pass — a completed replay that qualified
+     nothing would have serialized with those three keys ABSENT, not
+     zero, the exact "not reported" vs "genuinely 0" ambiguity BL-19
+     deliberately avoids elsewhere in this task. `omitempty` removed on
+     all three. While fixing this, also aligned `Evaluations`'s JSON tag
+     from `evaluations` to `opportunities` — the task text says
+     "opportunities count", the `replay_runs.opportunities` DB column
+     already uses that name, and leaving the JSON key as `evaluations`
+     (a third, undocumented vocabulary) would have made the frontend
+     agent guess which of three names to read. The Go field keeps the
+     name `Evaluations` (matches `backtest.Result.Evaluations`, what it
+     actually counts); only the wire name changed. `internal/api/
+     replayapi_test.go` updated to assert the `opportunities` key.
+- **Documentation gap found, not created by this task:**
+  `docs/architecture.md` §7 states an OpenAPI document is "maintained in
+  `docs/api/openapi.yaml`" — that path does not exist anywhere in the
+  repository (`docs/api/` has never been created), for ANY endpoint,
+  not just this task's additions. Every prior console-backend task
+  (T-050 through T-057) documented its routes the same way this entry
+  does — permissions/shapes/tests in `docs/MASTER_PLAN.md` — not via an
+  OpenAPI file. Bootstrapping `docs/api/openapi.yaml` from scratch for
+  the entire existing API surface is a repo-wide documentation debt item
+  well beyond this task's nine BL items; not attempted here. Flagged so
+  it is tracked rather than silently absorbed into "already handled."
+- migrations: 000007 (`.up.sql`/`.down.sql`, verified `up`→`down`→`up`
+  against the disposable test Postgres, twice — once before and once
+  after the item-8 `cycles` column and the index-direction fix above)
+  adds `orders_created_idx`/`fills_ts_idx` (both `DESC, DESC`),
+  `opportunities.decision`/`opportunities.book_versions` (additive
+  columns for item 5's BL-27 work), and `replay_runs` (id, recording_id,
+  config_version, speed, status, done, total, step, created_at,
+  started_at, finished_at, error, opportunities, qualified, cycles, top,
+  actor — for item 8). `risk_events` needed no migration — already in
+  000001.
+- dependencies: T-057 (platform settings / supervised restart — item 8's
+  `ReplayBusy` guard joins the same `Supervisor.Request` guard-rail
+  sequence `CampaignBusy` already established), T-034, T-024.
+- acceptance: `go build ./...`, `go vet ./...`, `gofmt -l` clean on the
+  whole repo; `golangci-lint run ./...` clean except one PRE-EXISTING
+  finding in `internal/simulation/paper.go:144` (gosec G115, integer
+  overflow conversion int→byte) that predates this task, is outside
+  every package this task touched, and is inside `internal/simulation`
+  — explicitly off-limits per this task's "never touch arithmetic in
+  internal/risk, internal/pricing, internal/simulation, internal/
+  reservation, internal/portfolio" constraint, so left as found rather
+  than fixed; `go test -race ./...` green across the ENTIRE repo
+  (`internal/replay`, `internal/api`, `internal/app`, `internal/
+  strategy`, `internal/platform`, `internal/storage` against a
+  disposable Postgres on a non-5432 port with migrations 000001-000007
+  applied via the `migrate/migrate` image — never the dev-compose DB —
+  plus every other package in the module, all passing, none skipped
+  except the DB-backed suites when `ARB_TEST_DATABASE_URL` is unset).
+- **Review pass (2026-08-27, commit 6eb524f base): four P2 + ten P3
+  findings fixed, with regression tests.** No arithmetic changed in
+  `internal/risk`, `internal/pricing`, `internal/simulation`,
+  `internal/reservation`, `internal/portfolio`; `web/` untouched (a
+  frontend agent owned it concurrently — its own uncommitted changes
+  were briefly swept into a `git stash`/`pop` cycle by that concurrent
+  session mid-task and recovered file-by-file without touching `web/`).
+  - **P2-1** (`internal/app/latency.go`,`readmodel.go`,`engine.go`):
+    `rateSampler.rate` mutated its delta window on every HTTP poll, so
+    with more than one poller in flight each request could steal part of
+    the previous poller's interval and understate `msgs_per_sec`.
+    Split into `sample()` (single writer — the engine's existing 500ms
+    staleness-sweep ticker in `Run`, which now also drives a new
+    `Engine.msgRate *rateSampler`) and `current()` (any number of
+    read-only callers; `readModel.Health` no longer holds its own
+    sampler). Tests: `internal/app/latency_test.go`,
+    `TestReadModelHealthConcurrentPollersSeeSameRate` in
+    `readmodel_test.go`.
+  - **P2-2** (`internal/app/engine.go`): `shouldPersistRiskReject`
+    refused EVERY call once its cooldown map hit 4096 entries, including
+    a call for a key ALREADY in the map whose cooldown had long expired
+    — `risk_events` would silently stop gaining new rows for triangles
+    still actively rejecting, not just for genuinely new pairs. Fixed:
+    a known key always updates in place (never grows the map); an
+    unseen key at capacity first prunes expired entries, then refuses
+    (logging once, not once per rejection) only if still full. Tests:
+    `TestShouldPersistRiskRejectAtCapStillUpdatesKnownKeys`,
+    `TestShouldPersistRiskRejectAtCapPrunesExpiredEntries`.
+  - **P2-3** (`internal/storage/quality.go`, `internal/api/
+    trianglesapi.go`, migration 000009): `GET /api/v1/triangles/{id}`
+    ran `QualitySamples`'s ALL-triangles, 30-day aggregate on every page
+    view (any viewer) and threw away every row but one. New
+    `Store.QualitySamplesForTriangle(ctx, id, from, to) (quality.Sample,
+    bool, error)`, scoped at the query level (`WHERE o.triangle_id =
+    $1`), `ok=false` (not a zero-filled Sample) for a triangle with no
+    evidence. Also added `paper_cycles_opportunity_idx (opportunity_id,
+    started_at DESC)` — `opportunity_detail.go`'s per-opportunity
+    simulation lookup was a sequential scan without it. Tests:
+    `TestQualitySamplesForTriangle` (DB-backed, proves scoping — seeds a
+    second triangle and confirms its cycles never leak into the scoped
+    result).
+  - **P2-4** (`internal/storage/analytics.go`): `Distributions`'
+    `LIMIT 20000` sample queries had no `ORDER BY`, so a truncated
+    result was an ARBITRARY (and non-reproducible across calls) subset
+    reported as if it were the full population. Added deterministic
+    `ORDER BY` (`detected_at, id` / `started_at, id` / `created_at, id`)
+    and a `Truncated`/`WindowComplete` pair on `Distribution`, computed
+    by querying `cap+1` rows and trimming rather than comparing
+    `len(out) == cap` (so a population landing exactly on the cap is
+    correctly reported complete). `analyticsSampleCap` changed from
+    `const` to `var` so `analytics_test.go` can shrink it and exercise
+    truncation without seeding 20,001 rows. Tests:
+    `TestDistributionsReportTruncation`, plus a `WindowComplete`
+    assertion added to the existing under-cap test.
+  - **P3 items**, all in `internal/storage/analytics.go` unless noted:
+    (a) `by=config_version`/`by=asset` grouped on a nullable column with
+    no `coalesce` — a NULL config_version/pnl_asset 500'd the whole
+    breakdown; now groups under `"unknown"`. (b) `internal/storage/
+    orders_fills.go`: an invalid `next_cursor` 500'd (`query_failed`)
+    instead of 400ing — new `storage.ErrInvalidCursor` sentinel, mapped
+    to 400 `invalid_cursor` in `internal/api/reads.go`. (c) `by=hour`'s
+    key now formats via `to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+    instead of `::text` (driver/locale-dependent rendering). (d) dropped
+    `omitempty` on `Unattributed` (analytics.go) and
+    `LevelsConsumed`/`DepthExhausted` (`internal/api/trianglesapi.go`) —
+    all three are meaningful zeros, not absences. (e)
+    `PnLBreakdownResult.N` for `by=market` counts orders, not cycles like
+    every other dimension — now called out in a `notes` entry rather
+    than left as an undocumented field-meaning shift. (f)
+    `internal/reporting/csv.go`: the CSV-injection defense neutralized
+    ANY cell starting with `-`/`+`, mangling ordinary negative numbers
+    (PnL, drawdown, bps — the common case in a financial report) into
+    text; now skips neutralization for well-formed numbers (a formula
+    can never itself be a valid number) and also covers leading
+    tab/CR per OWASP's fuller trigger set. (g)
+    `internal/api/configapi.go`/`platformapi.go`: `parent_version` is
+    now REQUIRED (400 `parent_version_required`) for the four
+    web-sourced write routes (`POST /config`, `/config/rollback`,
+    `/platform/settings`, `/platform/settings/rollback`) — the web
+    console always has a real version to echo back from its own GET, so
+    omitting it was a silent optimistic-concurrency bypass exactly for
+    the client most likely to race itself (two tabs). Telegram/
+    system/AI callers go through `ApplyAuthorized` directly
+    (`expectedParent=0`), unaffected. (j) `internal/api/replayapi.go`:
+    a non-default `speed` in the request now adds a `notes` entry in
+    the POST/GET response explaining it has no execution effect
+    (previously documented only in a Go doc comment a console developer
+    would never read).
+  - **P3-h, the largest item** (`internal/replay/runner.go`,
+    `internal/campaign/runner.go`, new `internal/jobrun` package,
+    migration 000009): both runners shared four bugs, fixed once in
+    `internal/jobrun` (`Gate`, `Bound`, `ClampLimit`,
+    `Reclaimable`/`NewOwnerID`/`HeartbeatInterval`/`StaleAfter`) and
+    wired identically into each `Runner` so they cannot drift apart
+    again:
+    1. `Start` was reachable before `Run` pinned the lifetime context
+       (nothing enforced the ordering) — a job launched that way ran
+       under `context.Background()`, which a supervised shutdown never
+       cancels. `jobrun.Gate.Await` (2s bound) now makes `Start` refuse
+       with `jobrun.ErrNotStarted` (mapped to 503 `not_ready` in
+       `internal/api/opsapi.go`/`replayapi.go`) instead of silently
+       taking that shape. `Gate.Pin` is idempotent (a later `Run` call
+       re-arms rather than double-closing).
+    2. The in-memory `runs`/`order` maps grew without bound — one entry
+       per run ever started for the process's lifetime.
+       `jobrun.Bound(order, byID, jobrun.RingCap=200)` caps both after
+       every `Start`; the just-started (current, in-flight) run is
+       always the newest entry and can never itself be evicted under
+       the existing single-flight invariant. `update`/`snapshot` made
+       nil-safe defensively (an evicted id would otherwise be a nil-deref
+       panic on the background execute goroutine).
+    3. `List` (and the storage-layer `ListReplayRuns`/`ListCampaignRuns`)
+       collapsed ANY out-of-range `limit` — including "too large", not
+       just "unset" — to the default: `if limit<=0||limit>200{limit=50}`
+       silently ignored a caller asking for up to the documented cap.
+       `jobrun.ClampLimit` clamps over-cap values TO the cap.
+    4. Orphan reconciliation on startup reclaimed ANY "queued"/"running"
+       row not in the fresh process's own (always-empty-at-boot)
+       in-memory map — so two processes sharing one Postgres (a rolling
+       deploy overlap, or an operator running two instances) would each
+       mark the OTHER's still-live run "failed" the moment they started.
+       New `owner_id`/`heartbeat_at` columns (migration 000009) on
+       `campaign_runs`/`replay_runs`; each `Runner` stamps a random
+       per-process `NewOwnerID()` and the current time on every persisted
+       write (`persist()`) plus a dedicated heartbeat goroutine
+       (`jobrun.HeartbeatInterval=10s`) independent of progress
+       callbacks — a replay's own `Progress` only fires at start/finish,
+       so relying on it alone would let a long replay's row go
+       heartbeat-stale for its whole duration. `jobrun.Reclaimable` only
+       reclaims a row whose heartbeat is `jobrun.StaleAfter=50s` (5x the
+       interval) old or absent (a pre-migration row, or one never
+       heartbeated) — never a row with a fresh heartbeat from a
+       DIFFERENT live owner.
+    - **Incidental fix found while testing #4's heartbeat goroutine**:
+      `execute()` in both runners called the terminal status `update()`
+      (Status=done/failed) BEFORE `finish()` cleared `r.current` — a
+      real (if narrow) race where a poller could observe a terminal
+      status via `Get()`/`List()` while `Busy()` still reported true.
+      Reordered so `finish()` runs first in both the success and
+      failure paths.
+    - Tests: `internal/jobrun/jobrun_test.go` (Gate/Bound/ClampLimit/
+      Reclaimable in isolation), `internal/replay/runner_test.go` +
+      `internal/campaign/runner_test.go`
+      (`TestRunnerStartRefusesBeforeRun`,
+      `TestRunnerBoundsInMemoryRunsAndHonoursListLimit`,
+      `TestRunnerReconcileOrphansRespectsLiveOwnerHeartbeat`, plus the
+      pre-existing `TestRunnerFailureIsRecorded`/
+      `TestRunnerConfigVersionResolutionFailureFailsTheRun` updated to
+      start `Run` first now that `Start` enforces the ordering),
+      `internal/storage/replays_test.go` +
+      `internal/storage/campaigns_test.go`
+      (`Test{Replay,Campaign}RunOwnerHeartbeatRoundTrip`, DB-backed —
+      the reclaim LOGIC is unit-tested via `jobrun`'s fake-store-free
+      `Reclaimable`, Postgres only proves the two columns round-trip
+      per review guidance), `internal/api/opsapi_test.go` +
+      `internal/api/replayapi_test.go`
+      (`Test{Campaign,Replay}StartNotReadyIs503`).
+  - migrations: 000009 (`.up.sql`/`.down.sql`, verified `up`→`down`→`up`
+    against a disposable Postgres) adds `paper_cycles_opportunity_idx`
+    and `owner_id`/`heartbeat_at` (+ a partial index on each, `WHERE
+    status IN ('queued','running')`) to `campaign_runs`/`replay_runs`;
+    both 000007 and 000009 now note that their `CREATE INDEX`s take an
+    ACCESS EXCLUSIVE lock (safe today only because compose's `migrate`
+    service always runs before `arbd`, so the affected tables are still
+    empty in every environment this has run against).
+  - acceptance: `gofmt -l cmd internal` clean; `go vet ./...` clean;
+    `golangci-lint run ./...` clean except the SAME pre-existing
+    `internal/simulation/paper.go:144` gosec finding noted above (still
+    untouched, still out of scope); `go test -race ./...` green across
+    the entire repo, including `internal/storage`, `internal/replay`,
+    `internal/campaign`, `internal/jobrun`, `internal/api`, `internal/
+    app`, `internal/reporting` against a disposable Postgres 16
+    container on port 55432 (never 5432) with migrations 000001-000009
+    applied via `psql` inside the container, then removed
+    (`docker rm -f`) — never the dev-compose DB.
+
+### T-059 Operating mode + provider settings + hot log level
+- status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §2, §4;
+  console sections (design §6) are the frontend follow-up.
+  Moves the remaining operator-relevant env-only fields into the T-057
+  versioned document: `platform.mode` (restart-scoped, enum
+  MARKET_DATA/RECORD/PAPER/SHADOW — LIVE rejected by name, REPLAY/BACKTEST
+  rejected as batch runs), `platform.log_level` and
+  `platform.allowed_origin` (hot), a new `ai` section (enabled, provider,
+  model, cadence, budget — hot, which requires always constructing
+  `ai.Service`/`ai.Scheduler` behind an `ai.Switch`), and
+  `telegram.disabled` (hot, via the existing `allowSet`; **negative field
+  on purpose** — an `enabled` bool would zero-value to false on a persisted
+  document and silently mute commands and pushes on upgrade). No migration:
+  the document is JSONB. **`Settings.WithDefaults(cfg)` lands first** — a
+  persisted pre-T-059 payload has no `platform`/`ai` keys, so without
+  normalization at every load/get/rollback path `Validate` fails and
+  `buildPlatform` takes the P2-4 hard-failure branch, i.e. the process
+  refuses to boot after deploy. Same class: `Seed`/`WithDefaults` map every
+  non-settable `ARB_MODE` (`REPLAY`, `BACKTEST`, **`SHADOW`** — all legal
+  values today) to `MARKET_DATA`, or a `ARB_MODE=SHADOW` deployment seeds a
+  document its own validator rejects.
+- dependencies: T-057
+- acceptance: `internal/platform` validation table incl. `LIVE`/`live`/
+  `REPLAY`/`SHADOW`; `WithDefaults` tested against raw JSON literals that
+  omit the new sections AND that carry a `telegram` section with only
+  `allowlist` (a round-tripped struct would not exercise either branch),
+  plus the raw literal with `paper_enabled=false` seeded under
+  `ARB_MODE=PAPER` (mode falls back to `MARKET_DATA` with a named WARN,
+  `Service.Load` does not refuse the boot); invalid log-level/origin
+  seeds WARN by name; the `ai` section is filled field by field;
+  `ModeTable`/`Settable` agree with `Validate` for every `config.Mode`
+  constant; reflect-over-sections test for
+  `PermissionForSection`; `internal/app` mode-from-settings restart test;
+  `internal/ai` switch/cadence/budget tests; `-race` green.
+
+### T-060 Secrets vault (AES-256-GCM, write-only API)
+- status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §3;
+  the Security console section is the frontend follow-up.
+  `secrets` table (migration **000008**), AES-256-GCM under
+  `ARB_SECRET_KEY` (base64, exactly 32 bytes) with the secret name as AAD
+  and a `key_id` fingerprint per row; closed two-entry registry
+  (`anthropic_api_key`, `telegram_bot_token`) so it can never become a
+  store for exchange trading keys; `SecretSource` chain (vault first, env
+  fallback) resolved by the AI advisor at every settings swap and by
+  Telegram at process start. Write-only API: `PUT`/`DELETE
+  /api/v1/secrets/{name}` (ADMIN, CSRF, audited), `GET /api/v1/secrets`
+  returns presence/source/updated-by only — never a value, never a last-4.
+  No `ARB_SECRET_KEY` → vault disabled, platform still runs on env secrets.
+- dependencies: T-057 (audit sink, RBAC); parallelizable with T-059
+- acceptance: `internal/secrets` crypto tests (wrong key, AAD mismatch,
+  key_id mismatch reported not returned, nonce uniqueness); `internal/api`
+  RBAC/CSRF denial plus a log-capture assertion that the submitted value
+  appears in no emitted log record; the PUT body is decoded straight into
+  a zeroed `[]byte` (no Go string copy) and `secret.write`/`secret.delete`
+  audit rows carry `after={name,present,key_id}` (design §3.4); a vault
+  store error WARNs before the env fallback; `internal/storage` round-trip
+  and `List` against a disposable Postgres.
+
+### T-061 Venue availability + capabilities route
+- status: IMPLEMENTED (backend, 2026-08-27) — `docs/design/settings-expansion.md` §5;
+  the venue cards/availability badges are the frontend follow-up.
+  `platform.VenueTable()` lists OKX/Bybit/Bitget/Gate/MEXC honestly as
+  `available:false` with the blocking task id, while `CompiledVenues` stays
+  the enforcement gate. New `GET /api/v1/platform/capabilities` (modes,
+  venues, ai_providers with availability + reason);
+  `/api/v1/platform/venues` becomes an alias over the same function. No
+  keys anywhere.
+- dependencies: T-059 (mode availability list shares the shape)
+- acceptance: `internal/api` capabilities shape test; enabling an
+  unavailable venue returns `400 connector_unavailable` naming the task.
 
 ---
 
@@ -667,3 +1466,98 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   (venue-parameterizing marketdata/replay.go and cmd/campaign, seq-reset
   validator semantics, the OKX Capabilities literal) and exit criteria.
   T-050 remains BLOCKED behind T-046/T-047.
+- 2026-08-26 (T-047 executed): research debt re-verified from a
+  network-enabled host — primary pages pulled raw (Binance spot-api-docs
+  repo, OKX docs-v5 5.2 MB reference, OKX help centre + fee page JSON,
+  Kraken docs/support, Bybit help, Coinbase CDP docs, Binance public
+  announcement CMS) plus a live keyless OKX `books` capture. Kraken
+  Tier 1 fees corrected to 0.40/0.80 % (2026-07-09 re-tiering; 3-leg
+  240 bps); OKX OKB ladder debt closed (no OKB tier — volume/assets
+  tiers) and `market/books` limit pinned (40 req/2 s); OKX checksum
+  deprecation confirmed in production since 2026-06-23 with keep-alive
+  and reset semantics quoted from the docs; Binance U/u rule restated
+  two-phase, 5 msg/s client limit added, promo-pair inventory dated (no
+  Regular-tier zero-fee leg in a liquid triangle). Items that stayed
+  unpinned (Gate 403s, Bitget client-rendered docs, Coinbase login-gated
+  fee table, Kraken public rate) are demoted to named runtime-verified
+  assumptions in final-platform-selection.md §7.2. T-047 DONE; T-050
+  acceptance restated; T-050 still BLOCKED on the T-046 verdict.
+- 2026-08-26 (T-055): the recording/campaign runbook got a console
+  front-end — in-process recorder control, background campaign runner
+  with persisted runs, ops API + permissions, Campaigns page
+  (docs/deployment.md §3b).
+- 2026-08-26 (T-056): MEXC researched from primary sources + live
+  keyless API pulls (docs/research/mexc.md): 2,115 spot pairs, six core
+  legs live, 0/5 bps base with a zero-fee USDC zone whose API
+  eligibility is unverified; scored 65/100; queued for the T-051 scoring
+  round with named burn-ins.
+- 2026-08-27 (T-057 backend): platform settings + supervised restart
+  implemented per the design doc. New `internal/platform` package
+  (versioned settings document, pure `Validate`/`ValidatePaperMode`,
+  catalog-backed `ValidateAgainstCatalog` dry-run wired into
+  `Service.applyLocked` for D8, `Seed`/`FieldTiming`/`PermissionForSection`)
+  and `internal/storage/platformsettings.go` over new migration 000006.
+  `internal/app/engine.go` re-entrancy fixed (E1-E10) with a passing
+  two-Run test asserting no goroutine leak and no double strategy
+  subscription. New `internal/app/supervisor.go` re-enters one stable
+  `*Engine` across a restart with 13 unit tests (fake `EngineRunner`)
+  covering every §2.5 guard rail, E9 (paper pause survives), and both
+  §2.3 pending-reason sources. New `internal/api/platformapi.go`:
+  `/api/v1/platform/settings{,/preview,/rollback,/versions,/version/{n}}`
+  and `/api/v1/engine/{status,restart}`, interface-typed
+  (`RestartController`) so `internal/api` never imports `internal/app`,
+  with 12 handler tests. `components.go` wires `buildPlatform`, the
+  supervisor (replacing the engine as the appended `app.Component` —
+  D4), the shared Telegram allowlist (`Bot.Allowed`/`PushSink.Targets`),
+  and the `health` topic (moved out of `Engine.Run` per §2.6). All new
+  and existing tests green with `-race` (storage integration tests run
+  against a disposable Postgres, never the dev compose DB); `gofmt`,
+  `go vet`, and `golangci-lint run ./...` clean repo-wide. Frontend
+  (design §4, BL-12) is explicitly NOT built this round — T-057 is
+  IMPLEMENTED (backend); the console UI is a follow-up.
+- 2026-08-27 (T-059/T-060/T-061 backend): settings expansion implemented
+  per `docs/design/settings-expansion.md`. `internal/platform` gains the
+  `platform` (mode/log_level/allowed_origin) and `ai` sections,
+  `telegram.disabled`, `ModeTable`/`Settable`/`ValidateMode` (LIVE and
+  REPLAY/BACKTEST refused by name, SHADOW enumerated but unavailable),
+  `AIProviderTable`, `VenueTable` (okx/bybit/bitget/gate/mexc listed with
+  the blocking task; `ErrConnectorUnavailable` → `400
+  connector_unavailable`), `WithDefaults` applied at Load/Get/rollback
+  with the raw-JSON-literal tests, and every non-settable `ARB_MODE`
+  seeded as `MARKET_DATA` with a named log line. `internal/ai` gains
+  `Switch` (always-constructed Service/Scheduler; disabled is a skip, not
+  a failure), a re-armable scheduler reading `ai.schedule` at every wake,
+  the per-process daily cap and `MaxTokens`. `internal/app`: hot
+  `SetLogLevel` (package `slog.LevelVar`), `Engine.Mode()` from the
+  applied document (per-run snapshot), paper routes wired
+  unconditionally, `allowSet` mute, supervisor pending reason naming the
+  mode transition, `buildSecrets`/`buildAdvisor` over the secrets chain.
+  New `internal/secrets` (AES-256-GCM, name as AAD, `key_id`, closed
+  two-name registry, vault→env `Chain`, `Manager` status view) with
+  migration 000008 and `internal/storage/secrets.go`. `internal/api`:
+  `GET /platform/capabilities`, `/platform/venues` alias, `GET/PUT/DELETE
+  /secrets`, `GET /ai/status`, hot `allowed_origin`, apply-time
+  `warnings`, `field_timing` extended. Tests: platform (mode table, AI
+  bounds, origin/log level, upgrade at load/get/rollback, seed mapping,
+  reflect-over-sections), secrets crypto suite, ai switch/cadence/budget/
+  max_tokens, app mode-from-settings restart with a real engine, log
+  level, allowSet, api RBAC/CSRF/unknown/unavailable + log-capture,
+  capabilities shape; storage round-trip against a disposable Postgres.
+  `go test -race ./...`, `go vet`, `gofmt` clean; `golangci-lint` reports
+  one pre-existing gosec finding in `internal/simulation/paper.go`
+  (out of scope for this task). Console work (design §6) NOT built.
+- 2026-08-27 (T-059/T-060 review fixes): `WithDefaults` falls back to
+  `MARKET_DATA` (named WARN) when the `ARB_MODE` seed breaks a stored
+  cross-field rule, fills `ai` field by field; `SeedNotes` WARNs invalid
+  log-level/origin seeds; `Service.seed` is an `atomic.Pointer` (lock-free
+  `Get`). `internal/app`: `aiApplier` serialises advisor rebuilds under one
+  mutex, skips unchanged `ai` sections, resolves the key in a goroutine
+  (never inside the platform writer lock) with a generation counter
+  dropping stale results. `internal/ai`: budget reserved after the prompt
+  builds and released on a mid-call switch-off. `internal/secrets`:
+  `Vault.Get` WARNs on store errors, values are `[]byte` end to end,
+  `Manager.List` uses `Store.List`. `internal/api`: `AuditAction` gains an
+  `after []byte` payload (`auditWith`), secret PUT decodes into a zeroed
+  `[]byte`. All under `go test -race ./...`; storage on a disposable
+  Postgres; the same pre-existing gosec finding remains the only lint
+  item.

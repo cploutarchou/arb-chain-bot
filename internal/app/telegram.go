@@ -8,6 +8,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/api"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
+	"github.com/cploutarchou/arb-chain-bot/internal/exchange/binance"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -31,7 +32,7 @@ type telegramServices struct {
 func (t telegramServices) Status() telegram.StatusView {
 	st := t.e.Status()
 	view := telegram.StatusView{
-		Mode:        string(t.e.cfg.Mode),
+		Mode:        string(t.e.Mode()),
 		Ready:       st.Ready,
 		Triangles:   st.Triangles,
 		Markets:     len(st.Markets),
@@ -243,10 +244,28 @@ func (t telegramServices) PaperResume(string) bool {
 	return true
 }
 
-// startAssets returns the configured starting assets.
+// startAssets returns the starting assets actually in effect for the
+// current (or most recently completed) run. This must track the live
+// settings document, not the boot-time env (D5): after a settings-driven
+// restart that changes starting assets, reports, the read model, the
+// Telegram /balance-style commands, and the AI context would otherwise
+// keep showing the stale env-configured set forever.
+//
+// e.starts is populated only while a run has completed bootstrap (E1
+// nils it at the top of every Run, including every restart, and it
+// never gets set at all in a profile that constructs an Engine purely
+// for the read model without ever calling Run, e.g. ProfileAPI). Fall
+// back to the settings document itself in that window rather than
+// returning an empty list — currentSettings() already backstops to
+// platform.Seed(e.cfg) when no version has been applied yet, so this
+// still prefers the live document over env once one exists.
 func (e *Engine) startAssets() []exchange.Asset {
-	out := make([]exchange.Asset, 0, len(e.cfg.StartingAssets))
-	for _, a := range e.cfg.StartingAssets {
+	if s := e.currentStarts(); len(s) > 0 {
+		return s
+	}
+	venue := e.currentSettings().Venues[string(binance.ID)]
+	out := make([]exchange.Asset, 0, len(venue.StartingAssets))
+	for _, a := range venue.StartingAssets {
 		out = append(out, exchange.Asset(a))
 	}
 	return out

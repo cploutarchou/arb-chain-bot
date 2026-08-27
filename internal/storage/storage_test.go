@@ -37,8 +37,8 @@ func testStore(t *testing.T) *Store {
 	t.Cleanup(s.Close)
 	for _, table := range []string{"fills", "orders", "paper_cycles", "paper_sessions",
 		"opportunities", "triangles", "markets", "sessions",
-		"strategy_configs", "audit_events", "ai_recommendations", "ai_analyses",
-		"alerts", "users", "exchanges"} {
+		"strategy_configs", "platform_settings", "audit_events", "ai_recommendations", "ai_analyses",
+		"alerts", "secrets", "users", "exchanges", "campaign_runs", "replay_runs", "risk_events", "reports"} {
 		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("clean %s: %v", table, err)
 		}
@@ -288,6 +288,89 @@ func TestUpsertMarketsAndOutbox(t *testing.T) {
 	}
 	if ob.Dropped() != 0 {
 		t.Fatalf("dropped = %d", ob.Dropped())
+	}
+}
+
+// TestRiskEventPersistence covers BL-31: breaker transitions and risk
+// rejections both persist through InsertRiskEvent and come back
+// newest-first, windowed, from ListRiskEvents; the outbox routes
+// "risk_event" records the same way it already routes opportunities and
+// cycles.
+func TestRiskEventPersistence(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	if err := s.InsertRiskEvent(ctx, RiskEvent{
+		ID: "re-1", TS: t0, Kind: "breaker_transition",
+		Subject: "exchange:binance", LimitName: "consecutive_losses",
+		Observed: "CLOSED", Threshold: "OPEN", Action: "5 consecutive losses",
+		BreakerState: "OPEN",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertRiskEvent(ctx, RiskEvent{
+		ID: "re-2", TS: t0.Add(time.Minute), Kind: "risk_reject",
+		Subject: "triangle:tri-1", LimitName: "max_daily_loss",
+		Observed: "-120", Threshold: "-100", Action: "risk rejected",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Re-inserting the same id is idempotent (ON CONFLICT DO NOTHING),
+	// matching InsertOpportunity/InsertCycle's contract.
+	if err := s.InsertRiskEvent(ctx, RiskEvent{ID: "re-1", TS: t0, Kind: "breaker_transition"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := s.ListRiskEvents(ctx, t0.Add(-time.Hour), t0.Add(time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	// Newest first.
+	if rows[0].ID != "re-2" || rows[1].ID != "re-1" {
+		t.Fatalf("order = %s, %s", rows[0].ID, rows[1].ID)
+	}
+	if rows[0].Kind != "risk_reject" || rows[0].LimitName == nil || *rows[0].LimitName != "max_daily_loss" {
+		t.Fatalf("row 0 = %+v", rows[0])
+	}
+	if rows[1].BreakerState == nil || *rows[1].BreakerState != "OPEN" {
+		t.Fatalf("row 1 breaker_state = %+v", rows[1])
+	}
+
+	// Window excludes events outside [from, to).
+	narrow, err := s.ListRiskEvents(ctx, t0.Add(-time.Hour), t0.Add(30*time.Second), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(narrow) != 1 || narrow[0].ID != "re-1" {
+		t.Fatalf("narrow window = %+v", narrow)
+	}
+
+	// Outbox routing: enqueue a risk_event record and confirm it lands.
+	ob := &Outbox{Store: s, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), FlushInterval: 10 * time.Millisecond}
+	if !ob.Enqueue(Record{Kind: "risk_event", RiskEvent: &RiskEvent{
+		ID: "re-3", TS: t0.Add(2 * time.Minute), Kind: "breaker_transition", Subject: "global",
+	}}) {
+		t.Fatal("enqueue refused")
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- ob.Run(runCtx) }()
+	deadline := time.After(3 * time.Second)
+	for ob.Written() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("outbox never wrote the risk event")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+	var count int
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM risk_events WHERE id='re-3'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("outbox persisted = %d err=%v", count, err)
 	}
 }
 

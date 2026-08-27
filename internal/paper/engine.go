@@ -13,6 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/shopspring/decimal"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/execution"
 	"github.com/cploutarchou/arb-chain-bot/internal/graph"
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
@@ -20,6 +23,13 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/reservation"
 	"github.com/cploutarchou/arb-chain-bot/internal/scanner"
 )
+
+// ErrActive: Reset requires the engine to be fully idle. Paused alone is
+// not enough — Pause only stops NEW cycles from starting; a cycle already
+// in flight (simulated latency, executor call) could still Settle/Credit
+// against the ledger after Reset rebuilds it, corrupting the fresh
+// session. Callers must wait for Active()==0 as well as !Running().
+var ErrActive = errors.New("paper: engine must be paused with zero active simulations before reset")
 
 // Engine consumes qualified opportunities and settles simulated cycles.
 type Engine struct {
@@ -59,6 +69,24 @@ func (e *Engine) Name() string { return "paper" }
 // Active reports in-flight simulations (scanner risk context).
 func (e *Engine) Active() int { return int(e.active.Load()) }
 
+// QueueDepth and QueueCapacity expose the inbound event-queue backlog
+// (BL-18: system health's queue-depth panel). len/cap on a channel need
+// no synchronization; nil In (paper wired without a feed, e.g. some
+// tests) reports zero rather than panicking.
+func (e *Engine) QueueDepth() int {
+	if e.In == nil {
+		return 0
+	}
+	return len(e.In)
+}
+
+func (e *Engine) QueueCapacity() int {
+	if e.In == nil {
+		return 0
+	}
+	return cap(e.In)
+}
+
 // Running reports the pause state.
 func (e *Engine) Running() bool { return e.running.Load() }
 
@@ -71,6 +99,25 @@ func (e *Engine) Snapshot() Stats {
 	e.statsMu.Lock()
 	defer e.statsMu.Unlock()
 	return e.stats
+}
+
+// Reset rebuilds the reservation ledger and portfolio to fresh initial
+// balances and zeroes the session counters, without touching any pricing
+// or settlement arithmetic (BL-10, paper reset). It refuses while the
+// engine is running or any simulation is in flight (ErrActive) — the
+// caller (console API) is expected to have paused first; Reset itself
+// only re-checks Running()/Active() as its own last line of defense
+// rather than trusting the caller blindly.
+func (e *Engine) Reset(initial map[exchange.Asset]decimal.Decimal) error {
+	if e.Running() || e.Active() > 0 {
+		return ErrActive
+	}
+	e.Resv.Reset(initial)
+	e.Portfolio.Reset(initial)
+	e.statsMu.Lock()
+	e.stats = Stats{}
+	e.statsMu.Unlock()
+	return nil
 }
 
 func (e *Engine) bump(f func(*Stats)) {
