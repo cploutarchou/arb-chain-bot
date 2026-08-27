@@ -17,14 +17,18 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/billing/paddle"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/entitlements"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
 	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/report"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
 // BuildInfo describes what this process build actually contains; the
@@ -121,6 +125,24 @@ type Server struct {
 	// those routes rather than 404ing — the subsystem exists in this
 	// build, it just is not wired in this profile.
 	Screener *screener.Service
+	// ScreenerReports is the T-078 nightly report generator (nil when no
+	// executor/ledger runs in this profile → /screener/reports 503s).
+	ScreenerReports *report.Generator
+	// Tenancy, when set, resolves the caller's organisation and
+	// membership on every authenticated request (T-081). nil = every
+	// account acts in the platform organisation (database-less
+	// profiles; see resolvePrincipal).
+	Tenancy tenancy.Store
+	// Entitlements, when set, resolves the organisation's effective
+	// entitlements (packages.md §3) and caches them; nil falls back to
+	// the bare package document.
+	Entitlements *entitlements.Resolver
+	// Billing, when set, backs the Paddle routes (T-083). nil 503s them.
+	Billing *paddle.Service
+	// RiskAckVersion is the risk-disclosure version every organisation
+	// must acknowledge before using the product (compliance review #3);
+	// "" disables the gate.
+	RiskAckVersion string
 
 	// allowedOrigin is platform.allowed_origin (hot, D7): the websocket
 	// origin check reads it through an atomic accessor because the
@@ -245,7 +267,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// CSRF on logout too (audit S-013): a cross-site logout is a nuisance
 	// attack, and the wrap costs nothing.
 	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(s.requireCSRF(s.handleLogout)))
-	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
+	// /me is reachable before the risk acknowledgement so the console
+	// can learn that it must show the disclosure (compliance #3).
+	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuthPreAck(s.handleMe))
+	mux.HandleFunc("GET /api/v1/me", s.requireAuthPreAck(s.handleMe))
 
 	mux.HandleFunc("GET /api/v1/system/status", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
 		WriteData(w, http.StatusOK, map[string]any{
@@ -297,6 +322,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.secretsRoutes(mux)
 	s.telegramRoutes(mux)
 	s.screenerRoutes(mux)
+	s.orgRoutes(mux)
+	s.billingRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):
 		// metric names and label values map the platform's internals.

@@ -4,12 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
+
+// Organisation scoping (T-081, migration 000013). Every screener table
+// carries org_id. Queries read the organisation from the context
+// (tenancy.WithOrg, set by the API middleware on every authenticated
+// request): with a scope, rows of other organisations are invisible;
+// without one (engine loop, background jobs, tests that predate
+// tenancy) the query sees every organisation, and inserts land in the
+// platform organisation. orgFilter renders the WHERE fragment for a
+// given argument index so the two shapes share one query string.
+func orgFilter(ctx context.Context, col string, argIdx int) (string, []any) {
+	if id, ok := tenancy.OrgFrom(ctx); ok {
+		return fmt.Sprintf(" AND %s = $%d", col, argIdx), []any{id}
+	}
+	return "", nil
+}
 
 // ScreenerSettings adapts the store to screener.SettingsStore: immutable
 // version rows in screener_settings with exactly one active at a time
@@ -131,7 +148,8 @@ type ScreenerRules struct{ s *Store }
 func (s *Store) ScreenerRules() *ScreenerRules { return &ScreenerRules{s: s} }
 
 func (c *ScreenerRules) ListRules(ctx context.Context) ([]screener.Rule, error) {
-	rows, err := c.s.Pool.Query(ctx, `SELECT payload FROM screener_rules ORDER BY created_at`)
+	where, args := orgFilter(ctx, "org_id", 1)
+	rows, err := c.s.Pool.Query(ctx, `SELECT payload FROM screener_rules WHERE TRUE`+where+` ORDER BY created_at`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +171,8 @@ func (c *ScreenerRules) ListRules(ctx context.Context) ([]screener.Rule, error) 
 
 func (c *ScreenerRules) GetRule(ctx context.Context, id string) (screener.Rule, error) {
 	var payload []byte
-	err := c.s.Pool.QueryRow(ctx, `SELECT payload FROM screener_rules WHERE id = $1`, id).Scan(&payload)
+	where, args := orgFilter(ctx, "org_id", 2)
+	err := c.s.Pool.QueryRow(ctx, `SELECT payload FROM screener_rules WHERE id = $1`+where, append([]any{id}, args...)...).Scan(&payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return screener.Rule{}, screener.ErrNotFound
 	}
@@ -173,8 +192,8 @@ func (c *ScreenerRules) InsertRule(ctx context.Context, r screener.Rule, actor s
 		return screener.Rule{}, err
 	}
 	if _, err := c.s.Pool.Exec(ctx, `
-		INSERT INTO screener_rules (id, payload, enabled, updated_by)
-		VALUES ($1, $2, $3, NULLIF($4,''))`, r.ID, payload, r.Enabled, actor); err != nil {
+		INSERT INTO screener_rules (id, payload, enabled, updated_by, org_id)
+		VALUES ($1, $2, $3, NULLIF($4,''), $5)`, r.ID, payload, r.Enabled, actor, tenancy.OrgOrPlatform(ctx)); err != nil {
 		return screener.Rule{}, err
 	}
 	return r, nil
@@ -185,9 +204,10 @@ func (c *ScreenerRules) UpdateRule(ctx context.Context, r screener.Rule, actor s
 	if err != nil {
 		return screener.Rule{}, err
 	}
+	where, args := orgFilter(ctx, "org_id", 5)
 	tag, err := c.s.Pool.Exec(ctx, `
 		UPDATE screener_rules SET payload = $2, enabled = $3, updated_at = now(), updated_by = NULLIF($4,'')
-		WHERE id = $1`, r.ID, payload, r.Enabled, actor)
+		WHERE id = $1`+where, append([]any{r.ID, payload, r.Enabled, actor}, args...)...)
 	if err != nil {
 		return screener.Rule{}, err
 	}
@@ -198,7 +218,8 @@ func (c *ScreenerRules) UpdateRule(ctx context.Context, r screener.Rule, actor s
 }
 
 func (c *ScreenerRules) DeleteRule(ctx context.Context, id string) error {
-	tag, err := c.s.Pool.Exec(ctx, `DELETE FROM screener_rules WHERE id = $1`, id)
+	where, args := orgFilter(ctx, "org_id", 2)
+	tag, err := c.s.Pool.Exec(ctx, `DELETE FROM screener_rules WHERE id = $1`+where, append([]any{id}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -217,21 +238,13 @@ func (c *ScreenerEvents) ListEvents(ctx context.Context, ruleID string, limit in
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	var rows pgxRows
-	var err error
-	if ruleID != "" {
-		rows, err = c.s.Pool.Query(ctx, `
-			SELECT id, rule_id, kind, base, quote, buy_venue, sell_venue,
-			       opened_at, closed_at, lifetime_s, peak_net_bps,
-			       telegram_sent, paper_execution_id
-			FROM screener_events WHERE rule_id = $1 ORDER BY opened_at DESC LIMIT $2`, ruleID, limit)
-	} else {
-		rows, err = c.s.Pool.Query(ctx, `
-			SELECT id, rule_id, kind, base, quote, buy_venue, sell_venue,
-			       opened_at, closed_at, lifetime_s, peak_net_bps,
-			       telegram_sent, paper_execution_id
-			FROM screener_events ORDER BY opened_at DESC LIMIT $1`, limit)
-	}
+	where, args := orgFilter(ctx, "org_id", 3)
+	rows, err := c.s.Pool.Query(ctx, `
+		SELECT id, rule_id, kind, base, quote, buy_venue, sell_venue,
+		       opened_at, closed_at, lifetime_s, peak_net_bps,
+		       telegram_sent, paper_execution_id
+		FROM screener_events WHERE ($1 = '' OR rule_id = $1)`+where+` ORDER BY opened_at DESC LIMIT $2`,
+		append([]any{ruleID, limit}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -271,14 +284,18 @@ func (c *ScreenerEvents) InsertEvent(ctx context.Context, e screener.Event) erro
 		v := string(e.SellVenue)
 		sellVenue = &v
 	}
+	// The event inherits its rule's organisation (the evaluator runs
+	// without a request scope); an unknown rule falls back to the
+	// platform organisation.
 	_, err := c.s.Pool.Exec(ctx, `
 		INSERT INTO screener_events
 			(id, rule_id, kind, base, quote, buy_venue, sell_venue,
-			 opened_at, closed_at, lifetime_s, peak_net_bps, telegram_sent, paper_execution_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			 opened_at, closed_at, lifetime_s, peak_net_bps, telegram_sent, paper_execution_id, org_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+		        COALESCE((SELECT org_id FROM screener_rules WHERE id = $2), $14))
 		ON CONFLICT (id) DO NOTHING`,
 		e.ID, e.RuleID, string(e.Kind), e.Base, e.Quote, buyVenue, sellVenue,
-		e.OpenedAt, e.ClosedAt, e.LifetimeS, e.PeakNetBps, e.TelegramSent, e.PaperExecutionID)
+		e.OpenedAt, e.ClosedAt, e.LifetimeS, e.PeakNetBps, e.TelegramSent, e.PaperExecutionID, tenancy.OrgOrPlatform(ctx))
 	return err
 }
 
@@ -288,9 +305,10 @@ type ScreenerTemplates struct{ s *Store }
 func (s *Store) ScreenerTemplates() *ScreenerTemplates { return &ScreenerTemplates{s: s} }
 
 func (c *ScreenerTemplates) ListTemplates(ctx context.Context, userID string) ([]screener.Template, error) {
+	where, args := orgFilter(ctx, "org_id", 2)
 	rows, err := c.s.Pool.Query(ctx, `
 		SELECT id, user_id, name, filters, created_at
-		FROM screener_templates WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		FROM screener_templates WHERE user_id = $1`+where+` ORDER BY created_at DESC`, append([]any{userID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -308,9 +326,9 @@ func (c *ScreenerTemplates) ListTemplates(ctx context.Context, userID string) ([
 
 func (c *ScreenerTemplates) InsertTemplate(ctx context.Context, t screener.Template) (screener.Template, error) {
 	err := c.s.Pool.QueryRow(ctx, `
-		INSERT INTO screener_templates (id, user_id, name, filters)
-		VALUES ($1, $2, $3, $4)
-		RETURNING created_at`, t.ID, t.UserID, t.Name, t.Filters).Scan(&t.CreatedAt)
+		INSERT INTO screener_templates (id, user_id, name, filters, org_id)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING created_at`, t.ID, t.UserID, t.Name, t.Filters, tenancy.OrgOrPlatform(ctx)).Scan(&t.CreatedAt)
 	if err != nil {
 		return screener.Template{}, err
 	}
@@ -318,7 +336,8 @@ func (c *ScreenerTemplates) InsertTemplate(ctx context.Context, t screener.Templ
 }
 
 func (c *ScreenerTemplates) DeleteTemplate(ctx context.Context, userID, id string) error {
-	tag, err := c.s.Pool.Exec(ctx, `DELETE FROM screener_templates WHERE id = $1 AND user_id = $2`, id, userID)
+	where, args := orgFilter(ctx, "org_id", 3)
+	tag, err := c.s.Pool.Exec(ctx, `DELETE FROM screener_templates WHERE id = $1 AND user_id = $2`+where, append([]any{id, userID}, args...)...)
 	if err != nil {
 		return err
 	}
