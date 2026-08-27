@@ -3,6 +3,7 @@ package binance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -240,6 +241,37 @@ func (f *Feed) fetchSnapshots(ctx context.Context, done chan<- error) {
 		}
 	}
 	done <- nil
+}
+
+// CaptureSnapshots fetches one REST depth snapshot per configured symbol
+// and hands it to SnapTap WITHOUT splicing it into the live books. A
+// recording session that starts after the feed synced would otherwise
+// hold only diff frames, and a replay of it could never initialise a
+// book (its syncers buffer diffs until a snapshot arrives). Paced like
+// fetchSnapshots to stay far under the REST weight budget.
+func (f *Feed) CaptureSnapshots(ctx context.Context) error {
+	if f.SnapTap == nil || f.REST == nil {
+		return nil
+	}
+	for i, sym := range f.Symbols {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		body, snap, err := f.REST.DepthRaw(ctx, sym, SnapshotDepthLimit)
+		if err != nil {
+			f.Stats.APIErrors.Add(1)
+			return fmt.Errorf("capture snapshot %s: %w", sym, err)
+		}
+		f.SnapTap(sym, body, snap.ReceiveTime)
+		if i < len(f.Symbols)-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+	}
+	return nil
 }
 
 // resyncMarket fetches a snapshot and splices it; ErrSnapshotBehindBuffer

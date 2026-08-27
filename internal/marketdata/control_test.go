@@ -104,3 +104,32 @@ func TestRecorderControlStopsWithParentContext(t *testing.T) {
 		t.Fatalf("cancellation reported as fatal: %v", err)
 	}
 }
+
+func TestRecorderControlOnStartFiresWithLiveSession(t *testing.T) {
+	c := &RecorderControl{
+		Dir:            t.TempDir(),
+		StreamOfSymbol: map[exchange.Symbol]uint16{"BTCUSDT": 1},
+		NewSessionID:   func() string { return "S" },
+	}
+	var seen string
+	var wasRunning bool
+	c.OnStart = func(id string) {
+		seen = id
+		wasRunning = c.Status().Running
+		// Frames tapped from inside OnStart land in the new session.
+		c.TapSnapshot("BTCUSDT", []byte(`{"lastUpdateId":1}`), time.Now())
+	}
+	if _, err := c.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for c.Status().Written < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if seen != "S" || !wasRunning || c.Status().Written != 1 {
+		t.Fatalf("OnStart seen=%q running=%v written=%d", seen, wasRunning, c.Status().Written)
+	}
+	if _, err := c.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}
