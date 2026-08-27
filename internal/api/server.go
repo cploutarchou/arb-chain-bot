@@ -64,7 +64,9 @@ type Server struct {
 	AI *ai.Service
 	// AuditAction records control actions (source=web) with the caller's
 	// IP and correlation ID for forensics (audit S-008); nil = log only.
-	AuditAction func(actor, action, entity, ip, correlationID string)
+	// after is an optional JSON payload for the row's "after" column
+	// (nil for actions with no safe state to record).
+	AuditAction func(actor, action, entity, ip, correlationID string, after []byte)
 	// Reads, when set, backs the live read groups (engine profiles).
 	Reads ReadModel
 	// Store, when set, backs the history read groups.
@@ -298,10 +300,26 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 // audit records one web control action with request forensics; nil-safe.
 func (s *Server) audit(r *http.Request, actor, action, entity string) {
+	s.auditWith(r, actor, action, entity, nil)
+}
+
+// auditWith is audit with a structured "after" payload (marshalled here;
+// a value that does not marshal is recorded without a payload rather
+// than dropping the event). Callers pass only state that is safe to
+// persist — never a secret value.
+func (s *Server) auditWith(r *http.Request, actor, action, entity string, after any) {
 	if s.AuditAction == nil {
 		return
 	}
-	s.AuditAction(actor, action, entity, clientAddr(r).String(), correlationID(r))
+	var payload []byte
+	if after != nil {
+		if b, err := json.Marshal(after); err == nil {
+			payload = b
+		} else {
+			s.log.Error("audit payload not marshalled", "action", action, "error", err)
+		}
+	}
+	s.AuditAction(actor, action, entity, clientAddr(r).String(), correlationID(r), payload)
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {

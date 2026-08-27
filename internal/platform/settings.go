@@ -407,6 +407,8 @@ func (t TelegramSettings) validate() error {
 // the ai.enabled seed). A non-settable ARB_MODE (REPLAY, BACKTEST,
 // SHADOW — all legal env values) seeds MARKET_DATA: see SeedMode.
 func Seed(b config.Bootstrap) Settings {
+	logLevel, _ := seedLogLevel(b.LogLevel)
+	origin, _ := seedOrigin(b.AllowedOrigin)
 	symbols := sortedUpper(b.Symbols)
 	starting := sortedUpper(b.StartingAssets)
 	balances := map[string]string{}
@@ -418,8 +420,8 @@ func Seed(b config.Bootstrap) Settings {
 	return Settings{
 		Platform: PlatformSettings{
 			Mode:          mode,
-			LogLevel:      seedLogLevel(b.LogLevel),
-			AllowedOrigin: seedOrigin(b.AllowedOrigin),
+			LogLevel:      logLevel,
+			AllowedOrigin: origin,
 		},
 		AI: seedAI(b),
 		Venues: map[string]VenueSettings{
@@ -456,18 +458,44 @@ func SeedMode(m config.Mode) (config.Mode, string) {
 	return config.ModeMarketData, fmt.Sprintf("ARB_MODE=%s is not a settable operating mode; platform.mode seeded as %s", m, config.ModeMarketData)
 }
 
-func seedLogLevel(v string) string {
-	if ValidateLogLevel(v) == nil {
-		return strings.ToLower(v)
+// seedLogLevel and seedOrigin mirror SeedMode: an env value the
+// document's validator would refuse is substituted, and the second
+// return names the substitution for the boot log (never silently).
+func seedLogLevel(v string) (string, string) {
+	if v == "" {
+		return "info", ""
 	}
-	return "info"
+	if ValidateLogLevel(v) == nil {
+		return strings.ToLower(v), ""
+	}
+	return "info", fmt.Sprintf("ARB_LOG_LEVEL=%q is not a valid log level; platform.log_level seeded as info", v)
 }
 
-func seedOrigin(v string) string {
-	if ValidateOrigin(v) == nil {
-		return v
+func seedOrigin(v string) (string, string) {
+	if v == "" {
+		return "http://localhost:3000", ""
 	}
-	return "http://localhost:3000"
+	if ValidateOrigin(v) == nil {
+		return v, ""
+	}
+	return "http://localhost:3000", fmt.Sprintf("ARB_ALLOWED_ORIGIN=%q is not a valid origin; platform.allowed_origin seeded as http://localhost:3000", v)
+}
+
+// SeedNotes lists every named substitution Seed(b) makes (mode, log
+// level, origin) so Load can log each one at WARN. Empty when the env
+// seeds pass through unchanged.
+func SeedNotes(b config.Bootstrap) []string {
+	var out []string
+	if _, n := SeedMode(b.Mode); n != "" {
+		out = append(out, n)
+	}
+	if _, n := seedLogLevel(b.LogLevel); n != "" {
+		out = append(out, n)
+	}
+	if _, n := seedOrigin(b.AllowedOrigin); n != "" {
+		out = append(out, n)
+	}
+	return out
 }
 
 // seedAI reproduces the pre-T-059 env behaviour exactly: the advisor was
@@ -500,8 +528,23 @@ func seedAI(b config.Bootstrap) AISettings {
 // and never writes a version — the next operator write persists the
 // complete document. Fields that are already set are left untouched.
 func (s Settings) WithDefaults(b config.Bootstrap) Settings {
+	out, _ := s.WithDefaultsNote(b)
+	return out
+}
+
+// WithDefaultsNote is WithDefaults plus the substitution it had to make,
+// if any, for the caller's log. Seeding platform.mode from ARB_MODE
+// cannot see the stored venues/paper sections' cross-field rules: a
+// pre-expansion row written under a different mode (e.g.
+// paper_enabled=false with ARB_MODE=PAPER) would fail Validate after the
+// fill and refuse the boot. When the seeded mode makes the document
+// invalid but MARKET_DATA does not, the mode falls back to MARKET_DATA
+// and the note names that — the same named substitution SeedMode emits.
+// A stored (non-empty) mode is never touched.
+func (s Settings) WithDefaultsNote(b config.Bootstrap) (Settings, string) {
 	seed := Seed(b)
-	if s.Platform.Mode == "" {
+	modeSeeded := s.Platform.Mode == ""
+	if modeSeeded {
 		s.Platform.Mode = seed.Platform.Mode
 	}
 	if s.Platform.LogLevel == "" {
@@ -510,10 +553,38 @@ func (s Settings) WithDefaults(b config.Bootstrap) Settings {
 	if s.Platform.AllowedOrigin == "" {
 		s.Platform.AllowedOrigin = seed.Platform.AllowedOrigin
 	}
+	// The ai section is filled field by field: a stored document that
+	// carries only some of the keys keeps them and gets the rest. Only
+	// the enabled flag, which a bool cannot mark as absent, follows the
+	// seed exclusively when the whole section is missing.
 	if s.AI.Provider == "" && s.AI.Model == "" {
-		s.AI = seed.AI
+		s.AI.Enabled = seed.AI.Enabled
 	}
-	return s
+	if s.AI.Provider == "" {
+		s.AI.Provider = seed.AI.Provider
+	}
+	if s.AI.Model == "" {
+		s.AI.Model = seed.AI.Model
+	}
+	if s.AI.Schedule == (AISchedule{}) {
+		s.AI.Schedule = seed.AI.Schedule
+	}
+	if s.AI.Budget.MaxAnalysesPerDay == 0 {
+		s.AI.Budget.MaxAnalysesPerDay = seed.AI.Budget.MaxAnalysesPerDay
+	}
+	if s.AI.Budget.MaxOutputTokens == 0 {
+		s.AI.Budget.MaxOutputTokens = seed.AI.Budget.MaxOutputTokens
+	}
+	note := ""
+	if modeSeeded && s.Platform.Mode != config.ModeMarketData && s.Validate() != nil {
+		fallback := s
+		fallback.Platform.Mode = config.ModeMarketData
+		if fallback.Validate() == nil {
+			note = fmt.Sprintf("stored settings predate platform.mode and do not validate under ARB_MODE=%s; platform.mode seeded as %s", s.Platform.Mode, config.ModeMarketData)
+			s = fallback
+		}
+	}
+	return s, note
 }
 
 func sortedUpper(in []string) []string {

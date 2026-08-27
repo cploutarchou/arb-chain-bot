@@ -520,7 +520,7 @@ func TestEngineRestartGuardRail409(t *testing.T) {
 	fr := &fakeRestart{result: RestartRequestResult{Accepted: false, Code: "campaign_running", Message: "campaign run camp-1 is in progress"}}
 	s.Restart = fr
 	var audited []string
-	s.AuditAction = func(actor, action, entity, ip, correlationID string) {
+	s.AuditAction = func(actor, action, entity, ip, correlationID string, _ []byte) {
 		audited = append(audited, action+":"+entity)
 	}
 	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
@@ -552,7 +552,7 @@ func TestEngineRestartSuccess202(t *testing.T) {
 	}
 	s.Restart = fr
 	var audited []string
-	s.AuditAction = func(actor, action, entity, ip, correlationID string) {
+	s.AuditAction = func(actor, action, entity, ip, correlationID string, _ []byte) {
 		audited = append(audited, action)
 	}
 	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")

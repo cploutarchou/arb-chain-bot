@@ -162,7 +162,7 @@ func TestSecretPutNeverLogsValue(t *testing.T) {
 	store.AddUser(auth.User{ID: "u-admin", Email: "admin@example.test", PasswordHash: hash, Role: auth.RoleAdmin})
 	s.Auth = &auth.Manager{Users: store, Sessions: store, Throttle: auth.NewThrottle(10, time.Minute, time.Minute), TTL: time.Hour, Now: time.Now}
 	s.Secrets = openTestVault(t, nil)
-	s.AuditAction = func(actor, action, entity, ip, correlationID string) {
+	s.AuditAction = func(actor, action, entity, ip, correlationID string, _ []byte) {
 		logger.Info("audit", "actor", actor, "action", action, "entity", entity)
 	}
 	inner := http.NewServeMux()
@@ -342,5 +342,75 @@ func TestSystemStatusModeAndAllowedOriginAreHot(t *testing.T) {
 	s.SetAllowedOrigin("https://console.example.com")
 	if s.AllowedOrigin() != "https://console.example.com" {
 		t.Fatal("SetAllowedOrigin not observed")
+	}
+}
+
+// TestSecretValueDecodesJSONStringIntoBytes covers the RFC 8259 escapes
+// the byte decoder handles and the malformed inputs it refuses.
+func TestSecretValueDecodesJSONStringIntoBytes(t *testing.T) {
+	good := map[string]string{
+		`"plain-token-value"`:           "plain-token-value",
+		`"a\"b\\c\/d"`:                  `a"b\c/d`,
+		`"tab\tnl\ncr\rbs\bff\f"`:       "tab\tnl\ncr\rbs\bff\f",
+		`"café"`:                        "café",
+		`"pair😀"`:                       "pair😀",
+		`"  trailing-space-kept-raw  "`: "  trailing-space-kept-raw  ",
+	}
+	for in, want := range good {
+		var v secretValue
+		if err := json.Unmarshal([]byte(in), &v); err != nil {
+			t.Errorf("%s: %v", in, err)
+			continue
+		}
+		if string(v) != want {
+			t.Errorf("%s: got %q want %q", in, string(v), want)
+		}
+	}
+	bad := []string{`"trunc\`, `"bad\x"`, `"\u12"`, `"\ud83d"`, `"\ud83dx"`, `42`, `null`, `["a"]`}
+	for _, in := range bad {
+		var v secretValue
+		if err := json.Unmarshal([]byte(in), &v); err == nil {
+			t.Errorf("%s: expected error, got %q", in, string(v))
+		}
+	}
+}
+
+// TestSecretMutationsAuditAfterPayload: design §3.4 — the audit row
+// carries after={name,present,key_id} and nothing about the value.
+func TestSecretMutationsAuditAfterPayload(t *testing.T) {
+	s, mux := newTestServer(t)
+	s.Secrets = openTestVault(t, nil)
+	type rec struct {
+		action string
+		after  []byte
+	}
+	var got []rec
+	s.AuditAction = func(_, action, _, _, _ string, after []byte) {
+		if strings.HasPrefix(action, "secret.") {
+			got = append(got, rec{action, after})
+		}
+	}
+	cookie, csrf := login(t, mux, "admin@example.test", "admin-pw")
+	if r := doSecret(t, mux, http.MethodPut, "/api/v1/secrets/telegram_bot_token", cookie, csrf, `{"value":"`+testSecretValue+`"}`); r.Code != http.StatusOK {
+		t.Fatalf("PUT = %d: %s", r.Code, r.Body.String())
+	}
+	if r := doSecret(t, mux, http.MethodDelete, "/api/v1/secrets/telegram_bot_token", cookie, csrf, ""); r.Code != http.StatusOK {
+		t.Fatalf("DELETE = %d: %s", r.Code, r.Body.String())
+	}
+	if len(got) != 2 || got[0].action != "secret.write" || got[1].action != "secret.delete" {
+		t.Fatalf("audit = %+v", got)
+	}
+	var w secretAudit
+	if err := json.Unmarshal(got[0].after, &w); err != nil || w.Name != "telegram_bot_token" || !w.Present || w.KeyID != s.Secrets.KeyID() {
+		t.Fatalf("write after = %s (%v)", got[0].after, err)
+	}
+	var d secretAudit
+	if err := json.Unmarshal(got[1].after, &d); err != nil || d.Name != "telegram_bot_token" || d.Present || d.KeyID != "" {
+		t.Fatalf("delete after = %s (%v)", got[1].after, err)
+	}
+	for _, r := range got {
+		if strings.Contains(string(r.after), testSecretValue[:8]) {
+			t.Fatalf("value in audit payload: %s", r.after)
+		}
 	}
 }

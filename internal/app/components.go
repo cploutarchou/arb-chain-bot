@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -168,23 +169,22 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 	}
 	aiState := &aiRuntime{}
-	applyAI := func(settings platform.AISettings) {
-		adv, st := buildAdvisor(settings, log, secretsMgr)
-		aiSwitch.Set(adv)
-		aiState.set(st)
-		if adv != nil {
-			log.Info("ai advisor enabled", "provider", adv.Name(), "model", adv.Model(), "key_source", st.KeySource)
-		} else {
-			log.Info("ai advisor idle", "reason", st.Reason)
-		}
-	}
-	platformSvc.Subscribe(func(snap platform.Snapshot) { applyAI(snap.Settings.AI) })
+	applier := &aiApplier{log: log, sw: aiSwitch, state: aiState, src: secretsMgr}
+	// Boot: resolve synchronously (Current() takes no lock) so the status
+	// route and the scheduler see a built advisor before Run starts.
+	applier.apply(platformSvc.Current().Settings.AI, applier.next(platformSvc.Current().Settings.AI))
+	// Swaps: the subscriber runs INSIDE the platform writer lock, so it
+	// must not do the vault round trip itself. It compares the ai section
+	// with the last one applied and, only when it changed, hands the
+	// rebuild to a goroutine; a generation counter drops stale results
+	// (P3-1/P3-3).
+	platformSvc.Subscribe(func(snap platform.Snapshot) { applier.request(snap.Settings.AI, false) })
 	// A key written to (or removed from) the vault re-resolves the
 	// advisor at once — applies:"immediately" is literally true. The
 	// Telegram token is read once at boot (D5) and is not re-applied.
 	secretsMgr.OnChange = func(name string) {
 		if name == "anthropic_api_key" {
-			applyAI(platformSvc.Current().Settings.AI)
+			applier.request(platformSvc.Current().Settings.AI, true)
 		}
 	}
 
@@ -557,6 +557,68 @@ type aiRuntimeState struct {
 
 func (a *aiRuntime) set(st aiRuntimeState) { a.p.Store(&st) }
 
+// aiApplier serialises advisor rebuilds: one mutex guards the last
+// requested ai section, the generation counter, and the paired
+// aiSwitch/aiState stores, so the status view never describes a
+// different advisor than the one running. buildAdvisor (the secrets
+// round trip) runs outside every lock.
+type aiApplier struct {
+	log   *slog.Logger
+	sw    *ai.Switch
+	state *aiRuntime
+	src   secrets.SecretSource
+
+	mu      sync.Mutex
+	last    platform.AISettings
+	hasLast bool
+	gen     uint64 // last generation requested
+	applied uint64 // last generation stored
+}
+
+// next records settings as the latest request and returns its
+// generation. Callers then build outside the lock and hand the result
+// to apply, which drops it when a newer generation has already landed.
+func (a *aiApplier) next(settings platform.AISettings) uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.last, a.hasLast = settings, true
+	a.gen++
+	return a.gen
+}
+
+// request schedules a rebuild unless the ai section is unchanged since
+// the last one (force bypasses the comparison: the key changed, not the
+// document). AISettings has no reference fields, so == is a deep compare.
+func (a *aiApplier) request(settings platform.AISettings, force bool) {
+	a.mu.Lock()
+	if !force && a.hasLast && a.last == settings {
+		a.mu.Unlock()
+		return
+	}
+	a.last, a.hasLast = settings, true
+	a.gen++
+	gen := a.gen
+	a.mu.Unlock()
+	go a.apply(settings, gen)
+}
+
+func (a *aiApplier) apply(settings platform.AISettings, gen uint64) {
+	adv, st := buildAdvisor(settings, a.log, a.src)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if gen < a.applied {
+		return // a newer request already landed; keep it
+	}
+	a.applied = gen
+	a.sw.Set(adv)
+	a.state.set(st)
+	if adv != nil {
+		a.log.Info("ai advisor enabled", "provider", adv.Name(), "model", adv.Model(), "key_source", st.KeySource)
+	} else {
+		a.log.Info("ai advisor idle", "reason", st.Reason)
+	}
+}
+
 func (a *aiRuntime) get() aiRuntimeState {
 	if p := a.p.Load(); p != nil {
 		return *p
@@ -632,6 +694,7 @@ func buildSecrets(log *slog.Logger, store *storage.Store, cfg config.Bootstrap) 
 		log.Error("secrets vault disabled", "error", err)
 		return secrets.NewManager(nil, err.Error(), env)
 	}
+	vault.Log = log
 	log.Info("secrets vault open", "key_id", vault.KeyID())
 	return secrets.NewManager(vault, "", env)
 }
@@ -836,8 +899,8 @@ func (p restartProxy) Status() api.RestartStatus {
 
 // webAudit carries the caller's IP and correlation ID into the audit row
 // (audit S-008) — web is the surface where those forensics exist.
-func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity, ip, correlationID string) {
-	return func(actor, action, entity, ip, correlationID string) {
+func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity, ip, correlationID string, after []byte) {
+	return func(actor, action, entity, ip, correlationID string, after []byte) {
 		if store == nil {
 			log.Info("audit event (memory-only)", "actor", actor, "action", action,
 				"entity", entity, "source", "web", "ip", ip, "correlation_id", correlationID)
@@ -847,7 +910,7 @@ func webAudit(log *slog.Logger, store *storage.Store) func(actor, action, entity
 		defer cancel()
 		if err := store.InsertAuditEvent(ctx, storage.AuditRow{
 			ID: newULID(), Actor: actor, Source: "web",
-			Action: action, Entity: entity, IP: ip, CorrelationID: correlationID,
+			Action: action, Entity: entity, After: after, IP: ip, CorrelationID: correlationID,
 		}); err != nil {
 			log.Error("audit insert failed", "source", "web", "error", err)
 		}
