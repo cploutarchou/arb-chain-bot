@@ -1,0 +1,15 @@
+{
+ "success": true,
+ "code": 0,
+ "data": {
+  "symbol": "BTC_USDT",
+  "fundingRate": 7.3e-05,
+  "maxFundingRate": 0.0018,
+  "minFundingRate": -0.0018,
+  "collectCycle": 8,
+  "nextSettleTime": 1787875200000,
+  "timestamp": 1787848769203,
+  "idxPrice": 80349,
+  "fairPrice": 80319.3
+ }
+}

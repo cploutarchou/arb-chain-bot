@@ -124,16 +124,19 @@ type AuditEvent struct {
 }
 
 // Service owns the current settings snapshot, the in-memory quote/perp
-// book, and the rule/event/template/funding stores. Collectors (T-066)
-// are not part of this task's scope: the book starts empty and stays
-// empty until a poller calls Book.SetQuote/SetPerp, which GET
-// /screener/status reports honestly (collectors: "not_started").
+// book, and the rule/event/template/funding stores. The T-066 venue
+// poller (Collectors, see service_collectors.go) fills the book when
+// wired; without it the book stays empty and GET /screener/status says
+// so (collectors: "not_started").
 type Service struct {
 	Book      *Book
 	Rules     RuleStore
 	Events    EventStore
 	Templates TemplateStore
 	Funding   FundingStore
+	// Collectors is the T-066 venue poller (venue.Poller) when wired;
+	// nil in profiles/tests that do not run it (status: not_started).
+	Collectors CollectorRunner
 
 	// SpreadLifetime is the ONE process-wide LifetimeTracker every GET
 	// /screener/spreads request shares (spreads.go's doc comment: the
@@ -149,6 +152,8 @@ type Service struct {
 
 	mu  sync.Mutex // serializes writers (Apply/Load)
 	cur atomic.Pointer[Snapshot]
+
+	autoPaper AutoPaperSource // service_automation.go; nil when no executor runs
 }
 
 // NewService wires a Service over the given stores. Book must be

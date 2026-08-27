@@ -40,6 +40,7 @@ func testStore(t *testing.T) *Store {
 		"strategy_configs", "platform_settings",
 		// screener_settings/_rules FK-reference users(id) with no cascade
 		// (same as platform_settings above): deleted before "users" below.
+		"screener_paper_executions", "screener_paper_positions", "screener_paper_balances",
 		"screener_templates", "funding_history", "screener_events", "screener_rules", "screener_settings",
 		"audit_events", "ai_recommendations", "ai_analyses",
 		"alerts", "secrets", "users", "exchanges", "campaign_runs", "replay_runs", "risk_events", "reports"} {

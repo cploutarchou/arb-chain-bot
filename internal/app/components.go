@@ -25,6 +25,9 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/alerts"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/venue"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -98,15 +101,32 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	}
 
 	// screener.Service (T-067/T-068, docs/design/scanner-suite.md §2):
-	// the Scanner Suite backend core. Collectors (T-066) are not wired
-	// here — the book starts and stays empty until they land, which GET
-	// /screener/status reports honestly. Built unconditionally (like
+	// the Scanner Suite backend core. Built unconditionally (like
 	// platformSvc above) so every profile can serve the read routes;
-	// only the API profile actually attaches it to a Server below.
+	// only the API profile actually attaches it to a Server below and
+	// runs the T-066 venue collectors (next block).
 	screenerSvc, err := buildScreener(log, store)
 	if err != nil {
 		log.Error("screener settings load failed; refusing to start without a validated settings document", "error", err)
 		return []Component{ComponentFunc{ComponentName: "screener-settings", Fn: func(context.Context) error { return err }}}
+	}
+	// T-066: venue collectors (public REST only) run as one component in
+	// the profiles that serve the screener API; they start with the
+	// process and stop when its context ends. Other profiles keep the
+	// honest "not_started" (no runner wired).
+	if p == ProfileFull || p == ProfileAPI {
+		screenerSvc.Collectors = &venue.Poller{
+			Book: screenerSvc.Book, Log: log, Funding: screenerSvc.Funding,
+			Current: func() screener.Settings { return screenerSvc.Current().Settings },
+		}
+		others = append(others, ComponentFunc{ComponentName: "screener-collectors", Fn: func(ctx context.Context) error {
+			if err := screenerSvc.StartCollectors(ctx); err != nil {
+				return err
+			}
+			<-ctx.Done()
+			screenerSvc.StopCollectors()
+			return nil
+		}})
 	}
 
 	// platform.log_level is hot (T-059 D6): the process-wide LevelVar
@@ -139,6 +159,26 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	stratSvc.Subscribe(func(snap strategy.Snapshot) {
 		notify.Reconfigure(notificationConfig(snap))
 	})
+
+	// T-070/T-071: the alert evaluator and the automatic PAPER executor
+	// run on the screener poll interval in the same profiles as the
+	// collectors. Executor first (funding accrual, exits, realised-slip
+	// measurement of the previous poll), then the evaluator, whose
+	// opened events call the executor synchronously. The executor's
+	// ledger is migration 000011 (screener_paper_*) when persistence is
+	// on, in-memory otherwise; it never touches paper_cycles nor places
+	// a real order (execution.LiveExecutor stays disabled).
+	if p == ProfileFull || p == ProfileAPI {
+		var ledger paperexec.Ledger = paperexec.NewMemoryLedger()
+		if store != nil {
+			ledger = store.ScreenerPaper()
+		}
+		evaluator := alerts.New(screenerSvc, notify.Notify, log)
+		executor := paperexec.New(screenerSvc, ledger, log, paperexec.Options{Seed: 1, IDGen: newULID})
+		evaluator.OnOpen(executor.OnOpen)
+		screenerSvc.SetAutoPaper(executor)
+		others = append(others, screener.NewAutomation(screenerSvc, executor, evaluator))
+	}
 
 	// The alert center records every delivery (routing controls channels,
 	// never whether an alert exists) and owns the shared lifecycle.

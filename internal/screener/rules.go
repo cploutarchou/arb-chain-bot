@@ -41,6 +41,10 @@ type Rule struct {
 	Telegram       bool            `json:"telegram"`
 	AutoPaper      bool            `json:"auto_paper"`
 	PaperSizeQuote decimal.Decimal `json:"paper_size_quote"`
+
+	// Params are the optional strategy-model inputs (rule_params.go);
+	// nil keeps every documented default.
+	Params *RuleParams `json:"params,omitempty"`
 }
 
 const maxRuleNameLen = 100
@@ -88,5 +92,5 @@ func (r Rule) Validate() error {
 	if r.AutoPaper && !r.PaperSizeQuote.IsPositive() {
 		return fmt.Errorf("%w: auto_paper requires paper_size_quote > 0", ErrInvalid)
 	}
-	return nil
+	return r.Params.Validate(r.Kind)
 }
