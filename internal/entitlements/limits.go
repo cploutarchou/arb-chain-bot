@@ -158,7 +158,7 @@ func (e Entitlements) RetentionCutoff(now time.Time) time.Time {
 // DailyCounter enforces alerts.per_day per organisation and UTC day
 // (in-process; the Redis counter in packages.md §3.2 replaces it when
 // the dispatcher is scaled out). Allow returns false once the quota is
-// used up for the day.
+// used up for the day; perDay == Unlimited (-1) never refuses.
 type DailyCounter struct {
 	mu   sync.Mutex
 	day  string
@@ -168,6 +168,9 @@ type DailyCounter struct {
 func NewDailyCounter() *DailyCounter { return &DailyCounter{used: map[int64]int{}} }
 
 func (c *DailyCounter) Allow(orgID int64, perDay int, now time.Time) bool {
+	if perDay == Unlimited {
+		return true
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	day := now.UTC().Format("2006-01-02")
@@ -180,6 +183,16 @@ func (c *DailyCounter) Allow(orgID int64, perDay int, now time.Time) bool {
 	}
 	c.used[orgID]++
 	return true
+}
+
+// Used reports today's consumed quota for orgID (diagnostics/tests).
+func (c *DailyCounter) Used(orgID int64, now time.Time) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if now.UTC().Format("2006-01-02") != c.day {
+		return 0
+	}
+	return c.used[orgID]
 }
 
 // RateLimiter is a per-key token bucket for api.rate_per_min / burst

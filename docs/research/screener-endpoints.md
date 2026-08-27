@@ -199,6 +199,7 @@ Sources: https://github.com/gateio/gateapi-python/blob/master/docs/SpotApi.md , 
 
 ### 6.5 Rate limits
 - Spot **500 req / 10 s per endpoint per IP**; 418/429 language mirrors Binance. **VERIFIED (docs text)**
+- Contract API answers over-frequency **in-band**: HTTP 200 with error code **510** ("Excessive frequency of requests" in the error-code table, https://mexcdevelop.github.io/apidocs/contract_v1_en/#error-code, accessed 2026-08-27; observed body `{"code":510,"msg":"Requests are too frequent"}`). No Retry-After is published. **VERIFIED (code + description); the pause length is our policy** — `internal/screener/venue/mexc.go` counts it as rate_limited and pauses the venue gate 10 s.
 
 ### 6.6 Fees — spot 0 % maker / 0.05 % taker (promos vary), USDT-M 0 % / 0.02 %. **UNVERIFIED from primary; promos change often.**
 ### 6.7 Testnet — none documented at API level. **UNVERIFIED.**

@@ -606,6 +606,174 @@ test("sign out returns to login", async ({ page }) => {
   await page.waitForURL("**/login");
 });
 
+// ---- Tenancy / entitlements / billing (T-081..T-083) ----------------------
+
+test("risk-ack gate blocks once, then never again for the session", async ({
+  page,
+}) => {
+  // risk_ack_required is always false in this DB-less CI profile (no
+  // internal/tenancy.Store wired ⇒ every account acts in the exempt
+  // platform organisation, internal/api/auth.go riskAckRequired) — the
+  // gate is exercised deterministically by rewriting the real /me
+  // response's risk_ack_required/version fields in place, keeping every
+  // other field (entitlements, org, role…) authentic, and by answering
+  // the risk-ack POST locally instead of letting it reach the
+  // tenancy_unavailable backend.
+  let ackRequired = true;
+  await page.route("**/api/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      data?: { risk_ack_required?: boolean; risk_ack_version?: string };
+    };
+    if (body.data) {
+      body.data.risk_ack_required = ackRequired;
+      body.data.risk_ack_version = "2026-08-27";
+    }
+    await route.fulfill({ response, json: body });
+  });
+  let ackPosted: string | null = null;
+  await page.route("**/api/v1/me/risk-ack", async (route) => {
+    const payload = route.request().postDataJSON() as { version?: string };
+    ackPosted = payload.version ?? null;
+    ackRequired = false;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          org_id: 1,
+          risk_ack_version: payload.version,
+          risk_ack_at: new Date().toISOString(),
+        },
+        error: null,
+      }),
+    });
+  });
+
+  await login(page);
+  await expect(
+    page.getByRole("heading", { name: "Read this before you continue" }),
+  ).toBeVisible();
+  const acceptButton = page.getByRole("button", {
+    name: "Accept and continue",
+  });
+  await expect(acceptButton).toBeDisabled();
+  await page.getByRole("checkbox").check();
+  await expect(acceptButton).toBeEnabled();
+  await acceptButton.click();
+  await expect(
+    page.getByRole("heading", { name: "Read this before you continue" }),
+  ).toHaveCount(0, { timeout: 10_000 });
+  expect(ackPosted).toBe("2026-08-27");
+
+  // Reload: accepted once, never asked again for the rest of the session.
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Read this before you continue" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Mode", { exact: true })).toBeVisible();
+});
+
+test("/org renders", async ({ page }) => {
+  await login(page);
+  await page.goto("/org");
+  await expect(
+    page.getByRole("heading", { name: "Organisation" }),
+  ).toBeVisible();
+});
+
+test("/billing renders and shows 'Billing not configured' without Paddle secrets", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/billing");
+  await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
+  // This CI profile has no paddle_api_key/paddle_webhook_secret in the
+  // vault and no PADDLE_CLIENT_TOKEN — billing is honestly unconfigured
+  // rather than showing a broken checkout button or price table.
+  await expect(page.getByText("Billing not configured.").first()).toBeVisible({
+    timeout: 10_000,
+  });
+});
+
+test("entitlement_exceeded 403 renders a toast with an Upgrade link to /billing", async ({
+  page,
+}) => {
+  // No real request in this DB-less CI profile can trip
+  // entitlement_exceeded (the platform org resolves to the institution
+  // package, which has no limits to hit) — simulate the backend's
+  // documented shape (packages.md §3.2: 403 entitlement_exceeded +
+  // data.key/limit) on a real mutating endpoint to exercise the errorBus
+  // → ToastProvider wiring end to end. Screener rules (unlike /org, which
+  // 503s tenancy_unavailable without a database in this profile) work
+  // with no DB, so the create-rule form is reliably reachable here.
+  await page.route("**/api/v1/screener/rules", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: { key: "rules.max_active", limit: 2 },
+        error: {
+          code: "entitlement_exceeded",
+          message: "active rule limit reached",
+        },
+      }),
+    });
+  });
+  await login(page);
+  await page.goto("/scanner-alerts");
+  await page.getByRole("button", { name: "New rule…" }).click();
+  await page.getByLabel("Name").fill("Over the limit");
+  await page.getByRole("button", { name: "Save rule" }).click();
+  const toast = page.getByText(/rules max active/i);
+  await expect(toast).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("link", { name: "Upgrade" })).toBeVisible();
+});
+
+// ensureViewerAccount mirrors ensureOperatorAccount below for a VIEWER
+// test user, used to assert nav gating renders the role-restricted
+// treatment (not just that VIEWER's permitted pages happen to load).
+async function ensureViewerAccount(page: Page) {
+  const VIEWER_TEST = { email: "viewer@e2e.test", password: "e2e-viewer-123" };
+  await login(page);
+  await page.goto("/settings#users");
+  await page.getByRole("heading", { name: "Users & roles" }).waitFor();
+  const already = await page.getByText(VIEWER_TEST.email).count();
+  if (already === 0) {
+    await page.getByLabel("Email").fill(VIEWER_TEST.email);
+    await page.getByLabel("Role").selectOption("VIEWER");
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill(VIEWER_TEST.password);
+    await page.getByLabel("Confirm password").fill(VIEWER_TEST.password);
+    await page.getByRole("button", { name: "Create user" }).click();
+    await expect(page.getByText(VIEWER_TEST.email).first()).toBeVisible({
+      timeout: 10_000,
+    });
+  }
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.waitForURL("**/login");
+  return VIEWER_TEST;
+}
+
+test("nav gating is visible for a VIEWER (role-restricted, not just hidden)", async ({
+  page,
+}) => {
+  const viewer = await ensureViewerAccount(page);
+  await login(page, viewer.email, viewer.password);
+  await page.goto("/overview");
+  const nav = page.getByRole("navigation");
+  // Audit Log: GatedControl state="role" — grey, cursor-not-allowed,
+  // non-navigable, with the actual minimum role named in the tooltip
+  // (console-v2.md §2.4 — never a generic "restricted").
+  await expect(nav.getByRole("link", { name: "Audit Log" })).toHaveCount(0);
+  const gated = nav.locator('[title="Requires OPERATOR or ADMIN"]');
+  await expect(gated).toBeVisible();
+  await expect(gated).toHaveAttribute("aria-disabled", "true");
+  await expect(gated).toContainText("Audit Log");
+});
+
 // ---- Scanner Suite (T-065..T-072) -----------------------------------------
 // Screener, Perpetuals, Funding, Calculator, Alert Rules, Auto-Paper. The
 // backend for this suite is being written in parallel — every page must
@@ -633,6 +801,31 @@ async function ensureOperatorAccount(page: Page) {
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
 }
+
+test("Perpetuals min carry APR filter sends a fraction, not a raw percent", async ({
+  page,
+}) => {
+  // The field is labelled "% APR" for the operator but the backend
+  // (internal/screener/basis.go PerpFilters.MinCarryAPR) reads
+  // min_carry_apr as a fraction (0.10 = 10%). Intercept the request so
+  // this is checked against the real query string regardless of what
+  // the screener backend is wired to answer in this profile.
+  await login(page);
+  let seenQuery: string | null = null;
+  await page.route("**/api/v1/screener/perpetuals**", async (route) => {
+    seenQuery = new URL(route.request().url()).searchParams.get(
+      "min_carry_apr",
+    );
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: { rows: [] }, error: null }),
+    });
+  });
+  await page.goto("/perpetuals");
+  await page.getByLabel("Min carry APR").fill("10");
+  await expect.poll(() => seenQuery, { timeout: 10_000 }).toBe("0.1");
+});
 
 test.describe("Scanner Suite", () => {
   test.beforeAll(async ({ browser }) => {

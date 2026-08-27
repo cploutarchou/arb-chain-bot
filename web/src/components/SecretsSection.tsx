@@ -58,6 +58,13 @@ export function SecretsSection() {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const mayEdit = can(role, "system:config");
+  // Exchange credentials are platform-operator only, not merely
+  // ADMIN-only (compliance review #1, billing.md §1.3): the backend
+  // already filters them out of GET /secrets and answers
+  // platform_admin_required on PUT/DELETE for anyone else, including a
+  // tenant OWNER/ADMIN who holds the console ADMIN role. The console
+  // mirrors that distinction instead of just reusing `mayEdit`.
+  const platformAdmin = auth.kind === "authenticated" && auth.me.platform_admin;
 
   const [refresh, setRefresh] = useState(0);
   const list = usePoll(() => api.secrets.list(), 15000, [refresh]);
@@ -205,24 +212,28 @@ export function SecretsSection() {
               (l.secrets ?? []).filter((s) => s.group !== "exchange"),
               l.vault_configured,
             )}
-            <h3 className="pt-2 text-[13px] font-medium">
-              Exchange API credentials
-            </h3>
-            <p className="text-[12px] text-[var(--text-dim)]">
-              Stored encrypted in the database so nothing has to live in{" "}
-              <code>.env</code>. No component reads them — the backend refuses
-              to resolve this group, live trading is disabled by design, and the
-              platform only ever consumes public market data. Create keys as{" "}
-              <strong>read-only</strong> (no trade, no withdrawal permission); a
-              future read-only consumer (fee tier, account snapshot) is a
-              separately reviewed change.
-            </p>
-            {secretsTable(
-              (l.secrets ?? [])
-                .filter((s) => s.group === "exchange")
-                .sort(sortExchange),
-              l.vault_configured,
-              true,
+            {platformAdmin && (
+              <>
+                <h3 className="pt-2 text-[13px] font-medium">
+                  Exchange API credentials
+                </h3>
+                <p className="text-[12px] text-[var(--text-dim)]">
+                  Stored encrypted in the database so nothing has to live in{" "}
+                  <code>.env</code>. No component reads them — the backend
+                  refuses to resolve this group, live trading is disabled by
+                  design, and the platform only ever consumes public market
+                  data. Create keys as <strong>read-only</strong> (no trade, no
+                  withdrawal permission); a future read-only consumer (fee tier,
+                  account snapshot) is a separately reviewed change.
+                </p>
+                {secretsTable(
+                  (l.secrets ?? [])
+                    .filter((s) => s.group === "exchange")
+                    .sort(sortExchange),
+                  l.vault_configured,
+                  true,
+                )}
+              </>
             )}
             {(l.secrets ?? []).some((s) => s.reason) && (
               <ul className="list-inside list-disc text-[12px] text-[var(--warn)]">

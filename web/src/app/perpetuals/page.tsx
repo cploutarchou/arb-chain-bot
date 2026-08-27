@@ -55,7 +55,13 @@ export default function PerpetualsPage() {
     () =>
       api.screener.perpetuals({
         base: base.trim().toUpperCase() || undefined,
-        min_carry_apr: minCarryApr.trim() ? Number(minCarryApr) : undefined,
+        // The field renders as "% APR" but the wire contract
+        // (internal/screener/basis.go PerpFilters.MinCarryAPR) is a
+        // fraction, e.g. 0.10 for 10% — convert percent to fraction here,
+        // never send the raw percent value.
+        min_carry_apr: minCarryApr.trim()
+          ? Number(minCarryApr) / 100
+          : undefined,
         limit: 200,
       }),
     pollMs,
