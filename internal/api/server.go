@@ -12,10 +12,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
+	"github.com/cploutarchou/arb-chain-bot/internal/apikey"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/billing/paddle"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
@@ -143,12 +145,30 @@ type Server struct {
 	// must acknowledge before using the product (compliance review #3);
 	// "" disables the gate.
 	RiskAckVersion string
+	// APIKeys, when set, backs the client API-key routes and the Bearer
+	// authentication path in authenticate() (T-086). nil: /org/api-keys
+	// answers 503 and Authorization: Bearer headers are ignored (no
+	// database, no tenancy — matches Tenancy/Entitlements' own nil
+	// meaning "not available in this profile").
+	APIKeys apikey.Store
+	// APIRateLimiter enforces api.rate_per_min/api.burst per API key
+	// (packages.md §3.2); nil disables rate limiting for Bearer callers
+	// (database-less profiles only, where APIKeys is also nil).
+	APIRateLimiter *entitlements.RateLimiter
 
 	// allowedOrigin is platform.allowed_origin (hot, D7): the websocket
 	// origin check reads it through an atomic accessor because the
 	// Supervisor never rebuilds the api.Server.
 	allowedOrigin atomic.Pointer[string]
+	// apiKeyTouch throttles the last_used_at write to at most once per
+	// apiKeyTouchInterval per key id, so a hot API key does not turn
+	// every request into a synchronous UPDATE.
+	apiKeyTouch sync.Map
 }
+
+// apiKeyTouchInterval bounds how often authenticateAPIKey persists
+// last_used_at for a given key (write-amplification guard, T-086).
+const apiKeyTouchInterval = time.Minute
 
 // AIRuntimeStatus is the advisor's runtime status line (settings-
 // expansion §4.1): the configured intent (enabled) versus what is
@@ -323,6 +343,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.telegramRoutes(mux)
 	s.screenerRoutes(mux)
 	s.orgRoutes(mux)
+	s.apiKeyRoutes(mux)
 	s.billingRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):

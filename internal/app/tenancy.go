@@ -8,6 +8,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/apikey"
 	"github.com/cploutarchou/arb-chain-bot/internal/billing/affiliate"
 	"github.com/cploutarchou/arb-chain-bot/internal/billing/paddle"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
@@ -36,6 +37,13 @@ type tenantWiring struct {
 	// (packages.md §3.2; one per process — see entitlements.DailyCounter
 	// for the scale-out note).
 	alertsPerDay *entitlements.DailyCounter
+	// apiKeys backs the client API-key routes and the Bearer
+	// authentication path (T-086); nil without a database.
+	apiKeys apikey.Store
+	// apiRateLimiter enforces api.rate_per_min/api.burst per key
+	// (packages.md §3.2 api.*; in-process — see entitlements.RateLimiter
+	// for the scale-out note).
+	apiRateLimiter *entitlements.RateLimiter
 }
 
 // buildTenancy: pgx-backed stores when persistence is on (migrations
@@ -83,14 +91,20 @@ func buildTenancy(log *slog.Logger, store *storage.Store, sec *secrets.Manager, 
 			log.Error("affiliate accrual failed", "org_id", orgID, "transaction_id", txn, "error", err)
 		}
 	}
-	return tenantWiring{store: ts, resolver: resolver, billing: billing, alertsPerDay: entitlements.NewDailyCounter()}
+	return tenantWiring{
+		store: ts, resolver: resolver, billing: billing,
+		alertsPerDay:   entitlements.NewDailyCounter(),
+		apiKeys:        store.APIKeys(),
+		apiRateLimiter: entitlements.NewRateLimiter(),
+	}
 }
 
 // alertEntitle is the alert evaluator's precondition (packages.md §3.2
-// alerts.*): resolve the rule's organisation, decide whether Telegram
-// is still an entitled channel, then consume one unit of alerts.per_day
-// — refusing with alerts.SkipAlertsPerDay once the day's quota is used.
-// The platform organisation is never gated; without tenancy nothing is.
+// alerts.*): resolve the rule's organisation, decide which of the
+// rule's requested channels (telegram/email/webhook) are still
+// entitled, then consume one unit of alerts.per_day — refusing with
+// alerts.SkipAlertsPerDay once the day's quota is used. The platform
+// organisation is never gated; without tenancy nothing is.
 func (t tenantWiring) alertEntitle() alerts.EntitlementCheck {
 	if t.store == nil || t.resolver == nil || t.alertsPerDay == nil {
 		return nil
@@ -101,7 +115,7 @@ func (t tenantWiring) alertEntitle() alerts.EntitlementCheck {
 			return alerts.Entitlement{Reason: "organisation lookup failed: " + err.Error()}
 		}
 		if orgID == tenancy.PlatformOrgID {
-			return alerts.Entitlement{Allow: true, Telegram: true}
+			return alerts.Entitlement{Allow: true, Telegram: true, Channels: allChannelsAllowed(rule)}
 		}
 		ent, err := t.resolver.For(ctx, orgID)
 		if err != nil {
@@ -110,8 +124,23 @@ func (t tenantWiring) alertEntitle() alerts.EntitlementCheck {
 		if !t.alertsPerDay.Allow(orgID, ent.Alerts.PerDay, now) {
 			return alerts.Entitlement{Reason: alerts.SkipAlertsPerDay}
 		}
-		return alerts.Entitlement{Allow: true, Telegram: ent.CheckChannel("telegram") == nil}
+		channels := map[string]bool{}
+		for _, ch := range rule.EffectiveChannels() {
+			channels[ch] = ent.CheckChannel(ch) == nil
+		}
+		return alerts.Entitlement{Allow: true, Telegram: channels["telegram"], Channels: channels}
 	}
+}
+
+// allChannelsAllowed answers "every requested channel is entitled" —
+// the platform organisation (operator staff, not a package customer)
+// is never gated by alerts.channels.
+func allChannelsAllowed(rule screener.Rule) map[string]bool {
+	out := map[string]bool{}
+	for _, ch := range rule.EffectiveChannels() {
+		out[ch] = true
+	}
+	return out
 }
 
 // paperEntitle is the executor's precondition (packages.md §3.2

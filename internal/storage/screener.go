@@ -242,7 +242,7 @@ func (c *ScreenerEvents) ListEvents(ctx context.Context, ruleID string, limit in
 	rows, err := c.s.Pool.Query(ctx, `
 		SELECT id, rule_id, kind, base, quote, buy_venue, sell_venue,
 		       opened_at, closed_at, lifetime_s, peak_net_bps,
-		       telegram_sent, paper_execution_id
+		       telegram_sent, paper_execution_id, delivered
 		FROM screener_events WHERE ($1 = '' OR rule_id = $1)`+where+` ORDER BY opened_at DESC LIMIT $2`,
 		append([]any{ruleID, limit}, args...)...)
 	if err != nil {
@@ -256,9 +256,10 @@ func (c *ScreenerEvents) ListEvents(ctx context.Context, ruleID string, limit in
 			buyVenue, sellVenue *string
 			peakNetBps          string
 			paperExecID         *string
+			delivered           []byte
 		)
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.Kind, &e.Base, &e.Quote, &buyVenue, &sellVenue,
-			&e.OpenedAt, &e.ClosedAt, &e.LifetimeS, &peakNetBps, &e.TelegramSent, &paperExecID); err != nil {
+			&e.OpenedAt, &e.ClosedAt, &e.LifetimeS, &peakNetBps, &e.TelegramSent, &paperExecID, &delivered); err != nil {
 			return nil, err
 		}
 		if buyVenue != nil {
@@ -269,6 +270,11 @@ func (c *ScreenerEvents) ListEvents(ctx context.Context, ruleID string, limit in
 		}
 		e.PeakNetBps = peakNetBps
 		e.PaperExecutionID = paperExecID
+		if len(delivered) > 0 {
+			if err := json.Unmarshal(delivered, &e.Delivered); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -284,19 +290,50 @@ func (c *ScreenerEvents) InsertEvent(ctx context.Context, e screener.Event) erro
 		v := string(e.SellVenue)
 		sellVenue = &v
 	}
+	deliveredMap := e.Delivered
+	if deliveredMap == nil {
+		deliveredMap = map[string]screener.DeliveryOutcome{}
+	}
+	delivered, err := json.Marshal(deliveredMap)
+	if err != nil {
+		return err
+	}
 	// The event inherits its rule's organisation (the evaluator runs
 	// without a request scope); an unknown rule falls back to the
 	// platform organisation.
-	_, err := c.s.Pool.Exec(ctx, `
+	_, err = c.s.Pool.Exec(ctx, `
 		INSERT INTO screener_events
 			(id, rule_id, kind, base, quote, buy_venue, sell_venue,
-			 opened_at, closed_at, lifetime_s, peak_net_bps, telegram_sent, paper_execution_id, org_id)
+			 opened_at, closed_at, lifetime_s, peak_net_bps, telegram_sent, paper_execution_id, org_id, delivered)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-		        COALESCE((SELECT org_id FROM screener_rules WHERE id = $2), $14))
+		        COALESCE((SELECT org_id FROM screener_rules WHERE id = $2), $14), $15)
 		ON CONFLICT (id) DO NOTHING`,
 		e.ID, e.RuleID, string(e.Kind), e.Base, e.Quote, buyVenue, sellVenue,
-		e.OpenedAt, e.ClosedAt, e.LifetimeS, e.PeakNetBps, e.TelegramSent, e.PaperExecutionID, tenancy.OrgOrPlatform(ctx))
+		e.OpenedAt, e.ClosedAt, e.LifetimeS, e.PeakNetBps, e.TelegramSent, e.PaperExecutionID, tenancy.OrgOrPlatform(ctx), delivered)
 	return err
+}
+
+var _ screener.EventDeliveryRecorder = (*ScreenerEvents)(nil)
+
+// SetEventDelivered patches one channel's delivery outcome onto an
+// already-inserted event (T-086): email/webhook results are only known
+// after InsertEvent has already run, since they are dispatched to a
+// bounded worker rather than awaited inline.
+func (c *ScreenerEvents) SetEventDelivered(ctx context.Context, id, channel string, outcome screener.DeliveryOutcome) error {
+	out, err := json.Marshal(outcome)
+	if err != nil {
+		return err
+	}
+	tag, err := c.s.Pool.Exec(ctx, `
+		UPDATE screener_events SET delivered = jsonb_set(COALESCE(delivered, '{}'::jsonb), ARRAY[$2], $3::jsonb, true)
+		WHERE id = $1`, id, channel, out)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return screener.ErrNotFound
+	}
+	return nil
 }
 
 // ScreenerTemplates adapts the store to screener.TemplateStore.

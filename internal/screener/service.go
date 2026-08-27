@@ -84,6 +84,21 @@ type Event struct {
 	PeakNetBps       string     `json:"peak_net_bps"`
 	TelegramSent     bool       `json:"telegram_sent"`
 	PaperExecutionID *string    `json:"paper_execution_id,omitempty"`
+	// Delivered records the delivery outcome per alert channel this
+	// event's rule pushed to (docs/design/packages.md §3.1
+	// alerts.channels, T-086): "telegram" is set synchronously by the
+	// evaluator before the row is inserted; "email"/"webhook" start
+	// "pending" (dispatched to a bounded worker so a slow/retrying
+	// webhook never blocks the poll loop) and are patched to their final
+	// status by SetEventDelivered once the worker finishes.
+	Delivered map[string]DeliveryOutcome `json:"delivered,omitempty"`
+}
+
+// DeliveryOutcome is one channel's delivery result for an Event.
+type DeliveryOutcome struct {
+	Status string    `json:"status"` // sent | failed | skipped | pending
+	Reason string    `json:"reason,omitempty"`
+	At     time.Time `json:"at"`
 }
 
 // EventStore persists screener_events rows.

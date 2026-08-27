@@ -80,6 +80,11 @@ export default function ScreenerPage() {
   const [minLifetimeS, setMinLifetimeS] = useState("");
   const [basesAllowText, setBasesAllowText] = useState("");
   const [basesDenyText, setBasesDenyText] = useState("");
+  // Both OFF by default, matching the backend's own safe default
+  // (handleScreenerSpreads excludes suspect/unknown-liquidity lanes
+  // unless explicitly opted in).
+  const [includeSuspect, setIncludeSuspect] = useState(false);
+  const [includeUnknownLiquidity, setIncludeUnknownLiquidity] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const expandTriggerRef = useRef<HTMLElement | null>(null);
 
@@ -95,6 +100,8 @@ export default function ScreenerPage() {
     minLifetimeS.trim() !== "",
     basesAllowText.trim() !== "",
     basesDenyText.trim() !== "",
+    includeSuspect,
+    includeUnknownLiquidity,
   ].filter(Boolean).length;
 
   const spreads = usePoll(
@@ -107,6 +114,8 @@ export default function ScreenerPage() {
         sell: sellVenues.length ? sellVenues : undefined,
         quote: quote || undefined,
         base: basesAllow.length ? basesAllow.join(",") : undefined,
+        include_suspect: includeSuspect || undefined,
+        include_unknown_liquidity: includeUnknownLiquidity || undefined,
         limit: 200,
       }),
     pollMs,
@@ -119,6 +128,8 @@ export default function ScreenerPage() {
       minLiquidity,
       minLifetimeS,
       basesAllowText,
+      includeSuspect,
+      includeUnknownLiquidity,
     ],
   );
 
@@ -238,6 +249,25 @@ export default function ScreenerPage() {
         }}
       </ScreenerAwait>
 
+      {/* Excluded counts come from the spreads response, not the status
+          poll above — always reported by handleScreenerSpreads regardless
+          of whether either toggle is on, so the operator can see how many
+          lanes the safe defaults hid even before opting in. */}
+      {spreads.kind === "ready" && spreads.data.excluded && (
+        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <Stat
+            label="Excluded: suspect"
+            value={spreads.data.excluded.suspect}
+            tone={spreads.data.excluded.suspect > 0 ? "warn" : "dim"}
+          />
+          <Stat
+            label="Excluded: unknown liquidity"
+            value={spreads.data.excluded.liquidity_unknown}
+            tone={spreads.data.excluded.liquidity_unknown > 0 ? "warn" : "dim"}
+          />
+        </div>
+      )}
+
       <FilterCard activeCount={activeFilterCount}>
         <div className="flex flex-wrap items-start gap-6">
           <FilterRow label="Buy on">
@@ -301,6 +331,24 @@ export default function ScreenerPage() {
             placeholder="SHIB, PEPE"
             width="flex-1 min-w-[220px]"
           />
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-[12px]">
+            <input
+              type="checkbox"
+              checked={includeSuspect}
+              onChange={(e) => setIncludeSuspect(e.target.checked)}
+            />
+            Include suspect lanes (asset-identity guard)
+          </label>
+          <label className="flex items-center gap-2 text-[12px]">
+            <input
+              type="checkbox"
+              checked={includeUnknownLiquidity}
+              onChange={(e) => setIncludeUnknownLiquidity(e.target.checked)}
+            />
+            Include unknown-liquidity lanes
+          </label>
         </div>
 
         {/* Templates are a per-user read (§7: "GET /screener/templates

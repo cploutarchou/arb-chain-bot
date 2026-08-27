@@ -18,7 +18,7 @@ shipped that pick assets for you.
 | Name | `name` | 1–100 characters |
 | Kind | `kind` | `spread` (cross-venue spot), `carry` (spot long + perp short on one venue), `basis` (funding-driven entry on one venue; runs the `funding_harvest` model by default) |
 | Min spread (bps) | `min_spread_bps` | required for `spread`; compared with the **executable** edge (net of fees, minus slippage allowance per leg and buffer — defaults 2 bps and 5 bps), not the raw net |
-| Min carry APR (%) | `min_carry_apr` | required for `carry` and `basis`; the console sends the typed value unchanged |
+| Min carry APR (%) | `min_carry_apr` | required for `carry` and `basis`; the wire value is a fraction (0.07 = 7 %) and the console converts exactly both ways |
 | Min liquidity (quote) | `min_liquidity_quote` | top-of-book liquidity floor; unknown liquidity never passes |
 | Min lifetime (s) | `min_lifetime_s` | the lane must stay above threshold continuously this long before an event opens |
 | Cooldown (s) | `cooldown_s` | see below; default 300 in the form |
@@ -26,7 +26,11 @@ shipped that pick assets for you.
 | Quotes | `quotes` | comma list, exact (USDT and USDC are different quotes); default USDT |
 | Bases allow / deny | `bases_allow`, `bases_deny` | comma lists |
 | Enabled | `enabled` | a disabled rule is kept but not evaluated |
-| Push to Telegram | `telegram` | needs the notification service and a package that includes the Telegram channel |
+| Push to Telegram | `telegram` | legacy single-channel flag, kept for rules saved before channels existed; equivalent to `channels: ["telegram"]` (see below) |
+| Alert channels | `channels` | array of `telegram`, `email`, `webhook`; each is gated by the organisation's `alerts.channels` package entitlement at open time. Empty `channels` with `telegram: true` behaves exactly like `channels: ["telegram"]` — the two fields are never combined |
+| E-mail address | `email_to` | required and validated when `channels` includes `email` |
+| Webhook URL | `webhook_url` | required, `http(s)://` only, when `channels` includes `webhook` |
+| Webhook secret | `webhook_secret` | required (≥ 16 characters) when `channels` includes `webhook`; **write-only** — never returned by `GET`/list/create/update. Omitting it on an update keeps the existing secret; sending a new value rotates it |
 | Automatic PAPER execution | `auto_paper` | the form labels it "live trading is disabled by design"; needs `paper_size_quote > 0` |
 | Paper size (quote) | `paper_size_quote` | per-execution notional; clamped by the package's `auto_paper.max_size_quote` |
 
@@ -34,8 +38,9 @@ Advanced model inputs (`params`: slippage allowance, depth haircut, buffer,
 step size, drift cap, carry entry/exit thresholds, margin-stop fraction,
 basis-stop, maintenance margin rate, funding-strategy floors) are accepted
 on the API and documented in `docs/design/strategy-models.md` §1–§5. The
-console form does not expose them yet (**planned**); a rule created from the
-console runs on the documented defaults. One default matters for perp
+the console exposes `slip_bps`, `buffer_bps`, `max_hold_h` and `mmr` under
+"Advanced model inputs" (empty means the documented default; `mmr` is never
+pre-filled), and preserves any other stored `params` when you edit a rule. One default matters for perp
 rules: the maintenance margin rate (`params.mmr`) is **not** inferred from
 any venue, so a `carry`/`basis` rule with auto-paper on skips every entry
 with `MMR_UNKNOWN` until you set it through the API.
@@ -49,11 +54,73 @@ guard exclusions, and keeps a lifetime tracker per lane:
 
 1. The lane's score first exceeds the threshold → `first_seen` is stamped.
 2. It stays above the threshold for `min_lifetime_s` → an event opens
-   (`opened_at`, `lifetime_s`, `peak_net_bps`); Telegram is sent if enabled;
-   auto-paper runs if enabled.
+   (`opened_at`, `lifetime_s`, `peak_net_bps`); every channel the rule
+   effectively asks for (`channels`, or `["telegram"]` from the legacy
+   flag) is dispatched, each independently gated by the organisation's
+   `alerts.channels` entitlement; auto-paper runs if enabled.
 3. The score drops below the threshold, or the lane fails a gate → the
-   event closes with its total lifetime and peak; a close message is sent
-   if Telegram is enabled.
+   event closes with its total lifetime and peak; a close message is
+   sent, best-effort, on the same channels (the entitlement gate and the
+   `alerts.per_day` quota were already spent when the event opened, so
+   closing does not spend them again).
+
+### How channel delivery is dispatched and recorded
+
+Telegram is delivered synchronously (the notification router never
+blocks). E-mail and webhook are handed to a bounded worker pool — a
+slow SMTP server or a webhook mid-retry never stalls the poll loop — so
+their outcome is not yet known when the event is stored. Every event
+carries a `delivered` map, one entry per requested channel:
+
+```json
+"delivered": {
+  "telegram": {"status": "sent", "at": "…"},
+  "email":    {"status": "sent", "at": "…"},
+  "webhook":  {"status": "failed", "reason": "webhook endpoint returned 500", "at": "…"}
+}
+```
+
+`status` is one of `sent`, `failed`, `skipped` (the organisation is not
+entitled to that channel), or `pending` (email/webhook only, briefly,
+between the event being stored and the worker finishing). `reason` is
+set for `failed` and `skipped`.
+
+### E-mail
+
+Sent over SMTP with STARTTLS (or implicit TLS for `smtps://`), configured
+once for the whole platform via the `smtp_url` secret
+(`smtp://user:pass@host:587`) — see `docs/design/billing.md` §4. A rule
+with `channels` including `email` but no configured `smtp_url` records
+`delivered.email = {"status": "failed", "reason": "channel not
+configured on this process"}`; the alert itself, and every other
+channel, is unaffected.
+
+### Webhook
+
+`POST`ed as JSON to `webhook_url`:
+
+```json
+{"event_id": "…", "rule_id": "…", "kind": "spread", "title": "…", "body": "…", "at": "…"}
+```
+
+with a header proving it came from this platform:
+
+```
+X-Arb-Signature: ts=<unix-seconds>;h1=<hex HMAC-SHA256 of "<ts>:<raw body>" keyed by webhook_secret>
+```
+
+— the same shape `internal/billing/paddle` uses for its own outbound
+webhook signatures. Verify by recomputing the HMAC over `"<ts>:<body>"`
+with your `webhook_secret` and comparing in constant time; also check
+that `ts` is recent (a few minutes) to reject replays.
+
+Delivery: 5-second timeout per attempt, up to 3 retries with linear
+backoff, no redirects followed (a redirecting endpoint is treated as a
+failure), and the destination is refused outright — before any network
+attempt — if it resolves to a loopback, private (RFC 1918), link-local
+(this covers the `169.254.169.254` cloud metadata endpoint), CGNAT
+(`100.64.0.0/10`), unspecified or multicast address. Only `http://` and
+`https://` targets are accepted.
 
 ### Cooldown
 
@@ -102,18 +169,35 @@ depth (`history.retention_days`) are not returned.
 |---|---|---|
 | Web (Events table) | built | all |
 | Telegram | built (notification service, allowlist, one destination; Institution up to five) | Signal and above |
-| E-mail | **planned** | Operator and above |
-| Webhook | **planned** | Desk and above |
+| E-mail | built (SMTP, `smtp_url` secret) | Operator and above |
+| Webhook | built (signed, retried, SSRF-hardened) | Desk and above |
+
+A rule may request a channel its organisation is not entitled to (e.g. a
+Signal-tier rule with `channels: ["webhook"]`); this is refused at
+create/update time with `403 entitlement_exceeded` (`data.key =
+"alerts.channels"`), the same way every other package limit in this
+document is enforced.
 
 Alerts per day are also a package limit (`alerts.per_day`); when exceeded
-the event is still stored and the push is suppressed and counted as
-`skipped: quota`. The per-day counter exists and is tested but its wiring
-into the dispatcher is **planned** (`docs/design/billing.md` §6).
+the event is still stored and every channel is suppressed and counted as
+`skipped: ALERTS_PER_DAY`. The counter is wired into the evaluator per
+organisation; a refusal opens no event and spends no cooldown.
 Concurrent enabled rules are capped by `rules.max_active`; a `POST` beyond
 the cap answers `403 entitlement_exceeded` with the key and limit.
 
 Telegram chat identifiers are personal data: they are configured in
 platform settings, not in rules, and are not printed in alert bodies.
+E-mail and webhook destinations (`email_to`, `webhook_url`) are set per
+rule by the organisation that owns it.
+
+## Client API access
+
+Operator and above may read rules/events over the client API
+(`docs/design/packages.md` §3.1 `api.*`); Desk and above may also create,
+update and delete them. See `docs/design/billing.md` §1.6 for API-key
+management, scopes and rate limits — the same `/api/v1/screener/rules`
+and `/api/v1/screener/templates` endpoints this page documents, reached
+with `Authorization: Bearer <key>` instead of a browser session.
 
 ---
 

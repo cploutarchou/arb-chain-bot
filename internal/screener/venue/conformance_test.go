@@ -14,11 +14,19 @@ import (
 //   - noPerps: the venue lists no perpetuals on its public market data.
 //   - noBulkMark: mark price is per-contract (round-robin), so a perp may
 //     carry Mark 0 (basis.go skips it) while Index is set.
+//
+// noBookSize venues have a bulk ticker with NO bid/ask sizes (each
+// cited in its collector header) — their quotes must carry
+// LiquidityUnknown; every other venue's must not.
 var (
 	verifiedFees   = map[screener.Venue]bool{screener.VenueBinance: true, screener.VenueKuCoin: true, screener.VenueKraken: true}
-	publicNetworks = map[screener.Venue]bool{screener.VenueGate: true, screener.VenueKuCoin: true, screener.VenueHTX: true, screener.VenueCoinbase: true}
-	noPerps        = map[screener.Venue]bool{screener.VenueCoinbase: true}
-	noBulkMark     = map[screener.Venue]bool{screener.VenueHTX: true}
+	publicNetworks = map[screener.Venue]bool{
+		screener.VenueGate: true, screener.VenueKuCoin: true, screener.VenueHTX: true, screener.VenueCoinbase: true,
+		screener.VenueBitfinex: true, screener.VenueWhiteBIT: true, screener.VenueBitMart: true,
+	}
+	noPerps    = map[screener.Venue]bool{screener.VenueCoinbase: true}
+	noBulkMark = map[screener.Venue]bool{screener.VenueHTX: true, screener.VenueWhiteBIT: true, screener.VenueBitMart: true}
+	noBookSize = map[screener.Venue]bool{screener.VenueGate: true, screener.VenueCryptoCom: true, screener.VenueWhiteBIT: true}
 )
 
 // TestConformance is the shared gate every collector must pass before a
@@ -74,11 +82,8 @@ func TestConformance(t *testing.T) {
 				if q.At.IsZero() {
 					t.Fatalf("age not set: %+v", q)
 				}
-				if id == screener.VenueGate && !q.LiquidityUnknown {
-					t.Fatalf("gate quote must carry LiquidityUnknown: %+v", q)
-				}
-				if id != screener.VenueGate && q.LiquidityUnknown {
-					t.Fatalf("%s quote wrongly flagged LiquidityUnknown", id)
+				if noBookSize[id] != q.LiquidityUnknown {
+					t.Fatalf("%s quote LiquidityUnknown=%v, want %v (see noBookSize): %+v", id, q.LiquidityUnknown, noBookSize[id], q)
 				}
 			}
 			if pct := 100 * len(quotes) / tradSpot; pct < 90 {
@@ -139,8 +144,8 @@ func TestConformance(t *testing.T) {
 	}
 }
 
-// TestRegistry pins the registry to the ten venues (six Tier-1 + four
-// Tier-2, T-075) and their verification flags.
+// TestRegistry pins the registry to the fifteen venues (six Tier-1 +
+// four Tier-2, T-075; five Tier-3, T-078) and their verification flags.
 func TestRegistry(t *testing.T) {
 	reg := Registry()
 	if len(reg) != len(screener.OrderedVenues) {
