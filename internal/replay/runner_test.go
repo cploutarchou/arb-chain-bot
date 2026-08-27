@@ -3,6 +3,7 @@ package replay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
+	"github.com/cploutarchou/arb-chain-bot/internal/jobrun"
 )
 
 type memStore struct {
@@ -147,6 +149,12 @@ func TestRunnerFailureIsRecorded(t *testing.T) {
 			return Result{}, errors.New("no segments")
 		},
 	}
+	// review P3(h): Start now refuses until Run has pinned the lifetime
+	// context, so every Start call in this package's tests needs a Run
+	// goroutine running first.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Run(ctx) }()
 	if _, err := r.Start(Request{Recording: "REC"}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +198,119 @@ func TestRunnerMarksOrphanedRunsFailedOnStart(t *testing.T) {
 	}
 }
 
+// TestRunnerStartRefusesBeforeRun is the review P3(h) regression: Start
+// is reachable before Run has ever pinned the lifetime context (Run is
+// deliberately never called here) — it must refuse with a clear,
+// wrapped jobrun.ErrNotStarted rather than silently execute the job
+// under context.Background(), which a supervised shutdown would never
+// cancel.
+func TestRunnerStartRefusesBeforeRun(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "REC"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{Sources: fakeSources{}, Dir: dir, NewID: func() string { return "should-not-be-used" }}
+	if _, err := r.Start(Request{Recording: "REC"}, "u1"); !errors.Is(err, jobrun.ErrNotStarted) {
+		t.Fatalf("Start before Run = %v, want jobrun.ErrNotStarted", err)
+	}
+}
+
+// TestRunnerBoundsInMemoryRunsAndHonoursListLimit is the review P3(h)
+// regression: the in-memory run map/order must never grow past
+// jobrun.RingCap regardless of how many runs this process has ever
+// started, and List must clamp an over-cap limit TO the cap rather than
+// silently falling back to the default (the old
+// `if limit <= 0 || limit > 200 { limit = 50 }` shape did the latter).
+func TestRunnerBoundsInMemoryRunsAndHonoursListLimit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "REC"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	r := &Runner{
+		Sources: fakeSources{}, Dir: dir,
+		NewID: func() string { n++; return fmt.Sprintf("run-%d", n) },
+		Execute: func(context.Context, Sources, ParamsSource, string, Request, func(Progress)) (Result, error) {
+			return Result{}, nil // completes instantly: no <-release gate
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Run(ctx) }()
+
+	total := jobrun.RingCap + 20
+	for i := 0; i < total; i++ {
+		run, err := r.Start(Request{Recording: "REC"}, "u1")
+		if err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+		waitStatus(t, r, run.ID, StatusDone)
+	}
+
+	r.mu.Lock()
+	gotRuns, gotOrder := len(r.runs), len(r.order)
+	r.mu.Unlock()
+	if gotRuns != jobrun.RingCap || gotOrder != jobrun.RingCap {
+		t.Fatalf("in-memory runs = %d order = %d, want both bounded to RingCap (%d)", gotRuns, gotOrder, jobrun.RingCap)
+	}
+	// The oldest 20 (run-1..run-20) were evicted; the newest survives.
+	if _, ok := r.runs["run-1"]; ok {
+		t.Fatal("run-1 should have been evicted by the ring bound")
+	}
+	if _, ok := r.runs[fmt.Sprintf("run-%d", total)]; !ok {
+		t.Fatalf("run-%d (the most recent) should still be present", total)
+	}
+
+	list, err := r.List(ctx, 10_000) // far over the cap
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) > jobrun.RingCap {
+		t.Fatalf("List(10000) returned %d rows, want <= RingCap (%d) — a limit over the cap must clamp TO the cap, not fall back to the default", len(list), jobrun.RingCap)
+	}
+}
+
+// TestRunnerReconcileOrphansRespectsLiveOwnerHeartbeat is the review
+// P3(h) owner/heartbeat regression: a "running" row stamped by a
+// DIFFERENT, still-live process (fresh heartbeat) must NOT be reclaimed
+// — only a row whose heartbeat has actually gone stale is a genuine
+// orphan.
+func TestRunnerReconcileOrphansRespectsLiveOwnerHeartbeat(t *testing.T) {
+	store := &memStore{}
+	now := time.Now().UTC()
+	liveElsewhere := Run{
+		ID: "LIVE", Recording: "REC", Status: StatusRunning, CreatedAt: now.Add(-time.Hour),
+		OwnerID: "some-other-process", HeartbeatAt: now.Add(-time.Second),
+	}
+	deadElsewhere := Run{
+		ID: "DEAD", Recording: "REC", Status: StatusRunning, CreatedAt: now.Add(-time.Hour),
+		OwnerID: "some-other-process", HeartbeatAt: now.Add(-time.Hour),
+	}
+	_ = store.UpsertReplayRun(context.Background(), liveElsewhere)
+	_ = store.UpsertReplayRun(context.Background(), deadElsewhere)
+
+	r := &Runner{Store: store, Dir: t.TempDir(), NewID: func() string { return "X" }}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = r.Run(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, _ := store.GetReplayRun(ctx, "DEAD"); got.Status == StatusFailed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	live, err := store.GetReplayRun(context.Background(), "LIVE")
+	if err != nil || live.Status != StatusRunning {
+		t.Fatalf("a row with a fresh heartbeat from a DIFFERENT live owner must not be reclaimed: %+v err=%v", live, err)
+	}
+	dead, err := store.GetReplayRun(context.Background(), "DEAD")
+	if err != nil || dead.Status != StatusFailed || dead.Error != errInterrupted {
+		t.Fatalf("a row with a stale heartbeat must be reclaimed: %+v err=%v", dead, err)
+	}
+}
+
 // TestRunnerConfigVersionResolutionFailureFailsTheRun exercises the
 // Runner-level plumbing of ParamsSource through Execute (the real
 // backtest-driving path is covered directly in execute_test.go).
@@ -205,6 +326,9 @@ func TestRunnerConfigVersionResolutionFailureFailsTheRun(t *testing.T) {
 	// No Strategy wired: a request naming a config_version must fail the
 	// run, not silently run strategy.DefaultParams().
 	r := &Runner{Sources: src, Dir: dir, NewID: func() string { return "C" }}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Run(ctx) }()
 	if _, err := r.Start(Request{Recording: "REC", ConfigVersion: 99}, ""); err != nil {
 		t.Fatal(err)
 	}

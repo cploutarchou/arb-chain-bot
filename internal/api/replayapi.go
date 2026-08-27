@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/jobrun"
 	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 )
 
@@ -15,6 +16,25 @@ type ReplayService interface {
 	Start(req replay.Request, actor string) (replay.Run, error)
 	List(ctx context.Context, limit int) ([]replay.Run, error)
 	Get(ctx context.Context, id string) (replay.Run, error)
+}
+
+// speedNoOpNote surfaces replay.Request.Speed's documented limitation
+// (review P3(j)) in the API response itself, not only in the Go doc
+// comment a console developer would never read: backtest.Run steps to
+// the next recorded frame/latency deadline, not to wall-clock time, so
+// there is no "pace" for Speed to scale — a value is accepted, stored
+// for the audit trail, and otherwise has no effect on execution.
+const speedNoOpNote = "speed is accepted and stored for the audit trail but has no effect on execution: a replay is a deterministic discrete-event step-through, not real-time-paced"
+
+// replayNotes returns speedNoOpNote when the request actually asked for
+// a non-default speed — no note (and no "notes" key at all) for the
+// common case of an unset speed, so the payload stays honest emptiness
+// rather than a note nobody asked about on every single response.
+func replayNotes(req replay.Request) []string {
+	if req.Speed == 0 {
+		return nil
+	}
+	return []string{speedNoOpNote}
 }
 
 // replayRoutes: console-driven replays through the real scanner
@@ -43,7 +63,11 @@ func (s *Server) replayRoutes(mux *http.ServeMux) {
 		case err != nil:
 			s.writeListResult(w, r, "run", nil, err)
 		default:
-			WriteData(w, http.StatusOK, map[string]any{"run": run})
+			resp := map[string]any{"run": run}
+			if notes := replayNotes(run.Request); len(notes) > 0 {
+				resp["notes"] = notes
+			}
+			WriteData(w, http.StatusOK, resp)
 		}
 	})))
 	mux.HandleFunc("POST /api/v1/replays", s.requirePerm(auth.PermCampaignRun, s.requireCSRF(needReplays(func(w http.ResponseWriter, r *http.Request) {
@@ -58,12 +82,23 @@ func (s *Server) replayRoutes(mux *http.ServeMux) {
 		case errors.Is(err, replay.ErrBusy):
 			WriteError(w, http.StatusConflict, "replay_busy", err.Error(), correlationID(r))
 			return
+		case errors.Is(err, jobrun.ErrNotStarted):
+			// review P3(h): the runner has not pinned its lifetime context
+			// yet (a startup race, not a bad request) -- 503, not 400, with
+			// its own code so the console can distinguish "try again in a
+			// moment" from "fix your request".
+			WriteError(w, http.StatusServiceUnavailable, "not_ready", "replay runner is starting up; try again shortly", correlationID(r))
+			return
 		case err != nil:
 			WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), correlationID(r))
 			return
 		}
 		s.audit(r, p.UserID, "replay.start", "replay:"+run.ID)
 		s.log.Info("replay started", "actor", p.UserID, "run", run.ID, "recording", run.Recording)
-		WriteData(w, http.StatusAccepted, map[string]any{"run": run})
+		resp := map[string]any{"run": run}
+		if notes := replayNotes(run.Request); len(notes) > 0 {
+			resp["notes"] = notes
+		}
+		WriteData(w, http.StatusAccepted, resp)
 	}))))
 }

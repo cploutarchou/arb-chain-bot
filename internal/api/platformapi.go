@@ -276,6 +276,15 @@ func (s *Server) handlePlatformApply(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// review P3(g): mirrors configapi.go's handleConfigApply — a web
+	// console apply always follows a GET, so parent_version is always
+	// available to echo back; requiring it here closes the same
+	// silent-lost-update gap a Telegram/system caller doesn't have (one
+	// operator surface, no concurrent-editor race).
+	if parentVersion <= 0 {
+		WriteError(w, http.StatusBadRequest, "parent_version_required", "parent_version is required for changes made from the console", correlationID(r))
+		return
+	}
 	s.applyPlatform(w, r, func(actor string, authorize platform.Authorize) (platform.Snapshot, error) {
 		return s.Platform.ApplyAuthorizedExpect(r.Context(), actor, "web", doc, authorize, parentVersion)
 	})
@@ -293,6 +302,11 @@ func (s *Server) handlePlatformRollback(w http.ResponseWriter, r *http.Request) 
 	var parentVersion int64
 	if body.ParentVersion != nil {
 		parentVersion = *body.ParentVersion
+	}
+	// review P3(g): same requirement as handlePlatformApply.
+	if parentVersion <= 0 {
+		WriteError(w, http.StatusBadRequest, "parent_version_required", "parent_version is required for changes made from the console", correlationID(r))
+		return
 	}
 	s.applyPlatform(w, r, func(actor string, authorize platform.Authorize) (platform.Snapshot, error) {
 		return s.Platform.RollbackAuthorizedExpect(r.Context(), actor, "web", body.Version, authorize, parentVersion)

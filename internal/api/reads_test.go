@@ -126,6 +126,32 @@ func TestOrdersFillsBadFilterIs400(t *testing.T) {
 	}
 }
 
+// TestOrdersFillsInvalidCursorIs400 is the review P3(b) regression: a
+// malformed next_cursor value (tampered, stale, hand-built) must fail
+// with 400 invalid_cursor, not the generic 500 query_failed every other
+// storage error gets — decodeCursor fails before the query ever reaches
+// the DB, so a nil-pool Store exercises this without a live database
+// (same pattern as TestOrdersFillsBadFilterIs400).
+func TestOrdersFillsInvalidCursorIs400(t *testing.T) {
+	s, mux := newTestServer(t)
+	s.Store = &storage.Store{}
+	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+
+	for _, path := range []string{
+		"/api/v1/orders?cursor=not-valid-base64!!!",
+		"/api/v1/fills?cursor=not-valid-base64!!!",
+	} {
+		rec := getWith(t, mux, cookie, path)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400: %s", path, rec.Code, rec.Body.String())
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), "invalid_cursor") {
+			t.Errorf("%s body missing invalid_cursor code: %s", path, rec.Body.String())
+		}
+	}
+}
+
 func TestPortfolioNotReadyIsHonest(t *testing.T) {
 	s, mux := newTestServer(t)
 	s.Reads = fakeReads{portfolio: false}

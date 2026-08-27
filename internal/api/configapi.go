@@ -106,6 +106,19 @@ func (s *Server) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_payload", "invalid config payload: "+err.Error(), correlationID(r))
 		return
 	}
+	// review P3(g): parent_version is optional for Telegram/system/AI
+	// callers (a single actor, no concurrent-editor risk), but the web
+	// console always has a GET-then-edit-then-POST flow where a SECOND
+	// browser tab (or a Telegram operator) can apply a change in between
+	// — omitting parent_version there would silently skip the optimistic-
+	// concurrency check ApplyAuthorizedExpect exists to provide. Every
+	// version the service ever returns is >= 1 (Load seeds version 1), so
+	// requiring parentVersion > 0 for source=="web" is exactly "the client
+	// must echo back a real version it actually loaded".
+	if parentVersion <= 0 {
+		WriteError(w, http.StatusBadRequest, "parent_version_required", "parent_version is required for changes made from the console", correlationID(r))
+		return
+	}
 	s.applyParams(w, r, func(actor string, authorize strategy.Authorize) (strategy.Snapshot, error) {
 		return s.Strategy.ApplyAuthorizedExpect(r.Context(), actor, "web", p, authorize, parentVersion)
 	})
@@ -123,6 +136,12 @@ func (s *Server) handleConfigRollback(w http.ResponseWriter, r *http.Request) {
 	var parentVersion int64
 	if body.ParentVersion != nil {
 		parentVersion = *body.ParentVersion
+	}
+	// review P3(g): same requirement as handleConfigApply — a web-sourced
+	// rollback must echo the version it believes is active.
+	if parentVersion <= 0 {
+		WriteError(w, http.StatusBadRequest, "parent_version_required", "parent_version is required for changes made from the console", correlationID(r))
+		return
 	}
 	s.applyParams(w, r, func(actor string, authorize strategy.Authorize) (strategy.Snapshot, error) {
 		return s.Strategy.RollbackAuthorizedExpect(r.Context(), actor, "web", body.Version, authorize, parentVersion)

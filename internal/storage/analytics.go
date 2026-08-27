@@ -25,12 +25,16 @@ type PnLBreakdownRow struct {
 
 // PnLBreakdownResult is GET /api/v1/pnl/breakdown's payload.
 type PnLBreakdownResult struct {
-	By           string            `json:"by"`
-	WindowHours  int               `json:"window_hours"`
-	Rows         []PnLBreakdownRow `json:"rows"`
-	N            int               `json:"n"` // total cycles considered
-	Unattributed int               `json:"unattributed,omitempty"`
-	Notes        []string          `json:"notes,omitempty"`
+	By          string            `json:"by"`
+	WindowHours int               `json:"window_hours"`
+	Rows        []PnLBreakdownRow `json:"rows"`
+	N           int               `json:"n"` // total cycles considered
+	// Unattributed has no omitempty (review P3): 0 unattributed cycles is
+	// a real, meaningful zero for exchange/triangle/config_version
+	// breakdowns (N + Unattributed always equals the window's cycles),
+	// not an absence the client should have to infer from a missing key.
+	Unattributed int      `json:"unattributed"`
+	Notes        []string `json:"notes,omitempty"`
 }
 
 var pnlBreakdownDims = map[string]bool{
@@ -84,6 +88,11 @@ func (s *Store) PnLBreakdown(ctx context.Context, by string, from, to time.Time)
 			return PnLBreakdownResult{}, err
 		}
 		res.Notes = append(res.Notes, "market groups report leg activity (order count, average latency), not P&L: a cycle's P&L spans all three legs and is not attributable to one market")
+		// Review P3(e): N is the total ORDER count here (rows.N summed),
+		// not cycles considered like every other `by` dimension's N —
+		// call that out explicitly rather than silently overloading one
+		// field's meaning across dimensions.
+		res.Notes = append(res.Notes, "n (and each row's n) counts orders for by=market, not cycles as it does for every other `by` dimension")
 		return res, nil
 	}
 
@@ -94,16 +103,28 @@ func (s *Store) PnLBreakdown(ctx context.Context, by string, from, to time.Time)
 	case "triangle":
 		groupExpr, joinClause = "o.triangle_id", "JOIN opportunities o ON o.id = c.opportunity_id"
 	case "config_version":
-		groupExpr, joinClause = "o.config_version::text", "JOIN opportunities o ON o.id = c.opportunity_id"
+		// coalesce: a cycle's opportunity can carry a NULL config_version
+		// (rows persisted before strategy versioning, or a config applied
+		// with no version stamped). Scanning that straight into r.Key
+		// (a non-nullable string) turned every such row into a 500 —
+		// review P3(a) — so NULL now groups under the honest "unknown"
+		// key instead of erroring the whole breakdown.
+		groupExpr, joinClause = "coalesce(o.config_version::text,'unknown')", "JOIN opportunities o ON o.id = c.opportunity_id"
 	case "asset":
-		groupExpr, joinClause = "c.pnl_asset", ""
+		// Same NULL → 500 hazard as config_version above (review P3(a)):
+		// pnl_asset is nullable on cycles that never reached a settled
+		// outcome with a resolvable asset.
+		groupExpr, joinClause = "coalesce(c.pnl_asset,'unknown')", ""
 	case "hour":
 		// AT TIME ZONE 'UTC' pins the truncation boundary regardless of
 		// the connection's session TimeZone; without it two clients (or
 		// the same client after a `SET TIME ZONE`) could bucket the same
 		// row under different hour keys, which would silently corrupt
-		// the by=hour breakdown's grouping.
-		groupExpr, joinClause = "date_trunc('hour', c.started_at AT TIME ZONE 'UTC')::text", ""
+		// the by=hour breakdown's grouping. to_char with an explicit
+		// format (review P3(c)) keeps the key an unambiguous ISO-8601
+		// UTC instant ("...THH24:MI:SSZ") instead of ::text's
+		// locale/driver-dependent timestamp rendering.
+		groupExpr, joinClause = `to_char(date_trunc('hour', c.started_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`, ""
 	}
 	query := fmt.Sprintf(`
 		SELECT %s AS k, count(*), coalesce(sum(c.pnl_amount),0)::text
@@ -202,15 +223,25 @@ func (s *Store) PnLSeries(ctx context.Context, from, to time.Time) (PnLSeriesRes
 // Distribution is a small histogram over a decimal sample set: min/max/
 // avg/percentiles plus fixed-width buckets. N is always populated, even
 // when 0 (an honest empty distribution, not an absent field).
+//
+// Truncated/WindowComplete (review P2-4) report whether N is every
+// sample in [from, to) or only the first analyticsSampleCap of them:
+// the query below now orders deterministically, so a truncated
+// Distribution is always the SAME (oldest analyticsSampleCap) subset
+// across repeated calls, but it is still a subset — callers must not
+// read N as "the total population" without checking WindowComplete
+// first.
 type Distribution struct {
-	N       int               `json:"n"`
-	Min     string            `json:"min,omitempty"`
-	Max     string            `json:"max,omitempty"`
-	Avg     string            `json:"avg,omitempty"`
-	P50     string            `json:"p50,omitempty"`
-	P95     string            `json:"p95,omitempty"`
-	P99     string            `json:"p99,omitempty"`
-	Buckets []HistogramBucket `json:"buckets,omitempty"`
+	N              int               `json:"n"`
+	Truncated      bool              `json:"truncated"`
+	WindowComplete bool              `json:"window_complete"`
+	Min            string            `json:"min,omitempty"`
+	Max            string            `json:"max,omitempty"`
+	Avg            string            `json:"avg,omitempty"`
+	P50            string            `json:"p50,omitempty"`
+	P95            string            `json:"p95,omitempty"`
+	P99            string            `json:"p99,omitempty"`
+	Buckets        []HistogramBucket `json:"buckets,omitempty"`
 }
 
 // HistogramBucket is one [From, To) bucket with its sample count.
@@ -222,10 +253,13 @@ type HistogramBucket struct {
 
 const histogramBuckets = 10
 
-// distributionOf builds a Distribution from an unordered decimal sample
-// set; samples is sorted in place.
-func distributionOf(samples []decimal.Decimal) Distribution {
-	d := Distribution{N: len(samples)}
+// distributionOf builds a Distribution from a decimal sample set;
+// samples is sorted in place. truncated reports whether the caller's
+// query hit analyticsSampleCap (review P2-4): N is always the number of
+// samples actually bucketed, but a truncated Distribution's N is a
+// subset of the window's true population, not the population itself.
+func distributionOf(samples []decimal.Decimal, truncated bool) Distribution {
+	d := Distribution{N: len(samples), Truncated: truncated, WindowComplete: !truncated}
 	if d.N == 0 {
 		return d
 	}
@@ -292,8 +326,10 @@ type DistributionsResult struct {
 
 // analyticsSampleCap bounds how many raw values a distribution query
 // pulls into the API process for bucketing — generous for the paper-
-// trading data volumes this platform runs at, but never unbounded.
-const analyticsSampleCap = 20_000
+// trading data volumes this platform runs at, but never unbounded. A
+// package var, not a const, so analytics_test.go can shrink it to
+// exercise the truncation path without seeding 20,000+ rows.
+var analyticsSampleCap = 20_000
 
 // Distributions computes edge/slippage/latency histograms over [from,
 // to) (BL-19): edge from qualified opportunities' net_return_bps,
@@ -302,51 +338,69 @@ const analyticsSampleCap = 20_000
 // reports.go's CycleAggregates already uses), latency from orders'
 // latency_ms.
 func (s *Store) Distributions(ctx context.Context, from, to time.Time) (DistributionsResult, error) {
-	edge, err := s.decimalColumn(ctx, `
+	edge, edgeTrunc, err := s.decimalColumn(ctx, `
 		SELECT net_return_bps::text FROM opportunities
 		WHERE status = 'QUALIFIED' AND net_return_bps IS NOT NULL
 		  AND detected_at >= $1 AND detected_at < $2
+		ORDER BY detected_at ASC, id ASC
 		LIMIT $3`, from, to)
 	if err != nil {
 		return DistributionsResult{}, fmt.Errorf("storage: edge distribution: %w", err)
 	}
-	slippage, err := s.decimalColumn(ctx, `
+	slippage, slipTrunc, err := s.decimalColumn(ctx, `
 		SELECT slippage_bps::text FROM paper_cycles
 		WHERE slippage_bps IS NOT NULL AND started_at >= $1 AND started_at < $2
+		ORDER BY started_at ASC, id ASC
 		LIMIT $3`, from, to)
 	if err != nil {
 		return DistributionsResult{}, fmt.Errorf("storage: slippage distribution: %w", err)
 	}
-	latency, err := s.decimalColumn(ctx, `
+	latency, latTrunc, err := s.decimalColumn(ctx, `
 		SELECT o.latency_ms::text FROM orders o
 		JOIN paper_cycles c ON c.id = o.cycle_id
 		WHERE o.latency_ms IS NOT NULL AND c.started_at >= $1 AND c.started_at < $2
+		ORDER BY o.created_at ASC, o.id ASC
 		LIMIT $3`, from, to)
 	if err != nil {
 		return DistributionsResult{}, fmt.Errorf("storage: latency distribution: %w", err)
 	}
 	return DistributionsResult{
-		Edge: distributionOf(edge), Slippage: distributionOf(slippage), Latency: distributionOf(latency),
+		Edge:     distributionOf(edge, edgeTrunc),
+		Slippage: distributionOf(slippage, slipTrunc),
+		Latency:  distributionOf(latency, latTrunc),
 	}, nil
 }
 
-func (s *Store) decimalColumn(ctx context.Context, query string, from, to time.Time) ([]decimal.Decimal, error) {
-	rows, err := s.Pool.Query(ctx, query, from, to, analyticsSampleCap)
+// decimalColumn runs a deterministically-ordered, LIMIT-capped query and
+// reports whether the cap was hit (review P2-4). It queries
+// analyticsSampleCap+1 rows and trims the extra one off rather than
+// comparing len(out) == analyticsSampleCap, so a population that lands
+// EXACTLY on the cap is correctly reported complete instead of a false
+// truncated.
+func (s *Store) decimalColumn(ctx context.Context, query string, from, to time.Time) (samples []decimal.Decimal, truncated bool, err error) {
+	rows, err := s.Pool.Query(ctx, query, from, to, analyticsSampleCap+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	var out []decimal.Decimal
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		v, err := decimal.NewFromString(raw)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(out) > analyticsSampleCap {
+		out = out[:analyticsSampleCap]
+		truncated = true
+	}
+	return out, truncated, nil
 }

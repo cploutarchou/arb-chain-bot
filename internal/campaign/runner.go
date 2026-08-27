@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/backtest"
+	"github.com/cploutarchou/arb-chain-bot/internal/jobrun"
 )
 
 // Status values of a Run.
@@ -58,6 +59,12 @@ type Run struct {
 	ReportPath string               `json:"report_path,omitempty"`
 	JSONPath   string               `json:"json_path,omitempty"`
 	Actor      string               `json:"actor,omitempty"`
+	// OwnerID/HeartbeatAt (review P3(h)) are a persistence-only
+	// bookkeeping concern for orphan reconciliation across process
+	// restarts — never part of the console's wire contract, so both are
+	// json:"-" rather than merely omitempty.
+	OwnerID     string    `json:"-"`
+	HeartbeatAt time.Time `json:"-"`
 }
 
 // Summary strips the report body for list views.
@@ -89,11 +96,11 @@ type Runner struct {
 	Execute func(ctx context.Context, src Sources, dir string, req Request, progress func(Progress)) (*backtest.Campaign, error)
 
 	mu      sync.Mutex
-	ctx     context.Context
+	gate    jobrun.Gate // review P3(h): Start awaits this instead of racing Run to pin the lifetime ctx
+	ownerID string      // review P3(h): stamped on every persisted row for orphan reconciliation
 	runs    map[string]*Run
 	order   []string
 	current string
-	ready   chan struct{}
 	once    sync.Once
 }
 
@@ -102,7 +109,7 @@ func (r *Runner) Name() string { return "campaigns" }
 func (r *Runner) init() {
 	r.once.Do(func() {
 		r.runs = map[string]*Run{}
-		r.ready = make(chan struct{})
+		r.ownerID = jobrun.NewOwnerID()
 		if r.Log == nil {
 			r.Log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 		}
@@ -113,10 +120,7 @@ func (r *Runner) init() {
 // process, and blocks until the context ends.
 func (r *Runner) Run(ctx context.Context) error {
 	r.init()
-	r.mu.Lock()
-	r.ctx = ctx
-	r.mu.Unlock()
-	close(r.ready)
+	r.gate.Pin(ctx)
 	r.reconcileOrphans(ctx)
 	<-ctx.Done()
 	return ctx.Err()
@@ -127,13 +131,20 @@ func (r *Runner) Run(ctx context.Context) error {
 // lose it, and an honest "failed" beats a row that says "running" forever.
 const errInterrupted = "interrupted: the process restarted before the run finished"
 
+// reconcileOrphans marks "queued"/"running" rows left behind by a dead
+// process as failed. review P3(h): a row is only reclaimed when its
+// owner is verifiably dead (jobrun.Reclaimable — not tracked in THIS
+// process's in-memory map AND its heartbeat has gone stale), not merely
+// "absent from this fresh process's empty-at-boot map" — the old check
+// would have one live instance reclaim another live instance's
+// in-progress run the moment they shared a database.
 func (r *Runner) reconcileOrphans(ctx context.Context) {
 	if r.Store == nil {
 		return
 	}
 	lctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	rows, err := r.Store.ListCampaignRuns(lctx, 200)
+	rows, err := r.Store.ListCampaignRuns(lctx, jobrun.RingCap)
 	if err != nil {
 		r.Log.Warn("campaign orphan reconciliation failed", "error", err)
 		return
@@ -146,7 +157,10 @@ func (r *Runner) reconcileOrphans(ctx context.Context) {
 	r.mu.Unlock()
 	now := time.Now().UTC()
 	for _, run := range rows {
-		if mine[run.ID] || (run.Status != StatusQueued && run.Status != StatusRunning) {
+		if run.Status != StatusQueued && run.Status != StatusRunning {
+			continue
+		}
+		if !jobrun.Reclaimable(mine[run.ID], r.ownerID, run.OwnerID, run.HeartbeatAt, now) {
 			continue
 		}
 		full, err := r.Store.GetCampaignRun(lctx, run.ID)
@@ -162,14 +176,11 @@ func (r *Runner) reconcileOrphans(ctx context.Context) {
 	}
 }
 
-func (r *Runner) lifetime() context.Context {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.ctx == nil {
-		return context.Background()
-	}
-	return r.ctx
-}
+// startGateTimeout bounds how long Start blocks waiting for Run to pin
+// the lifetime context (review P3(h)) — short enough not to hang an
+// HTTP request handler, comfortably longer than Run's own init() +
+// gate.Pin path ever takes in practice.
+const startGateTimeout = 2 * time.Second
 
 // Start validates the request and launches it in the background.
 func (r *Runner) Start(req Request, actor string) (Run, error) {
@@ -181,6 +192,16 @@ func (r *Runner) Start(req Request, actor string) (Run, error) {
 	segDir := filepath.Join(r.Dir, req.Recording)
 	if st, err := os.Stat(segDir); err != nil || !st.IsDir() {
 		return Run{}, fmt.Errorf("campaign: recording %s has no segment directory under %s", req.Recording, r.Dir)
+	}
+	// review P3(h): Start is reachable before Run has pinned the
+	// lifetime context (the app.Component contract only guarantees Run
+	// is CALLED, not that it wins any race against a concurrent Start).
+	// Executing under the fallback context.Background() would let this
+	// run outlive a graceful shutdown of the very process that launched
+	// it, since nothing ever cancels context.Background(). Refuse with a
+	// clear error instead of silently taking that shape.
+	if _, err := r.gate.Await(startGateTimeout); err != nil {
+		return Run{}, fmt.Errorf("campaign: %w", err)
 	}
 	r.mu.Lock()
 	if r.current != "" {
@@ -194,6 +215,10 @@ func (r *Runner) Start(req Request, actor string) (Run, error) {
 	}
 	r.runs[id] = run
 	r.order = append(r.order, id)
+	// review P3(h): bound the in-memory mirror to a ring of RingCap —
+	// the just-appended (current, in-flight) run is always the NEWEST
+	// entry, so it can never be the one Bound evicts.
+	r.order = jobrun.Bound(r.order, r.runs, jobrun.RingCap)
 	r.current = id
 	snapshot := *run
 	r.mu.Unlock()
@@ -203,7 +228,11 @@ func (r *Runner) Start(req Request, actor string) (Run, error) {
 }
 
 func (r *Runner) execute(id, segDir string) {
-	ctx := r.lifetime()
+	ctx := r.gate.Current()
+	hbDone := make(chan struct{})
+	go r.heartbeat(ctx, id, hbDone)
+	defer close(hbDone)
+
 	now := time.Now().UTC()
 	r.update(id, func(run *Run) { run.Status = StatusRunning; run.StartedAt = &now })
 
@@ -221,8 +250,14 @@ func (r *Runner) execute(id, segDir string) {
 	fin := time.Now().UTC()
 	if err != nil {
 		r.Log.Error("campaign failed", "run", id, "recording", req.Recording, "error", err)
-		r.update(id, func(run *Run) { run.Status = StatusFailed; run.Error = err.Error(); run.FinishedAt = &fin })
+		// finish() BEFORE the terminal update (incidental fix found while
+		// testing P3(h)'s heartbeat goroutine): the old order let a
+		// caller observe Status==failed via Get()/List() while Busy()
+		// still reported true, a real (if narrow) race between this
+		// goroutine and a concurrent poller — clearing r.current first
+		// means "terminal status observable" implies "not busy" always.
 		r.finish(id)
+		r.update(id, func(run *Run) { run.Status = StatusFailed; run.Error = err.Error(); run.FinishedAt = &fin })
 		return
 	}
 	base := filepath.Join(segDir, "campaign-"+id)
@@ -230,6 +265,7 @@ func (r *Runner) execute(id, segDir string) {
 	md := Markdown(c, req.Assets)
 	flags := Flags(c, req.Assets)
 	verdicts := Verdicts(c, req.Assets)
+	r.finish(id)
 	r.update(id, func(run *Run) {
 		run.Status = StatusDone
 		run.FinishedAt = &fin
@@ -248,7 +284,32 @@ func (r *Runner) execute(id, segDir string) {
 			r.Log.Info("campaign verdict", "run", id, "asset", asset, "verdict", f)
 		}
 	}
-	r.finish(id)
+}
+
+// heartbeat re-stamps id's persisted row with this process's owner id
+// and the current time every jobrun.HeartbeatInterval, independent of
+// whatever progress callbacks fire (review P3(h)): a long campaign can
+// spend minutes between (scenario, seed) progress updates, so relying
+// on progress alone would let its row go heartbeat-stale well before it
+// finishes — any OTHER process restarting meanwhile would then reclaim
+// a run that is very much still alive. Stops the moment either the
+// lifetime context ends or execute() returns (done), so it never
+// outlives the run it is heartbeating for.
+func (r *Runner) heartbeat(ctx context.Context, id string, done <-chan struct{}) {
+	ticker := time.NewTicker(jobrun.HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			if snap := r.snapshot(id); snap.ID != "" {
+				r.persist(snap)
+			}
+		}
+	}
 }
 
 func (r *Runner) finish(id string) {
@@ -259,22 +320,42 @@ func (r *Runner) finish(id string) {
 	r.mu.Unlock()
 }
 
+// snapshot is nil-safe (review P3(h) advisor note): id can in principle
+// be absent from r.runs (evicted by the ring bound) even though, under
+// today's single-flight invariant, the run this is called for is always
+// the current in-flight one and can never itself have been evicted.
+// Returning a zero Run rather than dereferencing a nil pointer keeps
+// that a documented invariant instead of a latent crash if it is ever
+// relaxed.
 func (r *Runner) snapshot(id string) Run {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return *r.runs[id]
+	run := r.runs[id]
+	if run == nil {
+		return Run{}
+	}
+	return *run
 }
 
+// update is the nil-safe write-side counterpart to snapshot.
 func (r *Runner) update(id string, fn func(*Run)) {
 	r.mu.Lock()
 	run := r.runs[id]
+	if run == nil {
+		r.mu.Unlock()
+		return
+	}
 	fn(run)
 	snapshot := *run
 	r.mu.Unlock()
 	r.persist(snapshot)
 }
 
+// persist stamps the owner/heartbeat (review P3(h)) and writes through
+// to the store and any WS subscribers.
 func (r *Runner) persist(run Run) {
+	run.OwnerID = r.ownerID
+	run.HeartbeatAt = time.Now().UTC()
 	if r.Store != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := r.Store.UpsertCampaignRun(ctx, run); err != nil {
@@ -291,9 +372,10 @@ func (r *Runner) persist(run Run) {
 // merged over persisted history.
 func (r *Runner) List(ctx context.Context, limit int) ([]Run, error) {
 	r.init()
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	// review P3(h): clamp INTO [1, RingCap] rather than the old
+	// "anything out of [1,200] collapses to the default" shape, which
+	// silently ignored a caller asking for up to the documented cap.
+	limit = jobrun.ClampLimit(limit, 50, jobrun.RingCap)
 	seen := map[string]bool{}
 	var out []Run
 	r.mu.Lock()

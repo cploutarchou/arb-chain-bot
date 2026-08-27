@@ -48,8 +48,15 @@ type TriangleLegView struct {
 	// computed by calling pricing.QuoteLeg (never re-derived here).
 	VWAPPrice      *string `json:"vwap_price,omitempty"`
 	PriceImpactBps *string `json:"price_impact_bps,omitempty"`
-	LevelsConsumed int     `json:"levels_consumed,omitempty"`
-	DepthExhausted bool    `json:"depth_exhausted,omitempty"`
+	// LevelsConsumed/DepthExhausted have no omitempty (review P3(d)):
+	// LevelsConsumed==0 and DepthExhausted==false are both real,
+	// meaningful facts about the preview quote (consumed the top level
+	// only; the reference size did not exhaust the visible book) — not
+	// an absent/undetermined value indistinguishable from the zero
+	// value, the same "every aggregate reports its real number, not a
+	// dropped key" convention BL-19's breakdowns use.
+	LevelsConsumed int  `json:"levels_consumed"`
+	DepthExhausted bool `json:"depth_exhausted"`
 
 	FeeRate   *string `json:"fee_rate,omitempty"`
 	FeeSource string  `json:"fee_source,omitempty"`
@@ -100,20 +107,20 @@ func (s *Server) handleTriangleDetail(w http.ResponseWriter, r *http.Request) {
 		}
 
 		to := time.Now().UTC()
-		samples, err := s.Store.QualitySamples(r.Context(), to.Add(-30*24*time.Hour), to)
-		if err != nil {
+		// review P2-3: scoped to THIS triangle at the query level (a new
+		// index-backed WHERE o.triangle_id = $-clause), not the bulk
+		// QualitySamples' ALL-triangles 30-day aggregate filtered down to
+		// one row client-side — that ran the full aggregate on every page
+		// view, by any viewer, for a result this handler only ever used
+		// one row of.
+		if sm, ok, err := s.Store.QualitySamplesForTriangle(r.Context(), id, to.Add(-30*24*time.Hour), to); err != nil {
 			s.log.Error("triangle quality failed", "id", id, "error", err)
 			WriteError(w, http.StatusInternalServerError, "query_failed", "triangle quality fetch failed", correlationID(r))
 			return
-		}
-		for _, sm := range samples {
-			if sm.TriangleID != id {
-				continue
-			}
+		} else if ok {
 			b := quality.Score(sm, quality.Config{})
 			resp.Quality = &b
 			found = true
-			break
 		}
 	}
 
