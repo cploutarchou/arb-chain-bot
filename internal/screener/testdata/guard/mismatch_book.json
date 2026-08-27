@@ -1,0 +1,21 @@
+{
+  "_source": "Shapes reproduced from the live GET /screener/spreads output of 2026-08-27 (VON gate->mexc net 1922997909779 bps, liquidity 0; TROLL and XTER same-ticker/different-asset rows). Prices are illustrative decimals of the same order of magnitude as observed; Gate quotes carry liquidity_unknown because GET /spot/tickers publishes no sizes (docs/research/screener-endpoints.md).",
+  "quotes": [
+    {"venue": "gate",    "base": "VON",   "quote": "USDT", "bid": "0.0000000010", "bid_qty": "0", "ask": "0.0000000011", "ask_qty": "0", "liquidity_unknown": true},
+    {"venue": "mexc",    "base": "VON",   "quote": "USDT", "bid": "0.19",         "bid_qty": "1000", "ask": "0.195",     "ask_qty": "1000"},
+
+    {"venue": "gate",    "base": "TROLL", "quote": "USDT", "bid": "0.00000180", "bid_qty": "0", "ask": "0.00000182", "ask_qty": "0", "liquidity_unknown": true},
+    {"venue": "mexc",    "base": "TROLL", "quote": "USDT", "bid": "0.00000175", "bid_qty": "50000000", "ask": "0.00000177", "ask_qty": "50000000"},
+    {"venue": "bitget",  "base": "TROLL", "quote": "USDT", "bid": "0.130",      "bid_qty": "20000", "ask": "0.131", "ask_qty": "20000"},
+
+    {"venue": "okx",     "base": "XTER",  "quote": "USDT", "bid": "0.050", "bid_qty": "100000", "ask": "0.051", "ask_qty": "100000"},
+    {"venue": "bybit",   "base": "XTER",  "quote": "USDT", "bid": "0.300", "bid_qty": "100000", "ask": "0.302", "ask_qty": "100000"},
+
+    {"venue": "binance", "base": "BTC",   "quote": "USDT", "bid": "99",  "bid_qty": "20", "ask": "100", "ask_qty": "20"},
+    {"venue": "okx",     "base": "BTC",   "quote": "USDT", "bid": "101", "bid_qty": "30", "ask": "102", "ask_qty": "30"},
+    {"venue": "binance", "base": "BTC",   "quote": "USDC", "bid": "99",  "bid_qty": "20", "ask": "100", "ask_qty": "20"},
+    {"venue": "okx",     "base": "BTC",   "quote": "USDC", "bid": "101", "bid_qty": "30", "ask": "102", "ask_qty": "30"},
+    {"venue": "binance", "base": "BTC",   "quote": "FDUSD", "bid": "99", "bid_qty": "20", "ask": "100", "ask_qty": "20"},
+    {"venue": "okx",     "base": "BTC",   "quote": "USD",  "bid": "101", "bid_qty": "30", "ask": "102", "ask_qty": "30"}
+  ]
+}
