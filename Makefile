@@ -1,7 +1,7 @@
 GO ?= go
 MIGRATE_DSN ?= postgres://arb:arb-dev-password@localhost:5432/arb?sslmode=disable
 
-.PHONY: all build test race lint fmt vet tidy up down migrate web-install web-dev web-build web-lint clean docker-build record record-stop campaign
+.PHONY: all build test race lint fmt vet tidy up down migrate create-secret web-install web-dev web-build web-lint clean docker-build record record-stop campaign
 
 all: fmt vet test build
 
@@ -40,6 +40,11 @@ down:
 # Applies SQL migrations in order using the migrate container image.
 migrate:
 	docker compose run --rm migrate
+
+# Generate the vault master key into .env (keeps an existing one;
+# FORCE=1 replaces it — stored secrets then become unreadable).
+create-secret:
+	./scripts/create-secret.sh
 
 # --- web console ----------------------------------------------------------
 

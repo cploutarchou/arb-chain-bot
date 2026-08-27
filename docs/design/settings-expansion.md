@@ -286,6 +286,21 @@ var Known = map[string]Spec{
 type SecretSource interface{ Get(ctx context.Context, name string) (string, string, bool) } // value, source, ok
 ```
 
+**Exchange group (added 2026-08-27).** The registry carries a second
+group, `exchange`, so the operator's exchange API credentials can be
+managed from the console and stored encrypted instead of in `.env`:
+`{binance,okx,bybit,bitget,gate,mexc}_api_key`, `…_api_secret`, and
+`okx_api_passphrase` / `bitget_api_passphrase` (14 entries; `Spec.Group`,
+`Spec.Venue`, `Applies: not_consumed`, no `Env` fallback, `MinLen: 8`).
+They are write-only in the strongest sense the vault can offer:
+`Manager.Get` refuses the group (`IsConsumable`), no code path reads
+them, `TestRegistryIsClosed` pins both the count and the refusal, and
+live trading stays disabled by design. They exist so a future,
+separately reviewed *read-only* consumer (fee-tier lookup, account
+snapshot) has a vetted place to find them; the console tells the
+operator to create them with read-only permissions. Adding a consumer —
+never a trading path — is a reviewed change to `internal/secrets`.
+
 Implementations: `Vault` (DB), `Env`, and `Chain{Vault, Env}` — **vault
 first, env fallback**, `source` reporting which won. A `PUT` to a name
 outside `Known` is `404 unknown_secret`. This closed registry is what keeps
@@ -461,7 +476,7 @@ each →
 `GET /api/v1/platform/venues` stays as a thin alias over the same
 `VenueTable()` (shipped console keeps working; fields are additive only) —
 one source function, two routes, no divergence. Every venue card renders
-*"Public market data only — no API keys are used or accepted."*
+*"Public market data only — API keys are never used; any stored under Security are never read."*
 
 ## 6. Wire contract
 
