@@ -1561,3 +1561,9 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   `[]byte`. All under `go test -race ./...`; storage on a disposable
   Postgres; the same pre-existing gosec finding remains the only lint
   item.
+- 2026-08-27 (T-047 follow-up, browser): binance.com/en/fee/tradingPromote
+  read in a real browser — the FDUSD program is a live zero-MAKER
+  promotion (taker at standard VIP rates; only FDUSD/USDT is 0/0), so no
+  taker leg is free at Regular tier; coinbase.com/advanced-fees redirects
+  to sign-in and stays a runtime-verified assumption; the Gate fee page
+  remains unreachable (browser domain not allowed).
