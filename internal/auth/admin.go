@@ -49,6 +49,15 @@ type AdminService struct {
 	// to real implementations when nil.
 	Now   func() time.Time
 	IDGen func() string
+	// PasswordThrottle bounds repeated wrong-current-password guesses on
+	// ChangeOwnPassword (P3-13): unlike Login, that route was reachable
+	// with an already-valid session and no rate limiting at all, so a
+	// stolen session cookie could brute-force the current password
+	// (needed to set a new one) without ever tripping Manager's login
+	// throttle. Keyed per user id (the caller is already authenticated,
+	// so email|ip is not the relevant dimension here). nil disables
+	// throttling (tests that do not care may omit it).
+	PasswordThrottle *Throttle
 }
 
 func (s *AdminService) now() time.Time {
@@ -66,9 +75,21 @@ func (s *AdminService) newID() (string, error) {
 }
 
 // ListUsers returns every account (no pagination: this is an operator
-// roster, not a high-cardinality table).
+// roster, not a high-cardinality table). PasswordHash is stripped here
+// (P3-6, defense in depth): the pgx-backed store never selects it, but
+// MemoryStore.ListUsers returns whatever was stored, so a caller of this
+// service must not rely on the backing store to have scrubbed it — the
+// service boundary is the one place every caller (web today; Telegram
+// per SKILL §52/§56 tomorrow) goes through.
 func (s *AdminService) ListUsers(ctx context.Context) ([]User, error) {
-	return s.Store.ListUsers(ctx)
+	users, err := s.Store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		users[i].PasswordHash = ""
+	}
+	return users, nil
 }
 
 func validEmail(email string) bool {
@@ -88,6 +109,12 @@ func validEmail(email string) bool {
 // CreateUser is the console's "invite" action: it never overwrites an
 // existing account (see AdminStore.CreateUser / ErrDuplicateEmail).
 func (s *AdminService) CreateUser(ctx context.Context, email string, role Role, password string) (User, error) {
+	// P3-7: normalize case before validation and storage — "Alice@x.com"
+	// and "alice@x.com" must be the SAME account (ErrDuplicateEmail), and
+	// Login (which does not normalize) must find whichever case a user
+	// registers with reliably rather than by accident of what a caller
+	// happened to send.
+	email = strings.ToLower(strings.TrimSpace(email))
 	if !validEmail(email) {
 		return User{}, ErrInvalidEmail
 	}
@@ -113,32 +140,18 @@ func (s *AdminService) CreateUser(ctx context.Context, email string, role Role, 
 	return u, nil
 }
 
-// requireNotLastAdmin blocks an operation that would leave the platform
-// with zero enabled ADMIN accounts.
-func (s *AdminService) requireNotLastAdmin(ctx context.Context, target User) error {
-	if target.Role != RoleAdmin || target.Disabled {
-		return nil // target is not currently a counted admin
-	}
-	users, err := s.Store.ListUsers(ctx)
-	if err != nil {
-		return err
-	}
-	count := 0
-	for _, u := range users {
-		if u.Role == RoleAdmin && !u.Disabled {
-			count++
-		}
-	}
-	if count <= 1 {
-		return ErrLastAdmin
-	}
-	return nil
-}
-
 // UpdateUserRole changes a user's role. Self-targeting is always
 // refused — an admin who wants to change their own role must have
 // another admin do it, which also protects against accidental
 // self-demotion via a misclick.
+//
+// The last-admin guard (a demotion must never leave zero enabled ADMIN
+// accounts) is enforced ATOMICALLY inside Store.UpdateUserRole itself
+// (P2-5: a single transaction/conditional UPDATE for the pgx store, one
+// lock for MemoryStore) rather than here as a separate list-then-check —
+// two round trips through this service could otherwise race two
+// concurrent demotions of two DIFFERENT admins past each other, each
+// observing "at least one other admin" and leaving none.
 func (s *AdminService) UpdateUserRole(ctx context.Context, actorID, targetID string, role Role) (User, error) {
 	if !role.Valid() {
 		return User{}, ErrInvalidRole
@@ -150,11 +163,6 @@ func (s *AdminService) UpdateUserRole(ctx context.Context, actorID, targetID str
 	if err != nil {
 		return User{}, err
 	}
-	if target.Role == RoleAdmin && role != RoleAdmin {
-		if err := s.requireNotLastAdmin(ctx, target); err != nil {
-			return User{}, err
-		}
-	}
 	if err := s.Store.UpdateUserRole(ctx, targetID, role); err != nil {
 		return User{}, err
 	}
@@ -162,6 +170,7 @@ func (s *AdminService) UpdateUserRole(ctx context.Context, actorID, targetID str
 		return User{}, err
 	}
 	target.Role = role
+	target.PasswordHash = "" // P3-6: never hand a hash back across the service boundary
 	return target, nil
 }
 
@@ -169,6 +178,8 @@ func (s *AdminService) UpdateUserRole(ctx context.Context, actorID, targetID str
 // always refused (you would lock yourself out with no console path
 // back in); enabling is never self-targeted in practice since a
 // disabled account cannot hold a live session to call this endpoint.
+// The last-admin guard is atomic in Store.SetUserDisabled — see
+// UpdateUserRole's comment (P2-5).
 func (s *AdminService) SetUserDisabled(ctx context.Context, actorID, targetID string, disabled bool) (User, error) {
 	if disabled && actorID == targetID {
 		return User{}, ErrSelfTarget
@@ -176,11 +187,6 @@ func (s *AdminService) SetUserDisabled(ctx context.Context, actorID, targetID st
 	target, err := s.Store.UserByID(ctx, targetID)
 	if err != nil {
 		return User{}, err
-	}
-	if disabled && target.Role == RoleAdmin {
-		if err := s.requireNotLastAdmin(ctx, target); err != nil {
-			return User{}, err
-		}
 	}
 	if err := s.Store.SetUserDisabled(ctx, targetID, disabled); err != nil {
 		return User{}, err
@@ -191,6 +197,7 @@ func (s *AdminService) SetUserDisabled(ctx context.Context, actorID, targetID st
 			return User{}, err
 		}
 	}
+	target.PasswordHash = "" // P3-6: never hand a hash back across the service boundary
 	return target, nil
 }
 
@@ -223,8 +230,13 @@ func (s *AdminService) SetUserPassword(ctx context.Context, targetID, password s
 // ChangeOwnPassword is the self-service path: it requires the caller's
 // current password and, on success, revokes every session for that
 // user — including the one making this request, forcing a fresh login
-// with the new credential.
+// with the new credential. Repeated wrong-current-password guesses are
+// throttled per user id (P3-13), the same lockout shape Manager.Login
+// already applies to unauthenticated login attempts.
 func (s *AdminService) ChangeOwnPassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	if s.PasswordThrottle != nil && !s.PasswordThrottle.Allow(userID, s.now()) {
+		return ErrThrottled
+	}
 	if len(newPassword) < MinPasswordLength {
 		return ErrWeakPassword
 	}
@@ -233,6 +245,9 @@ func (s *AdminService) ChangeOwnPassword(ctx context.Context, userID, currentPas
 		return err
 	}
 	if err := VerifyPassword(currentPassword, u.PasswordHash); err != nil {
+		if s.PasswordThrottle != nil {
+			s.PasswordThrottle.Fail(userID, s.now())
+		}
 		return err
 	}
 	hash, err := HashPassword(newPassword)
@@ -241,6 +256,9 @@ func (s *AdminService) ChangeOwnPassword(ctx context.Context, userID, currentPas
 	}
 	if err := s.Store.SetUserPassword(ctx, userID, hash); err != nil {
 		return err
+	}
+	if s.PasswordThrottle != nil {
+		s.PasswordThrottle.Reset(userID)
 	}
 	return s.Sessions.RevokeUserSessions(ctx, userID, s.now())
 }

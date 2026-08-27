@@ -142,12 +142,19 @@ func (s *Service) Current() Snapshot {
 // when a snapshot is already active, delivers it immediately under the
 // writer lock — registration misses no version. Callbacks must be fast
 // and non-blocking.
+//
+// The delivered Snapshot's Settings is always a fresh Clone (P3-5): the
+// stored atomic snapshot and every OTHER subscriber must not alias the
+// same maps/slices one callback was handed, the same guarantee Current()
+// already makes for a caller that reads outside a swap.
 func (s *Service) Subscribe(fn func(Snapshot)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onSwap = append(s.onSwap, fn)
 	if p := s.cur.Load(); p != nil {
-		fn(*p)
+		snap := *p
+		snap.Settings = snap.Settings.Clone()
+		fn(snap)
 	}
 }
 
@@ -278,11 +285,19 @@ func (s *Service) applyLocked(ctx context.Context, actor, source, action string,
 	return snap, nil
 }
 
-// swap requires s.mu held.
+// swap requires s.mu held. The stored snapshot's Settings is a Clone
+// independent of the caller's `doc` (P3-5), and every subscriber gets
+// its OWN Clone so one callback mutating what it was handed cannot
+// affect another callback, the stored snapshot, or a later Current()
+// caller.
 func (s *Service) swap(snap Snapshot) {
-	s.cur.Store(&snap)
+	stored := snap
+	stored.Settings = stored.Settings.Clone()
+	s.cur.Store(&stored)
 	for _, fn := range s.onSwap {
-		fn(snap)
+		cb := snap
+		cb.Settings = cb.Settings.Clone()
+		fn(cb)
 	}
 }
 
@@ -324,7 +339,12 @@ func (m *MemoryStore) Active(_ context.Context) (Snapshot, bool, error) {
 	if m.active == 0 {
 		return Snapshot{}, false, nil
 	}
-	return m.rows[m.active-1].snap, true, nil
+	// P3-5: a caller must not be able to mutate the internally stored
+	// row's maps/slices through the value handed back — mirrors
+	// Service.Current's clone-on-read contract.
+	snap := m.rows[m.active-1].snap
+	snap.Settings = snap.Settings.Clone()
+	return snap, true, nil
 }
 
 func (m *MemoryStore) Get(_ context.Context, version int64) (Snapshot, error) {
@@ -333,7 +353,9 @@ func (m *MemoryStore) Get(_ context.Context, version int64) (Snapshot, error) {
 	if version < 1 || version > int64(len(m.rows)) {
 		return Snapshot{}, ErrNotFound
 	}
-	return m.rows[version-1].snap, nil
+	snap := m.rows[version-1].snap
+	snap.Settings = snap.Settings.Clone()
+	return snap, nil
 }
 
 func (m *MemoryStore) List(_ context.Context, limit int) ([]VersionInfo, error) {

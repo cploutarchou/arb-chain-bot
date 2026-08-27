@@ -302,11 +302,33 @@ func (s *MemoryStore) CreateUser(_ context.Context, u User) error {
 	return nil
 }
 
+// enabledAdminCountLocked counts enabled ADMIN accounts other than
+// excludeID. Callers must hold s.mu.
+func (s *MemoryStore) enabledAdminCountLocked(excludeID string) int {
+	n := 0
+	for _, u := range s.users {
+		if u.Role == RoleAdmin && !u.Disabled && u.ID != excludeID {
+			n++
+		}
+	}
+	return n
+}
+
+// UpdateUserRole changes a user's role, refusing (ErrLastAdmin) a
+// demotion that would leave zero enabled ADMIN accounts. The read
+// (current role/disabled + the other-admins count) and the write happen
+// under the SAME lock acquisition (P2-5): AdminService used to do this
+// as list-then-decide-then-call, two independent calls into this store
+// with the lock released in between, letting two concurrent demotions of
+// two different admins each observe "someone else is still an admin".
 func (s *MemoryStore) UpdateUserRole(_ context.Context, id string, role Role) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for email, u := range s.users {
 		if u.ID == id {
+			if u.Role == RoleAdmin && !u.Disabled && role != RoleAdmin && s.enabledAdminCountLocked(id) == 0 {
+				return ErrLastAdmin
+			}
 			u.Role = role
 			s.users[email] = u
 			return nil
@@ -315,11 +337,16 @@ func (s *MemoryStore) UpdateUserRole(_ context.Context, id string, role Role) er
 	return ErrUnknownUser
 }
 
+// SetUserDisabled disables or re-enables a user with the same atomic
+// last-admin guard as UpdateUserRole (P2-5) when disabling one.
 func (s *MemoryStore) SetUserDisabled(_ context.Context, id string, disabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for email, u := range s.users {
 		if u.ID == id {
+			if disabled && u.Role == RoleAdmin && !u.Disabled && s.enabledAdminCountLocked(id) == 0 {
+				return ErrLastAdmin
+			}
 			u.Disabled = disabled
 			s.users[email] = u
 			return nil

@@ -291,6 +291,69 @@ func TestPlatformRollback(t *testing.T) {
 	}
 }
 
+// TestPlatformVenuesRequiresAuthAndIsHonestAboutModeled is requirement
+// (a)'s handler test: GET /api/v1/platform/venues serves the compiled
+// discount table (asset/rate/applies_to_api) so the console never
+// hardcodes it, and every entry must report modeled:false (P1-2) so the
+// console can disable the toggle instead of offering a control that
+// always 400s on apply. It works even with no platform.Service wired
+// (unlike /platform/settings) since the table is a static compile-time
+// constant, not a Settings read.
+func TestPlatformVenuesRequiresAuthAndIsHonestAboutModeled(t *testing.T) {
+	_, mux := newTestServer(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/platform/venues", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth GET = %d", rec.Code)
+	}
+
+	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform/venues", nil)
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("viewer GET = %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Venues []struct {
+				ID       string `json:"id"`
+				Discount *struct {
+					PayAsset     string `json:"pay_asset"`
+					Rate         string `json:"rate"`
+					AppliesToAPI bool   `json:"applies_to_api"`
+					Modeled      bool   `json:"modeled"`
+					Reason       string `json:"reason"`
+				} `json:"discount"`
+			} `json:"venues"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	var sawBinance bool
+	for _, v := range env.Data.Venues {
+		if v.ID != "binance" {
+			continue
+		}
+		sawBinance = true
+		if v.Discount == nil {
+			t.Fatal("binance must report its compiled-in discount profile")
+		}
+		if v.Discount.Modeled {
+			t.Fatal("modeled must be false until a pay-asset ledger exists (P1-2)")
+		}
+		if v.Discount.PayAsset != "BNB" || !v.Discount.AppliesToAPI || v.Discount.Reason == "" {
+			t.Fatalf("unexpected discount payload: %+v", v.Discount)
+		}
+	}
+	if !sawBinance {
+		t.Fatalf("expected binance in the response: %+v", env.Data.Venues)
+	}
+}
+
 func TestPlatformAbsentServiceIs503(t *testing.T) {
 	_, mux := newTestServer(t)
 	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
@@ -474,9 +537,13 @@ func TestEngineRestartSuccess202(t *testing.T) {
 	if fr.calls != 1 || fr.lastReason != "apply v8" || !fr.lastStopRecording {
 		t.Fatalf("Request not called with the expected args: calls=%d reason=%q stop=%v", fr.calls, fr.lastReason, fr.lastStopRecording)
 	}
+	// P3-9: the API layer audits the REQUEST as "engine.restart.requested"
+	// (fired here, the moment it's accepted) — the run's own completion
+	// is a separate "engine.restart.completed" event from the supervisor,
+	// not exercised by this fake.
 	found := false
 	for _, a := range audited {
-		if a == "engine.restart" {
+		if a == "engine.restart.requested" {
 			found = true
 		}
 	}

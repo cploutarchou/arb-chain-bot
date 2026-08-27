@@ -143,12 +143,17 @@ func UsableInput(p Placement, in, rate decimal.Decimal) (usable, fee decimal.Dec
 // returning the net amount and the fee (in the received asset). For
 // input-side fees it returns the gross unchanged.
 //
-// Token-paid fees (TokenPaid) are modeled as an equivalent output-side
-// deduction: the venue debits the token balance instead of the received
-// asset, but in value terms the cost is rate x notional either way. The
-// approximation is explicit on the Effective ("+discount" source,
-// TokenPaid flag) and the paper engine additionally tracks the token
-// balance drain (resources/execution-simulation.md).
+// Token-paid fees (TokenPaid) are NOT modeled as a discount against the
+// received asset today: Taker() computes the discounted rate, and
+// Effective carries PayAsset/TokenPaid so a caller COULD account for the
+// pay-asset debit, but nothing does — no pay-asset balance is ever
+// reserved, spent, or tracked by the paper engine or portfolio (P1-2,
+// docs/MASTER_PLAN.md T-057). Concretely, applying the discounted rate
+// here still shrinks the fee taken from gross by the full discount
+// amount with no offsetting debit anywhere, which is exactly why
+// platform.FeeSettings.validate refuses token_discount:true at the
+// settings layer until a real pay-asset ledger lands: this function
+// alone cannot be relied on to keep P&L honest for a token-paid fee.
 func NetOutput(p Placement, gross, rate decimal.Decimal) (net, fee decimal.Decimal) {
 	if p != FeeOnOutput || !rate.IsPositive() {
 		return gross, decimal.Zero
