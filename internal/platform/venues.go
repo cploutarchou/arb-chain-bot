@@ -31,7 +31,8 @@ var venueRows = []struct{ id, name, blockedBy string }{
 // VenueTable returns every venue the console may list, sorted as
 // registered (binance first, then the unbuilt ones), with the compiled-in
 // fee-discount profile where one exists. Every venue is public market
-// data only — no API keys are used or accepted anywhere.
+// data only — no API keys are used anywhere (credentials stored under
+// Security are never read; secrets/registry.go).
 func VenueTable() []VenueProfile {
 	out := make([]VenueProfile, 0, len(venueRows))
 	for _, r := range venueRows {

@@ -380,6 +380,16 @@ data-flow,security,risk}.md`.
 ### T-046 Profitability validation campaign
 - status: IN_PROGRESS — one sample recorded and campaigned; acceptance
   wants multiple sessions across regimes (calm, volatile, weekend).
+- sample 2 (started 2026-08-27, in progress): **widened universe** —
+  46 Binance symbols / 144 triangles (BTC, ETH, BNB, SOL, XRP, DOGE
+  across USDT, USDC, FDUSD, EUR, TRY) applied from Settings → Markets
+  as settings v2, recorded from the Campaigns page on the T-063 build.
+  Hypothesis under test: the six-market majors universe never showed a
+  gross deviation above ~−1 bps in 12 h of live scanning (8.6k
+  `RISK_MIN_EDGE` rejections, best net −41 bps against 30 bps fees +
+  10 bps buffers); less-liquid intermediates and fiat-quoted pairs are
+  where deviations, if any, should appear. Session id and campaign
+  report follow in docs/campaigns/ once ≥ 6 h are captured.
 - campaign 1 (2026-08-27): recording `01M0ZPK16CXTR91MMJQ60HC2K3`
   (Binance, BTCUSDT/ETHUSDT/ETHBTC/BTCUSDC/ETHUSDC/USDCUSDT, starting
   assets USDT/USDC; 2026-08-26 18:51:15 → 20:22:02 UTC, **1 h 31 m —
@@ -484,6 +494,29 @@ data-flow,security,risk}.md`.
   rejections) so a "no qualified opportunities" verdict says why —
   minimum net edge, book age, depth exhaustion, data quality — and
   the stress grid can show which reason dominates under each axis.
+
+### T-063 Binance REST weight gate
+- status: DONE (2026-08-27). Widening the Binance universe from 6 to 46
+  symbols from the console tripped Binance's per-IP request-weight
+  limit on the first engine restart: 46 depth snapshots at limit 5000
+  (weight 250 each = 11,500) against the 6,000/min budget → HTTP 418,
+  IP banned ~2 min, most books never primed, and the recording session
+  started in that window (`01M11J1K3T1BCAYT8PYQ8E3Q9K`) has no usable
+  snapshots. Fix in `internal/exchange/binance`: every depth fetch
+  (startup priming, record-start capture, gap resync) goes through one
+  `restGate` — sliding 60 s window capped at 4,500 weight, 429/418
+  `Retry-After` honoured before any further call — and
+  `SnapshotDepthLimit` is 1000 (weight 50; scanner depth is 50). A
+  60-symbol universe now primes in ~15 s within budget. `rate_limited`
+  counter exposed in the system read model.
+
+### T-064 Exchange API credentials in the vault
+- status: DONE (2026-08-27). Registry `exchange` group (14 entries,
+  six venues) stored encrypted and managed from Settings → Security.
+  `Applies: not_consumed`: `Manager.Get` refuses the group, no code
+  reads them, `TestRegistryIsClosed` pins it. Live trading remains
+  disabled; keys are for a future separately reviewed read-only
+  consumer. docs/design/settings-expansion.md §3.3, deployment.md §3d.
 
 ### T-056 MEXC research round
 - status: DONE (2026-08-26) — docs/research/mexc.md. Score 65/100
