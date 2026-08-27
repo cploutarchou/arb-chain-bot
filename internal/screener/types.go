@@ -76,6 +76,13 @@ type Quote struct {
 	// unreliable/absent) — every age shown to an operator is computed
 	// against this.
 	At time.Time
+	// LiquidityUnknown is set by a collector whose bulk ticker carries no
+	// top-of-book sizes (T-066: Gate's GET /spot/tickers — sizes are
+	// documented as "not available for batch queries"). BidQty/AskQty
+	// are zero on such a quote, and the console shows "liquidity:
+	// unknown" instead of a zero notional; nothing infers a size from
+	// another source.
+	LiquidityUnknown bool
 }
 
 // Perp is one venue's snapshot for one USDT-margined (or venue-native)
