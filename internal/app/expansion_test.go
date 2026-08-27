@@ -226,9 +226,10 @@ func TestBuildComponentsAlwaysConstructsAIScheduler(t *testing.T) {
 	}
 }
 
-// TestBuildAdvisorResolvesKeyThroughSecrets: enabled+anthropic with no
-// resolvable key is idle with the named reason; a key from the chain
-// builds the provider with the budget's max tokens; fake needs no key.
+// TestBuildAdvisorResolvesKeyThroughSecrets: with the anthropic provider
+// enabled and nothing resolvable, the advisor stays idle with the named
+// reason; when the secret chain resolves, the provider is built with the
+// budget's max tokens; the fake provider needs no secret at all.
 func TestBuildAdvisorResolvesKeyThroughSecrets(t *testing.T) {
 	base := platform.AISettings{
 		Enabled: true, Provider: "anthropic", Model: "claude-sonnet-5",
