@@ -43,7 +43,7 @@ they're for** and **what nav groups render**, not in visual language.
 |---|---|---|
 | Audience | us — the platform operator/team | a subscribing organisation's users |
 | Data scope | the whole deployment | one tenant's rules, paper sessions, alerts, reports |
-| Nav groups | Operate, Scanner Suite, Portfolio, Research, Control, System, Settings (all seven, §2) | Operate, Scanner Suite, Portfolio, Alerts, Reports, Settings — no Research, no System, no cross-tenant anything |
+| Nav groups | Operate, Scanner Suite, Portfolio, Research, Control, System, Settings (all seven, §2.2) | Operate *(tenant-scoped subset — Overview + Paper Trading only, §2.2)*, Scanner Suite, Portfolio *(Portfolio & Balances + PnL & Analytics only — no Orders/Fills, which are triangular-engine internals)*, Alerts, Reports, Settings — no Research, no System, no cross-tenant anything |
 | Exchange credentials | none in either console today; the vault's `exchange` group exists for a **future, separately reviewed, read-only** consumer (settings-expansion.md §3.3) | **absolute non-goal.** No key field, masked or not, anywhere in the client console. A signals-only SaaS product with a client-facing exchange-credential surface implies execution; it does not have one. If a client asks "how do I connect my exchange," the answer lives in marketing copy ("we never touch your funds"), not a settings page. |
 | Users & roles | full org/user/RBAC admin across the deployment | tenant-scoped invite/role management, gated by the tenant's own package (Desk/Enterprise get more seats) |
 | Evidence page | full view: all four production-execution-gate criteria (a)-(d), the operator's own legal decision doc, links into `docs/campaigns/` and `docs/decisions/` | performance-only view: net PnL after fees / hit rate / drawdown / sample size per strategy, scoped to the tenant's own rules and paper sessions — **no gate-criteria checklist**, since (b) security review and (c) legal decision are the operator's internal record, not a client-facing status. Both views share the same underlying numbers component (§6.7); they differ in which panels render. |
@@ -121,10 +121,31 @@ Replace the always-expanded text sidebar with a two-density rail:
 | System | ⬡ hex | Exchanges, Markets, System Health, Audit Log, Telegram |
 | — (pinned) | ⚙ gear | Settings, Users & Security |
 
-Client console drops Research and System wholesale and trims Control to
-Alerts + Reports (no Strategies/Risk Center — those are the operator's
-running-engine internals, not a tenant-facing control surface for a
-signals product).
+**Client console groups are shorter, not just fewer** — the table above is
+a group *count* summary; the actual per-group item lists differ:
+
+- **Operate** (client): **Overview, Paper Trading** only. Triangles,
+  Scanner, and Opportunities as listed above are the triangular engine's
+  own live-book/topology views — deployment-internal, not tenant data — and
+  do not appear in the client console at all, not even gated. A tenant's
+  "operate" surface is watching their own paper session and rule-driven
+  Overview stats, nothing about the shared engine's internal book state.
+- **Scanner Suite** (client): identical page set to the operator console
+  (§2.2's seven Scanner Suite pages) — this group is the actual product a
+  tenant is paying for, so it is not trimmed, only package-gated per §2.4
+  (fewer venues/rules/strategies available, not fewer pages).
+- **Portfolio** (client): **Portfolio & Balances, PnL & Analytics** only.
+  Orders and Fills are the triangular engine's own order/fill ledger
+  (`api.paper.orders(cycleID)` today, no tenant scoping exists or is
+  planned for it) — out of the client console until/unless a tenant-scoped
+  orders/fills read model is designed, which this document does not
+  attempt.
+- **Research, System** (client): dropped wholesale — Campaigns/Replay/AI
+  Advisor/Exchanges/Markets/System Health/Audit Log/Telegram are all
+  deployment-operational surfaces, not tenant-facing.
+- **Control** (client): trimmed to **Alerts, Reports** — no Strategies/Risk
+  Center, which are the operator's running-engine internals, not a
+  tenant-facing control surface for a signals product.
 
 ### 2.3 Stats strip
 
@@ -153,7 +174,7 @@ stay visually and textually distinct:
 This applies at three levels, not just nav items: a nav entry, a filter
 control within a page (e.g. a venue chip beyond the package's venue count),
 and an action button (e.g. "Create rule" past the package's rule limit).
-Same three-state component (`GatedControl`, new — §14) wraps all three.
+Same three-state component (`GatedControl`, new — §12) wraps all three.
 
 **Package gating is display-only.** Every gated mutation is re-checked by
 the backend's entitlement/limit check regardless of what the console
@@ -161,9 +182,10 @@ greys out — mirroring how `console-ux-audit.md` §6 frames the existing
 `can()` frontend drift as a display bug, never a security hole. This
 document does not set package limits (venue count, rule count, alert
 channels, auto-paper strategy count) — those are the product manager's
-numbers, sourced from Paddle product config; wherever an illustrative
-number appears below (§7 onboarding, "3 rules on Starter") it is a
-placeholder for the real entitlement table, not a spec.
+numbers, sourced from Paddle product config. §5 (onboarding) and §6.1
+(filter card) reference this same gating pattern for venue chips and rule
+creation without inventing specific numbers; any count that appears in
+either section is illustrative of the *mechanism*, not a proposed limit.
 
 ### 2.5 Notification centre
 
@@ -208,11 +230,11 @@ invent a parallel one.
 |---|---|---|---|
 | ≤ 1× poll interval | `dim`/plain | exact age, e.g. `1.8s` | normal |
 | > 1× and ≤ 3× poll interval | `warn` | exact age, e.g. `6.4s` | normal |
-| > 3× poll interval | `bad` | **`STALE 11.2s`** — the word "STALE" is literal, always present, not implied by color | row background at `opacity-60` (matches the package-gated tone deliberately reused at a different opacity so the two never look identical — stale is `bad`-toned text, gating is a lock glyph) |
+| > 3× poll interval | `bad` | **`STALE 11.2s`** — the word "STALE" is literal, always present, not implied by color | row background at `opacity-80` (a light reinforcement, deliberately a *different* value from §2.4's package-gated `opacity-60` so the two states never look identical at a glance — stale is `bad`-toned text plus a faint row dim, gating is a lock glyph plus a heavier dim) |
 
 **Staleness is carried by text, not color alone**, for two reasons this
 spec treats as binding: WCAG AA (color must never be the only signal) and
-light-mode survival (light mode has no shipped tokens yet — §13 — and
+light-mode survival (light mode has no shipped tokens yet — §11 — and
 grey-on-white is a much weaker signal than grey-on-dark; a design that
 depends on background tint to say "don't trust this row" breaks the day
 light mode ships). The `STALE {age}` text is the actual carrier in both
@@ -248,7 +270,7 @@ every venue).
 **Decision: row expand renders as a right-hand detail drawer**, not an
 inline row. Clicking a row (or pressing Enter on a focused row, §11)
 opens a fixed-width (~420px) drawer sliding in from the right, overlaying
-the table's right edge on desktop and full-screen on mobile (§10). The
+the table's right edge on desktop and full-screen on mobile (§8). The
 underlying table is untouched — no row re-measurement, virtualization keeps
 working exactly as built. This is the same shape `ConfirmDialog` already
 uses (focus-trapped, `Escape` closes, `role="dialog"`), reused as a
@@ -401,7 +423,7 @@ A bordered card directly under the stats strip, above the table:
 - Every filter change updates the table's query params (shareable/
   bookmarkable URL) and re-triggers the poll immediately, not on a debounce
   longer than ~300ms for text inputs (numeric/chip changes apply instantly).
-- Collapsed-by-default on mobile (§10) behind a "Filters (n active)" toggle
+- Collapsed-by-default on mobile (§8) behind a "Filters (n active)" toggle
   button that shows the active-filter count as a badge.
 
 ### 6.2 Screener (`/screener`) — T-069
@@ -731,7 +753,7 @@ Extends `console-ux-audit.md` §4.6:
   (BL-23) — every new interactive element introduced here (rail icons,
   filter chips, drawer controls, gated locks) must be included in that
   same contrast audit against both `--bg`/`--bg-panel` (dark) and their
-  light-theme counterparts (§13) before ship, not verified twice.
+  light-theme counterparts (§11) before ship, not verified twice.
 
 ---
 
