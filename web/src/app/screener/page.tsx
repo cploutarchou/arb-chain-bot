@@ -424,7 +424,7 @@ export default function ScreenerPage() {
                     {signedText(r.spread_bps_net)}
                   </span>,
                   <span key="l" className={dim}>
-                    {r.liquidity_quote}
+                    {r.liquidity_quote ?? "unknown"}
                   </span>,
                   <span key="lt" className={dim}>
                     {r.lifetime_s}

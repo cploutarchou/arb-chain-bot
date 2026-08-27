@@ -103,6 +103,10 @@ type Options struct {
 	// FundingCallsPerPoll bounds per-instrument funding requests per
 	// Perps() call on venues that need them (0 → 10).
 	FundingCallsPerPoll int
+	// BooksPerPoll bounds per-product order-book requests per Spot()
+	// call on a venue with no bulk bid/ask ticker (T-075: Coinbase
+	// Advanced Trade); the rest carry their last-known quote (0 → 40).
+	BooksPerPoll int
 	// InstrumentTTL is how long the instrument cache is trusted before
 	// Spot()/Perps() refresh it (0 → 10 min).
 	InstrumentTTL time.Duration
@@ -115,6 +119,13 @@ func (o Options) fundingCalls() int {
 		return 10
 	}
 	return o.FundingCallsPerPoll
+}
+
+func (o Options) booksPerPoll() int {
+	if o.BooksPerPoll <= 0 {
+		return 40
+	}
+	return o.BooksPerPoll
 }
 
 func (o Options) ttl() time.Duration {
@@ -151,6 +162,14 @@ func New(id screener.Venue, opts Options) (Collector, error) {
 		return newGateIO(opts), nil
 	case screener.VenueMEXC:
 		return newMEXC(opts), nil
+	case screener.VenueKuCoin:
+		return newKuCoin(opts), nil
+	case screener.VenueHTX:
+		return newHTX(opts), nil
+	case screener.VenueKraken:
+		return newKraken(opts), nil
+	case screener.VenueCoinbase:
+		return newCoinbase(opts), nil
 	}
 	return nil, fmt.Errorf("venue: unknown venue %q", id)
 }

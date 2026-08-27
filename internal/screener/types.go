@@ -35,6 +35,11 @@ const (
 	VenueBitget  Venue = "bitget"
 	VenueGate    Venue = "gate"
 	VenueMEXC    Venue = "mexc"
+	// Tier-2 venues (T-075): opt-in until a 30-min soak (settings.go).
+	VenueKuCoin   Venue = "kucoin"
+	VenueHTX      Venue = "htx"
+	VenueKraken   Venue = "kraken"
+	VenueCoinbase Venue = "coinbase"
 )
 
 // KnownVenues is the full target-venue set (docs/design/scanner-suite.md
@@ -45,12 +50,16 @@ const (
 // is a separate, read-only concern from platform's live/paper trading
 // connectors, so the two sets are not unified.
 var KnownVenues = map[Venue]bool{
-	VenueBinance: true,
-	VenueOKX:     true,
-	VenueBybit:   true,
-	VenueBitget:  true,
-	VenueGate:    true,
-	VenueMEXC:    true,
+	VenueBinance:  true,
+	VenueOKX:      true,
+	VenueBybit:    true,
+	VenueBitget:   true,
+	VenueGate:     true,
+	VenueMEXC:     true,
+	VenueKuCoin:   true,
+	VenueHTX:      true,
+	VenueKraken:   true,
+	VenueCoinbase: true,
 }
 
 // OrderedVenues is KnownVenues in a stable, deterministic order for
@@ -58,6 +67,7 @@ var KnownVenues = map[Venue]bool{
 // rendering, golden tests).
 var OrderedVenues = []Venue{
 	VenueBinance, VenueOKX, VenueBybit, VenueBitget, VenueGate, VenueMEXC,
+	VenueKuCoin, VenueHTX, VenueKraken, VenueCoinbase,
 }
 
 // Quote is one venue's top-of-book for one spot pair, normalised from

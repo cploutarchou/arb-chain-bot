@@ -197,9 +197,11 @@ func (a *Automation) loop(ctx context.Context, done chan struct{}) {
 	}
 }
 
-// TickOnce runs every ticker once, in order. Exposed for tests and for
-// the loop; safe to call while the loop is stopped.
+// TickOnce runs the collector self-healing check, then every ticker
+// once, in order. Exposed for tests and for the loop; safe to call
+// while the loop is stopped.
 func (a *Automation) TickOnce(ctx context.Context, now time.Time) {
+	a.healCollectors(now)
 	for _, t := range a.tickers {
 		if ctx.Err() != nil {
 			return
@@ -212,6 +214,23 @@ func (a *Automation) TickOnce(ctx context.Context, now time.Time) {
 			}()
 			t.Tick(ctx, now)
 		}()
+	}
+}
+
+// healCollectors (T-079 minimal ops automation): a venue goroutine that
+// has not completed a poll for StaleAfterPolls × poll_interval_s is
+// restarted by the runner and the restart is logged; the count is
+// visible in GET /screener/status as venues[].restarts.
+func (a *Automation) healCollectors(now time.Time) {
+	r, ok := a.svc.Collectors.(StaleRestarter)
+	if !ok || a.svc.Collectors == nil || !a.svc.Collectors.Running() {
+		return
+	}
+	maxAge := time.Duration(StaleAfterPolls) * a.interval()
+	for _, v := range r.RestartStale(now, maxAge) {
+		if a.svc.log != nil {
+			a.svc.log.Warn("screener collector restarted: no completed poll within the stale window", "venue", v, "stale_after", maxAge.String())
+		}
 	}
 }
 

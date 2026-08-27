@@ -5,7 +5,18 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
+
+// The memory stores honour the organisation scope the way the pgx
+// stores do (T-081): rows remember the organisation they were created
+// in (tenancy.OrgOrPlatform), scoped reads filter on it, and an
+// unscoped read (engine loop) sees everything.
+func orgVisible(ctx context.Context, rowOrg int64) bool {
+	id, ok := tenancy.OrgFrom(ctx)
+	return !ok || id == rowOrg
+}
 
 // MemoryRuleStore is a RuleStore for tests and DB-less dev profiles
 // (mirrors MemoryStore's role for the versioned settings document: a
@@ -14,26 +25,43 @@ import (
 type MemoryRuleStore struct {
 	mu   sync.Mutex
 	rows map[string]Rule
+	orgs map[string]int64
 }
 
-func NewMemoryRuleStore() *MemoryRuleStore { return &MemoryRuleStore{rows: map[string]Rule{}} }
+func NewMemoryRuleStore() *MemoryRuleStore {
+	return &MemoryRuleStore{rows: map[string]Rule{}, orgs: map[string]int64{}}
+}
 
-func (m *MemoryRuleStore) ListRules(context.Context) ([]Rule, error) {
+// OrgOfRule reports the organisation a rule was created in (platform
+// when unknown), mirroring storage.Tenancy.OrgOfRule.
+func (m *MemoryRuleStore) OrgOfRule(id string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok {
+		return org
+	}
+	return tenancy.PlatformOrgID
+}
+
+func (m *MemoryRuleStore) ListRules(ctx context.Context) ([]Rule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Rule, 0, len(m.rows))
-	for _, r := range m.rows {
+	for id, r := range m.rows {
+		if !orgVisible(ctx, m.orgs[id]) {
+			continue
+		}
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
-func (m *MemoryRuleStore) GetRule(_ context.Context, id string) (Rule, error) {
+func (m *MemoryRuleStore) GetRule(ctx context.Context, id string) (Rule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.rows[id]
-	if !ok {
+	if !ok || !orgVisible(ctx, m.orgs[id]) {
 		return Rule{}, ErrNotFound
 	}
 	return r, nil
@@ -44,30 +72,32 @@ func (m *MemoryRuleStore) GetRule(_ context.Context, id string) (Rule, error) {
 // store has nowhere to persist it beyond the row itself, which Rule
 // does not carry — dev/test profiles lose "who touched this rule" the
 // same way they lose everything else on restart.
-func (m *MemoryRuleStore) InsertRule(_ context.Context, r Rule, _ string) (Rule, error) {
+func (m *MemoryRuleStore) InsertRule(ctx context.Context, r Rule, _ string) (Rule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rows[r.ID] = r
+	m.orgs[r.ID] = tenancy.OrgOrPlatform(ctx)
 	return r, nil
 }
 
-func (m *MemoryRuleStore) UpdateRule(_ context.Context, r Rule, _ string) (Rule, error) {
+func (m *MemoryRuleStore) UpdateRule(ctx context.Context, r Rule, _ string) (Rule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.rows[r.ID]; !ok {
+	if _, ok := m.rows[r.ID]; !ok || !orgVisible(ctx, m.orgs[r.ID]) {
 		return Rule{}, ErrNotFound
 	}
 	m.rows[r.ID] = r
 	return r, nil
 }
 
-func (m *MemoryRuleStore) DeleteRule(_ context.Context, id string) error {
+func (m *MemoryRuleStore) DeleteRule(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.rows[id]; !ok {
+	if _, ok := m.rows[id]; !ok || !orgVisible(ctx, m.orgs[id]) {
 		return ErrNotFound
 	}
 	delete(m.rows, id)
+	delete(m.orgs, id)
 	return nil
 }
 
@@ -75,17 +105,21 @@ func (m *MemoryRuleStore) DeleteRule(_ context.Context, id string) error {
 type MemoryEventStore struct {
 	mu   sync.Mutex
 	rows []Event
+	orgs []int64
 }
 
 func NewMemoryEventStore() *MemoryEventStore { return &MemoryEventStore{} }
 
-func (m *MemoryEventStore) ListEvents(_ context.Context, ruleID string, limit int) ([]Event, error) {
+func (m *MemoryEventStore) ListEvents(ctx context.Context, ruleID string, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []Event
 	for i := len(m.rows) - 1; i >= 0; i-- { // newest first, matching the storage-backed ORDER BY opened_at DESC
 		e := m.rows[i]
 		if ruleID != "" && e.RuleID != ruleID {
+			continue
+		}
+		if !orgVisible(ctx, m.orgs[i]) {
 			continue
 		}
 		out = append(out, e)
@@ -96,7 +130,7 @@ func (m *MemoryEventStore) ListEvents(_ context.Context, ruleID string, limit in
 	return out, nil
 }
 
-func (m *MemoryEventStore) InsertEvent(_ context.Context, e Event) error {
+func (m *MemoryEventStore) InsertEvent(ctx context.Context, e Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.rows {
@@ -105,6 +139,7 @@ func (m *MemoryEventStore) InsertEvent(_ context.Context, e Event) error {
 		}
 	}
 	m.rows = append(m.rows, e)
+	m.orgs = append(m.orgs, tenancy.OrgOrPlatform(ctx))
 	return nil
 }
 
@@ -113,18 +148,19 @@ func (m *MemoryEventStore) InsertEvent(_ context.Context, e Event) error {
 type MemoryTemplateStore struct {
 	mu   sync.Mutex
 	rows map[string]Template
+	orgs map[string]int64
 }
 
 func NewMemoryTemplateStore() *MemoryTemplateStore {
-	return &MemoryTemplateStore{rows: map[string]Template{}}
+	return &MemoryTemplateStore{rows: map[string]Template{}, orgs: map[string]int64{}}
 }
 
-func (m *MemoryTemplateStore) ListTemplates(_ context.Context, userID string) ([]Template, error) {
+func (m *MemoryTemplateStore) ListTemplates(ctx context.Context, userID string) ([]Template, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []Template
-	for _, t := range m.rows {
-		if t.UserID == userID {
+	for id, t := range m.rows {
+		if t.UserID == userID && orgVisible(ctx, m.orgs[id]) {
 			out = append(out, t)
 		}
 	}
@@ -132,22 +168,24 @@ func (m *MemoryTemplateStore) ListTemplates(_ context.Context, userID string) ([
 	return out, nil
 }
 
-func (m *MemoryTemplateStore) InsertTemplate(_ context.Context, t Template) (Template, error) {
+func (m *MemoryTemplateStore) InsertTemplate(ctx context.Context, t Template) (Template, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t.CreatedAt = time.Now().UTC()
 	m.rows[t.ID] = t
+	m.orgs[t.ID] = tenancy.OrgOrPlatform(ctx)
 	return t, nil
 }
 
-func (m *MemoryTemplateStore) DeleteTemplate(_ context.Context, userID, id string) error {
+func (m *MemoryTemplateStore) DeleteTemplate(ctx context.Context, userID, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.rows[id]
-	if !ok || t.UserID != userID {
+	if !ok || t.UserID != userID || !orgVisible(ctx, m.orgs[id]) {
 		return ErrNotFound
 	}
 	delete(m.rows, id)
+	delete(m.orgs, id)
 	return nil
 }
 

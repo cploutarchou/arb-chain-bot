@@ -14,7 +14,9 @@ import (
 
 // fixtureRoutes maps a venue to (path[+query fragment] → fixture file).
 // A route key containing "?" must match the request path and every
-// listed query pair; the first match in declaration order wins.
+// listed query pair (an empty value matches any value); the first match
+// in declaration order wins. A file name containing "{<param>}" has the
+// request's query value for <param> substituted.
 var fixtureRoutes = map[screener.Venue][][2]string{
 	screener.VenueBinance: {
 		{"/api/v3/exchangeInfo", "spot_exchangeInfo.json"},
@@ -59,6 +61,37 @@ var fixtureRoutes = map[screener.Venue][][2]string{
 		{"/api/v1/contract/detail", "contract_detail.json"},
 		{"/api/v1/contract/funding_rate/", "funding_rate.json"},
 	},
+	screener.VenueKuCoin: {
+		{"/api/v2/symbols", "symbols.json"},
+		{"/api/v1/market/allTickers", "allTickers.json"},
+		{"/api/v3/currencies", "currencies.json"},
+		{"/api/v1/contracts/active", "contracts_active.json"},
+		{"/api/v1/allTickers", "futures_allTickers.json"},
+	},
+	screener.VenueHTX: {
+		{"/v2/settings/common/symbols", "symbols_v2.json"},
+		{"/market/tickers", "tickers.json"},
+		{"/v2/reference/currencies", "currencies.json"},
+		{"/linear-swap-api/v1/swap_contract_info", "swap_contract_info.json"},
+		{"/linear-swap-ex/market/detail/batch_merged", "batch_merged.json"},
+		{"/linear-swap-api/v1/swap_batch_funding_rate", "swap_batch_funding_rate.json"},
+		{"/linear-swap-api/v1/swap_index", "swap_index.json"},
+		{"/index/market/history/linear_swap_mark_price_kline", "mark_price_kline.json"},
+	},
+	screener.VenueKraken: {
+		{"/0/public/AssetPairs", "AssetPairs.json"},
+		{"/0/public/Ticker", "Ticker.json"},
+		{"/derivatives/api/v3/instruments", "futures_instruments.json"},
+		{"/derivatives/api/v3/tickers", "futures_tickers.json"},
+		{"/derivatives/api/v4/historicalfundingrates", "historicalfundingrates.json"},
+	},
+	screener.VenueCoinbase: {
+		{"/api/v3/brokerage/market/products", "products.json"},
+		// One recorded book per product: "{product_id}" is substituted
+		// from the request's product_id query value.
+		{"/api/v3/brokerage/market/product_book?product_id=", "product_book_{product_id}.json"},
+		{"/currencies", "exchange_currencies.json"},
+	},
 }
 
 // fixtureServer serves testdata/<venue>/ for one venue and counts
@@ -80,12 +113,18 @@ func newFixtureServer(t *testing.T, id screener.Venue) *fixtureServer {
 			}
 			if query != "" {
 				k, v, _ := strings.Cut(query, "=")
-				if r.URL.Query().Get(k) != v {
+				if got := r.URL.Query().Get(k); got != v && (v != "" || got == "") {
 					continue
 				}
 			}
 			fs.hits[route[0]]++
-			b, err := os.ReadFile(filepath.Join(dir, route[1]))
+			file := route[1]
+			if i := strings.Index(file, "{"); i >= 0 {
+				j := strings.Index(file, "}")
+				param := file[i+1 : j]
+				file = file[:i] + r.URL.Query().Get(param) + file[j+1:]
+			}
+			b, err := os.ReadFile(filepath.Join(dir, file))
 			if err != nil {
 				t.Errorf("fixture %s: %v", route[1], err)
 				w.WriteHeader(500)
@@ -108,7 +147,7 @@ func fixtureCollector(t *testing.T, id screener.Venue) (Collector, *fixtureServe
 	// Real clock: the per-venue gates are live in tests too, so a
 	// collector that over-spends its window waits instead of hanging on
 	// a frozen clock.
-	c, err := New(id, Options{SpotBase: fs.URL, PerpBase: fs.URL, FundingCallsPerPoll: 3, Now: time.Now})
+	c, err := New(id, Options{SpotBase: fs.URL, PerpBase: fs.URL, FundingCallsPerPoll: 3, BooksPerPoll: 40, Now: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}

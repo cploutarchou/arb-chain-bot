@@ -216,6 +216,12 @@ func spotSignals(in Inputs, r screener.Rule, now time.Time) []Signal {
 			BuyVenues: buy, SellVenues: sell, Quote: quote,
 			BasesAllow: toSet(r.BasesAllow), BasesDeny: toSet(r.BasesDeny),
 			Limit: 500,
+			// Include the guarded lanes so the signal carries the verdict
+			// and its reason (diagnostics, tests); spotActive refuses them
+			// — the guard is ONE function (screener.GuardLane) for the
+			// table, this evaluator and the executor.
+			IncludeSuspect: true, IncludeUnknownLiquidity: true,
+			MaxPlausibleSpreadBps: in.MaxPlausibleSpreadBps,
 		}
 		// tracker=nil: this computation must not touch the shared
 		// GET /screener/spreads LifetimeTracker (spreads.go doc comment);

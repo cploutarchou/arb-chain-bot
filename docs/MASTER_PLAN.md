@@ -1275,35 +1275,35 @@ PAPER only; the vault's exchange credential group stays unread.
   date or marked UNVERIFIED.
 
 ### T-066 Venue collectors (`internal/screener/venue`)
-- status: TODO. One collector per venue polling the bulk endpoints
+- status: DONE (2026-08-27) — six collectors with fixtures + conformance test; 5-min soak 5,448 pairs / 3,990 perps, zero 429/418. 30-min soak still owed before Tier-2 defaults flip. One collector per venue polling the bulk endpoints
   under a per-venue weight/rate gate; normalised spot quotes and perp
   rows; data-age tracking. Acceptance: ≥ 90 % of tradable spot pairs per
   poll, 30-minute soak with zero 429/418, fixture unit tests per venue.
 
 ### T-067 Spreads, basis and carry math
-- status: TODO. Net cross-venue spread (both taker fees), liquidity
+- status: DONE (2026-08-27) — golden tests; asset-identity + liquidity guard added after the live VON/TROLL/XTER mismatch (suspect lanes excluded by default). Net cross-venue spread (both taker fees), liquidity
   (top-of-book), lifetime tracking; spot↔perp basis, funding carry
   annualised net of fees. Decimal only in money paths; golden tests.
 
 ### T-068 Screener settings, API, RBAC
-- status: TODO. Versioned DB document (venues on/off, poll interval,
+- status: DONE (2026-08-27) — migration 000010, screener:view/screener:config, every §7 route. Versioned DB document (venues on/off, poll interval,
   fee table, liquidity floor, paper balances per venue), `screener:view`
   (OPERATOR+) / `screener:config` (ADMIN), CSRF, audit, parent_version;
   read models for the console; migration 000010.
 
 ### T-069 Console pages (Scanner Suite group)
-- status: TODO. `/screener`, `/perpetuals`, `/funding`, `/calculator`,
+- status: DONE (2026-08-27) — six pages, icon rail, light/dark AA tokens with contrast check, seven UX components; sidebar collapse-to-rail and dense mode deferred. `/screener`, `/perpetuals`, `/funding`, `/calculator`,
   `/scanner-alerts`, `/auto-paper`; stats strip, filter card with saved
   templates, dense auto-refreshing virtualised table, row expand with
   per-side quotes; light theme in the design system; e2e coverage.
 
 ### T-070 Alert rules → Telegram
-- status: TODO. Persisted rules (spread/lifetime/liquidity/venues/
+- status: DONE (2026-08-27) — evaluator with lifetime/cooldown/dedup, measurement-only text with fixed footer; real Telegram delivery not yet exercised. Persisted rules (spread/lifetime/liquidity/venues/
   funding thresholds), evaluation on each poll, cooldown + dedup through
   `internal/notification`, audit on rule changes.
 
 ### T-071 Automatic paper execution
-- status: TODO. Rule opt-in; CrossVenueSpot (inventory on both venues,
+- status: DONE (2026-08-27, code) — cross-venue spot, carry, funding harvest reproducing strategy-models worked examples; migration 000011 ledger; NO soak evidence yet (24 h soak report owed). Rule opt-in; CrossVenueSpot (inventory on both venues,
   no transfers), Carry (spot long + perp short with funding accrual and
   maintenance-margin stop), Futures-Futures; paper cycles tagged by
   strategy so PnL/Reports break them down; 24 h soak report filed under
@@ -1318,13 +1318,13 @@ PAPER only; the vault's exchange credential group stays unread.
 ### Phase 23 Venue breadth
 - T-073 `Collector` interface + conformance test + venue registry (verified flag, fee defaults). TODO.
 - T-074 Tier-1 venues via public bulk tickers: Binance, OKX, Bybit, Bitget, Gate, MEXC (from T-065/T-066). TODO.
-- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase, Crypto.com, Bitfinex, BingX, Upbit, Bithumb, WhiteBIT, LBank, BitMart, Phemex — each researched, fixtured, soaked. TODO.
+- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE (2026-08-27; opt-in until a 30-min soak; HTX/Coinbase limits and fees UNVERIFIED; MEXC in-band "too frequent" 510 needs handling). Remaining: Crypto.com, Bitfinex, BingX, Upbit, Bithumb, WhiteBIT, LBank, BitMart, Phemex. IN_PROGRESS.
 - T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO.
 
 ### Phase 24 Strategies, auto-paper, unattended operation
 - T-077 Strategy registry (cross-venue spot, carry, futures-futures, funding harvest, triangular) with per-strategy paper ledger and statistics. TODO.
-- T-078 Nightly automatic campaign/report per strategy → docs/campaigns/<strategy>/<date>/; Telegram summary. TODO.
-- T-079 Operations automation: scheduled migrations, backups, health checks, self-healing collectors, alerting on failure. TODO.
+- T-078 Nightly paper report per strategy and per rule (2026-08-27, `internal/screener/report/`): 00:05 UTC and `POST /screener/reports/run` (ADMIN); previous UTC day + cumulative; strategy-models §7 table (n, net after fees/funding/slippage, net bps mean/median, hit rate with Wilson 95 %, lifetime, max drawdown, drift, skipped by reason, funding rows, slip p95, concentration) and the §8 checklist with pass/fail + reason per item ("no evidence yet" below the floors; regimes, stress grid, fee verification and manual items always fail until filed). Files `<recordings>/screener-reports/<date>/`, table `screener_reports` (000012), one Telegram summary. Tests: synthetic ledger with hand-computed answers (6 executions / 3 days), 240-sample gate run (items 4 and 6 pass, 6 fail), storage round trip. Docs/campaigns filing of a real 30-day window: not yet (no ≥ 30-day auto-paper run exists).
+- T-079 Operations automation — minimal part done (2026-08-27): self-healing collectors (`Automation.healCollectors` restarts a venue goroutine with no completed poll for 5 × poll_interval_s, logs it, `venues[].restarts` in /screener/status; tests `TestPollerRestartStale`, `TestAutomationHealsStaleCollectors`). Scheduled migrations, backups, health checks and alerting on failure: TODO.
 - T-080 Evidence dashboard: per-strategy net PnL after fees, hit rate, drawdown, sample size vs production-gate thresholds. TODO.
 
 ### Phase 25 SaaS

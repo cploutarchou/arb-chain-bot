@@ -7,6 +7,20 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 )
 
+// Per-venue conformance classes (each cited in the collector header):
+//   - verifiedFees: fee numbers read from the venue's official page/API.
+//   - publicNetworks: a public currency/chain status endpoint exists, so
+//     Networks may answer open/closed rather than the key-gated unknown.
+//   - noPerps: the venue lists no perpetuals on its public market data.
+//   - noBulkMark: mark price is per-contract (round-robin), so a perp may
+//     carry Mark 0 (basis.go skips it) while Index is set.
+var (
+	verifiedFees   = map[screener.Venue]bool{screener.VenueBinance: true, screener.VenueKuCoin: true, screener.VenueKraken: true}
+	publicNetworks = map[screener.Venue]bool{screener.VenueGate: true, screener.VenueKuCoin: true, screener.VenueHTX: true, screener.VenueCoinbase: true}
+	noPerps        = map[screener.Venue]bool{screener.VenueCoinbase: true}
+	noBulkMark     = map[screener.Venue]bool{screener.VenueHTX: true}
+)
+
 // TestConformance is the shared gate every collector must pass before a
 // venue is enabled by default (SKILL.md step 3): over the recorded
 // fixtures, ≥ 90 % of tradable spot instruments produce a Quote, ≥ 90 %
@@ -39,7 +53,7 @@ func TestConformance(t *testing.T) {
 					tradPerp++
 				}
 			}
-			if tradSpot == 0 || tradPerp == 0 {
+			if tradSpot == 0 || (tradPerp == 0) != noPerps[id] {
 				t.Fatalf("fixture has %d tradable spot / %d tradable perp instruments", tradSpot, tradPerp)
 			}
 
@@ -80,7 +94,9 @@ func TestConformance(t *testing.T) {
 					t.Fatalf("bad perp identity: %+v", p)
 				}
 				if !p.Mark.IsPositive() || p.Bid.IsNegative() || p.Ask.IsNegative() || p.Index.IsNegative() {
-					t.Fatalf("bad perp price: %+v", p)
+					if !(noBulkMark[id] && p.Mark.IsZero() && p.Index.IsPositive()) {
+						t.Fatalf("bad perp price: %+v", p)
+					}
 				}
 				if p.At.IsZero() {
 					t.Fatalf("perp age not set: %+v", p)
@@ -89,7 +105,11 @@ func TestConformance(t *testing.T) {
 					t.Fatalf("perp interval out of range: %+v", p)
 				}
 			}
-			if pct := 100 * len(perps) / tradPerp; pct < 90 {
+			if noPerps[id] {
+				if len(perps) != 0 {
+					t.Fatalf("%s must return no perps, got %d", id, len(perps))
+				}
+			} else if pct := 100 * len(perps) / tradPerp; pct < 90 {
 				t.Fatalf("perp coverage %d%% (%d / %d tradable) < 90%%", pct, len(perps), tradPerp)
 			}
 
@@ -101,7 +121,7 @@ func TestConformance(t *testing.T) {
 				t.Fatal("Networks returned nothing")
 			}
 			for asset, st := range nets {
-				if id != screener.VenueGate && (st.Status != screener.NetworkUnknown || st.Reason != KeyGatedReason) {
+				if !publicNetworks[id] && (st.Status != screener.NetworkUnknown || st.Reason != KeyGatedReason) {
 					t.Fatalf("%s: key-gated venue must answer unknown/%q, got %+v for %s", id, KeyGatedReason, st, asset)
 				}
 			}
@@ -110,8 +130,8 @@ func TestConformance(t *testing.T) {
 			if !f.SpotTakerBps.IsPositive() || !f.PerpTakerBps.IsPositive() {
 				t.Fatalf("fees must be positive: %+v", f)
 			}
-			if f.Verified != (id == screener.VenueBinance) {
-				t.Fatalf("%s Fees().Verified = %v; only Binance's fee page was verified from primary", id, f.Verified)
+			if f.Verified != verifiedFees[id] {
+				t.Fatalf("%s Fees().Verified = %v; want %v (see verifiedFees)", id, f.Verified, verifiedFees[id])
 			}
 			t.Logf("%s: instruments=%d (spot %d / perp %d tradable) quotes=%d perps=%d networks=%d rate_limited=%d",
 				id, len(inst), tradSpot, tradPerp, len(quotes), len(perps), len(nets), c.RateLimited())
@@ -119,8 +139,8 @@ func TestConformance(t *testing.T) {
 	}
 }
 
-// TestRegistry pins the registry to the six target venues and their
-// verification flags.
+// TestRegistry pins the registry to the ten venues (six Tier-1 + four
+// Tier-2, T-075) and their verification flags.
 func TestRegistry(t *testing.T) {
 	reg := Registry()
 	if len(reg) != len(screener.OrderedVenues) {
@@ -130,7 +150,7 @@ func TestRegistry(t *testing.T) {
 		if e.ID != screener.OrderedVenues[i] {
 			t.Fatalf("registry order: %s at %d", e.ID, i)
 		}
-		if e.Verified != (e.ID == screener.VenueBinance) {
+		if e.Verified != verifiedFees[e.ID] {
 			t.Fatalf("%s Verified=%v", e.ID, e.Verified)
 		}
 	}
