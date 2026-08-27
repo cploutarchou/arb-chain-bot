@@ -1230,9 +1230,12 @@ export interface ScreenerSpreadsQuery {
 
 function screenerSpreadsQuery(q: ScreenerSpreadsQuery): string {
   const p = new URLSearchParams();
-  if (q.min_spread_bps !== undefined) p.set("min_spread_bps", String(q.min_spread_bps));
-  if (q.min_liquidity !== undefined) p.set("min_liquidity", String(q.min_liquidity));
-  if (q.min_lifetime_s !== undefined) p.set("min_lifetime_s", String(q.min_lifetime_s));
+  if (q.min_spread_bps !== undefined)
+    p.set("min_spread_bps", String(q.min_spread_bps));
+  if (q.min_liquidity !== undefined)
+    p.set("min_liquidity", String(q.min_liquidity));
+  if (q.min_lifetime_s !== undefined)
+    p.set("min_lifetime_s", String(q.min_lifetime_s));
   if (q.buy?.length) p.set("buy", q.buy.join(","));
   if (q.sell?.length) p.set("sell", q.sell.join(","));
   if (q.quote) p.set("quote", q.quote);
@@ -1503,21 +1506,28 @@ export const api = {
   screener: {
     status: () => get<ScreenerStatusView>("/api/v1/screener/status"),
     spreads: (q: ScreenerSpreadsQuery) =>
-      get<ScreenerSpreadsResponse>(`/api/v1/screener/spreads?${screenerSpreadsQuery(q)}`),
+      get<ScreenerSpreadsResponse>(
+        `/api/v1/screener/spreads?${screenerSpreadsQuery(q)}`,
+      ),
     perpetuals: (q: ScreenerPerpsQuery) => {
       const p = new URLSearchParams();
       if (q.venue) p.set("venue", q.venue);
       if (q.base) p.set("base", q.base);
-      if (q.min_carry_apr !== undefined) p.set("min_carry_apr", String(q.min_carry_apr));
+      if (q.min_carry_apr !== undefined)
+        p.set("min_carry_apr", String(q.min_carry_apr));
       if (q.limit !== undefined) p.set("limit", String(q.limit));
-      return get<ScreenerPerpsResponse>(`/api/v1/screener/perpetuals?${p.toString()}`);
+      return get<ScreenerPerpsResponse>(
+        `/api/v1/screener/perpetuals?${p.toString()}`,
+      );
     },
     funding: (base: string, venues: string[] = [], hours = 72) => {
       const p = new URLSearchParams();
       if (base) p.set("base", base);
       if (venues.length) p.set("venues", venues.join(","));
       p.set("hours", String(hours));
-      return get<ScreenerFundingResponse>(`/api/v1/screener/funding?${p.toString()}`);
+      return get<ScreenerFundingResponse>(
+        `/api/v1/screener/funding?${p.toString()}`,
+      );
     },
     calculator: (req: ScreenerCalculatorRequest) =>
       post<ScreenerCalculatorResult>("/api/v1/screener/calculator", req),
@@ -1532,25 +1542,49 @@ export const api = {
         }),
     },
     rules: {
-      list: async () => (await get<{ rules: ScreenerRule[] | null }>("/api/v1/screener/rules")).rules ?? [],
-      create: (rule: ScreenerRuleInput) => post<{ rule: ScreenerRule }>("/api/v1/screener/rules", rule).then((r) => r.rule),
+      list: async () =>
+        (await get<{ rules: ScreenerRule[] | null }>("/api/v1/screener/rules"))
+          .rules ?? [],
+      create: (rule: ScreenerRuleInput) =>
+        post<{ rule: ScreenerRule }>("/api/v1/screener/rules", rule).then(
+          (r) => r.rule,
+        ),
       update: (id: string, rule: ScreenerRuleInput) =>
-        put<{ rule: ScreenerRule }>(`/api/v1/screener/rules/${encodeURIComponent(id)}`, rule).then((r) => r.rule),
-      remove: (id: string) => del<{ status: string }>(`/api/v1/screener/rules/${encodeURIComponent(id)}`),
+        put<{ rule: ScreenerRule }>(
+          `/api/v1/screener/rules/${encodeURIComponent(id)}`,
+          rule,
+        ).then((r) => r.rule),
+      remove: (id: string) =>
+        del<{ status: string }>(
+          `/api/v1/screener/rules/${encodeURIComponent(id)}`,
+        ),
     },
     events: (ruleId = "", limit = 100) => {
       const p = new URLSearchParams();
       if (ruleId) p.set("rule_id", ruleId);
       p.set("limit", String(limit));
-      return get<{ events: ScreenerEvent[] | null }>(`/api/v1/screener/events?${p.toString()}`);
+      return get<{ events: ScreenerEvent[] | null }>(
+        `/api/v1/screener/events?${p.toString()}`,
+      );
     },
-    autoPaper: () => get<ScreenerAutoPaperResponse>("/api/v1/screener/auto-paper"),
+    autoPaper: () =>
+      get<ScreenerAutoPaperResponse>("/api/v1/screener/auto-paper"),
     templates: {
       list: async () =>
-        (await get<{ templates: ScreenerTemplate[] | null }>("/api/v1/screener/templates")).templates ?? [],
+        (
+          await get<{ templates: ScreenerTemplate[] | null }>(
+            "/api/v1/screener/templates",
+          )
+        ).templates ?? [],
       create: (name: string, filters: ScreenerFilterSet) =>
-        post<{ template: ScreenerTemplate }>("/api/v1/screener/templates", { name, filters }).then((r) => r.template),
-      remove: (id: string) => del<{ status: string }>(`/api/v1/screener/templates/${encodeURIComponent(id)}`),
+        post<{ template: ScreenerTemplate }>("/api/v1/screener/templates", {
+          name,
+          filters,
+        }).then((r) => r.template),
+      remove: (id: string) =>
+        del<{ status: string }>(
+          `/api/v1/screener/templates/${encodeURIComponent(id)}`,
+        ),
     },
   },
   opportunities: {

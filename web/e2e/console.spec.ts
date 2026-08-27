@@ -8,6 +8,7 @@ import { test, expect, type Page } from "@playwright/test";
 // engine-dependent pages must show their truthful degraded states.
 
 const ADMIN = { email: "admin@e2e.test", password: "e2e-password-123" };
+const OPERATOR = { email: "operator@e2e.test", password: "e2e-operator-123" };
 
 async function login(
   page: Page,
@@ -601,4 +602,136 @@ test("sign out returns to login", async ({ page }) => {
   await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
+});
+
+// ---- Scanner Suite (T-065..T-072) -----------------------------------------
+// Screener, Perpetuals, Funding, Calculator, Alert Rules, Auto-Paper. The
+// backend for this suite is being written in parallel — every page must
+// show real data OR the honest "Screener backend not available in this
+// build" notice, never a crash, until it lands.
+
+// ensureOperatorAccount creates a fixed OPERATOR test user via the real
+// Users & roles UI (ADMIN-only) if it doesn't already exist yet, then
+// signs out — idempotent across repeated CI runs against the same DB.
+async function ensureOperatorAccount(page: Page) {
+  await login(page);
+  await page.goto("/settings#users");
+  await page.getByRole("heading", { name: "Users & roles" }).waitFor();
+  const already = await page.getByText(OPERATOR.email).count();
+  if (already === 0) {
+    await page.getByLabel("Email").fill(OPERATOR.email);
+    await page.getByLabel("Role").selectOption("OPERATOR");
+    await page.getByLabel("Password", { exact: true }).fill(OPERATOR.password);
+    await page.getByLabel("Confirm password").fill(OPERATOR.password);
+    await page.getByRole("button", { name: "Create user" }).click();
+    await expect(page.getByText(OPERATOR.email)).toBeVisible({
+      timeout: 10_000,
+    });
+  }
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.waitForURL("**/login");
+}
+
+test.describe("Scanner Suite", () => {
+  test.beforeAll(async ({ browser }) => {
+    const page = await browser.newPage();
+    await ensureOperatorAccount(page);
+    await page.close();
+  });
+
+  test("nav group renders and every Scanner Suite page loads for an OPERATOR login", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await login(page, OPERATOR.email, OPERATOR.password);
+    await page.goto("/overview");
+    const nav = page.getByRole("navigation");
+    await expect(nav.getByText("Scanner Suite")).toBeVisible();
+    for (const label of [
+      "Screener",
+      "Perpetuals",
+      "Funding",
+      "Calculator",
+      "Alert Rules",
+      "Auto-Paper",
+    ]) {
+      await expect(nav.getByRole("link", { name: label })).toBeVisible();
+    }
+
+    const notAvailable = /Screener backend not available in this build\./;
+    const pages: [string, RegExp][] = [
+      ["/screener", new RegExp(`Screener|${notAvailable.source}`)],
+      ["/perpetuals", new RegExp(`Perpetuals|${notAvailable.source}`)],
+      ["/funding", new RegExp(`Funding|${notAvailable.source}`)],
+      ["/calculator", /Spreads calculator/],
+      ["/scanner-alerts", new RegExp(`Alert Rules|${notAvailable.source}`)],
+      ["/auto-paper", new RegExp(`Auto-Paper|${notAvailable.source}`)],
+    ];
+    for (const [path, marker] of pages) {
+      await page.goto(path);
+      await expect(page.locator("main")).toContainText(marker, {
+        timeout: 10_000,
+      });
+    }
+  });
+
+  test("theme toggle flips data-theme on the document element", async ({
+    page,
+  }) => {
+    await login(page, OPERATOR.email, OPERATOR.password);
+    await page.goto("/overview");
+    // Scoped to the desktop sidebar (<aside>, implicit role
+    // "complementary") — the mobile top bar renders its own instance of
+    // the same toggle, hidden at this (default desktop) viewport but
+    // still present in the DOM, so an unscoped query would match two.
+    const toggle = page
+      .getByRole("complementary")
+      .getByRole("button", { name: /Switch to (light|dark) theme/ });
+    await expect(toggle).toBeVisible();
+    const before = await page.evaluate(() =>
+      document.documentElement.getAttribute("data-theme"),
+    );
+    await toggle.click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.documentElement.getAttribute("data-theme"),
+        ),
+      )
+      .not.toBe(before);
+  });
+
+  test("Alert Rules mutations are hidden for OPERATOR and available for ADMIN", async ({
+    page,
+  }) => {
+    await login(page, OPERATOR.email, OPERATOR.password);
+    await page.goto("/scanner-alerts");
+    await expect(
+      page.getByRole("heading", { name: "Alert Rules" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "New rule…" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Enable" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Disable" })).toHaveCount(0);
+
+    // Sign out lives on Settings (SessionSection), not the shell itself.
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL("**/login");
+
+    await login(page);
+    await page.goto("/scanner-alerts");
+    // ADMIN sees the mutation affordance once real data has loaded; if
+    // the screener backend isn't built into this profile yet, the honest
+    // unavailable notice is the correct thing to see instead — either is
+    // valid, a crash or a silently-empty page is not.
+    await expect(
+      page
+        .getByRole("button", { name: "New rule…" })
+        .or(page.getByText("Screener backend not available in this build.")),
+    ).toBeVisible({ timeout: 10_000 });
+  });
 });
