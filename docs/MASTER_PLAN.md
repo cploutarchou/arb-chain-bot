@@ -388,8 +388,14 @@ data-flow,security,risk}.md`.
   gross deviation above ~−1 bps in 12 h of live scanning (8.6k
   `RISK_MIN_EDGE` rejections, best net −41 bps against 30 bps fees +
   10 bps buffers); less-liquid intermediates and fiat-quoted pairs are
-  where deviations, if any, should appear. Session id and campaign
-  report follow in docs/campaigns/ once ≥ 6 h are captured.
+  where deviations, if any, should appear. Session
+  `01M11K202ZHBEZKPD8QXBPF6YJ` (from 12:27 UTC). The operator cancelled
+  the scheduled 18:37 UTC campaign step on 2026-08-27 to prioritise the
+  Scanner Suite (Phase 22); the recording keeps running until the next
+  rebuild and can be campaigned later. Live scanning over the widened
+  universe (3 h): 28k `RISK_MIN_EDGE` rejections, best net edge −36 bps
+  (≈ +4 bps gross before 40 bps of fees and buffers), 0 of 144 triangles
+  ever above −20 bps net.
 - campaign 1 (2026-08-27): recording `01M0ZPK16CXTR91MMJQ60HC2K3`
   (Binance, BTCUSDT/ETHUSDT/ETHBTC/BTCUSDC/ETHUSDC/USDCUSDT, starting
   assets USDT/USDC; 2026-08-26 18:51:15 → 20:22:02 UTC, **1 h 31 m —
@@ -1253,6 +1259,59 @@ data-flow,security,risk}.md`.
   unavailable venue returns `400 connector_unavailable` naming the task.
 
 ---
+
+## Phase 22 — Scanner Suite (cross-venue screener, perpetuals/funding, alerts, auto-paper)
+
+Design: docs/design/scanner-suite.md (restates the operator's request as a
+Claude Code command, §0). Public market data only; automatic execution is
+PAPER only; the vault's exchange credential group stays unread.
+
+### T-065 Screener endpoint research
+- status: IN_PROGRESS (2026-08-27) — docs/research/screener-endpoints.md:
+  public bulk spot tickers, instrument lists, USDT-M perp tickers,
+  funding (rate, interval, history), currency/chain status (public vs
+  key-gated), rate limits, regular-tier fees for Binance, OKX, Bybit,
+  Bitget, Gate, MEXC. Acceptance: every field VERIFIED with URL + access
+  date or marked UNVERIFIED.
+
+### T-066 Venue collectors (`internal/screener/venue`)
+- status: TODO. One collector per venue polling the bulk endpoints
+  under a per-venue weight/rate gate; normalised spot quotes and perp
+  rows; data-age tracking. Acceptance: ≥ 90 % of tradable spot pairs per
+  poll, 30-minute soak with zero 429/418, fixture unit tests per venue.
+
+### T-067 Spreads, basis and carry math
+- status: TODO. Net cross-venue spread (both taker fees), liquidity
+  (top-of-book), lifetime tracking; spot↔perp basis, funding carry
+  annualised net of fees. Decimal only in money paths; golden tests.
+
+### T-068 Screener settings, API, RBAC
+- status: TODO. Versioned DB document (venues on/off, poll interval,
+  fee table, liquidity floor, paper balances per venue), `screener:view`
+  (OPERATOR+) / `screener:config` (ADMIN), CSRF, audit, parent_version;
+  read models for the console; migration 000010.
+
+### T-069 Console pages (Scanner Suite group)
+- status: TODO. `/screener`, `/perpetuals`, `/funding`, `/calculator`,
+  `/scanner-alerts`, `/auto-paper`; stats strip, filter card with saved
+  templates, dense auto-refreshing virtualised table, row expand with
+  per-side quotes; light theme in the design system; e2e coverage.
+
+### T-070 Alert rules → Telegram
+- status: TODO. Persisted rules (spread/lifetime/liquidity/venues/
+  funding thresholds), evaluation on each poll, cooldown + dedup through
+  `internal/notification`, audit on rule changes.
+
+### T-071 Automatic paper execution
+- status: TODO. Rule opt-in; CrossVenueSpot (inventory on both venues,
+  no transfers), Carry (spot long + perp short with funding accrual and
+  maintenance-margin stop), Futures-Futures; paper cycles tagged by
+  strategy so PnL/Reports break them down; 24 h soak report filed under
+  docs/campaigns/screener/. LIVE stays disabled.
+
+### T-072 Skill, agent and deployment docs
+- status: DONE (2026-08-27) — `.claude/skills/scanner-suite/SKILL.md`,
+  `.claude/agents/screener-engineer.md`; deployment notes follow T-068.
 
 ## Status log
 
