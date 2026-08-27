@@ -180,7 +180,9 @@ exchanges.md): Kraken Tier 1 fees are 0.40 %/0.80 % since 2026-07-09 (3-leg
 gap test); Binance WS allows 5 incoming client messages/s/connection;
 Binance's `account/commission.discount` is a multiplier, not a rebate
 fraction; no Regular-tier zero-fee promo pair exists in a liquid Binance
-triangle as of 2026-08-26 (KGST/USDT only, to 2026-08-31); OKX's
+triangle as of 2026-08-26 (KGST/USDT only, to 2026-08-31) — the live
+FDUSD program is zero-maker only, taker at standard rates (browser-
+verified 2026-08-27 on binance.com/en/fee/tradingPromote); OKX's
 `books-rpi` channel, four-field size caps, price bands and unified-USD quote
 grouping are new since round 1.
 
