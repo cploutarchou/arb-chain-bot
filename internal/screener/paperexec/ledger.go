@@ -52,6 +52,10 @@ const (
 	SkipOpenPosition   = "OPEN_POSITION"
 	SkipSettlementNear = "SETTLEMENT_NEAR"
 	SkipPartialLeg     = "partial_leg"
+	// Shared with the alert evaluator (screener/guard.go): a lane the
+	// asset-identity guard refuses, or one with no top-of-book size.
+	SkipSuspectMismatch  = screener.SkipSuspectMismatch
+	SkipLiquidityUnknown = screener.SkipLiquidityUnknown
 )
 
 // Fill is one simulated leg.

@@ -90,8 +90,9 @@ func (e *Evaluator) inputs() Inputs {
 			}
 			return vs.PerpTakerBps, true
 		},
-		FundingHistory: e.svc.Funding,
-		PollInterval:   poll,
+		FundingHistory:        e.svc.Funding,
+		PollInterval:          poll,
+		MaxPlausibleSpreadBps: snap.Settings.EffectiveMaxPlausibleSpreadBps(),
 	}
 }
 

@@ -37,7 +37,18 @@ type SpreadRow struct {
 
 	SpreadBpsGross decimal.Decimal `json:"spread_bps_gross"`
 	SpreadBpsNet   decimal.Decimal `json:"spread_bps_net"`
-	LiquidityQuote decimal.Decimal `json:"liquidity_quote"`
+	// LiquidityQuote is min(ask notional, bid notional) in quote, or
+	// null when either side's collector publishes no top-of-book size
+	// (LiquidityUnknown=true; Gate's bulk ticker) — never a zero that
+	// looks like a measured empty book.
+	LiquidityQuote   *decimal.Decimal `json:"liquidity_quote"`
+	LiquidityUnknown bool             `json:"liquidity_unknown"`
+	// Suspect marks a lane the asset-identity guard (guard.go) refuses:
+	// the two venues' prices cannot be the same asset. Suspect rows are
+	// excluded unless the request asks for them (include_suspect=1) and
+	// are never alerted on or executed.
+	Suspect       bool   `json:"suspect"`
+	SuspectReason string `json:"suspect_reason,omitempty"`
 
 	LifetimeS   int64      `json:"lifetime_s"`
 	FirstSeenAt *time.Time `json:"first_seen_at,omitempty"`
@@ -69,10 +80,26 @@ type SpreadFilters struct {
 	MinLifetimeS      int64
 	BuyVenues         map[Venue]bool // nil/empty = no restriction
 	SellVenues        map[Venue]bool // nil/empty = no restriction
-	Quote             string         // "" = no restriction
-	BasesAllow        map[string]bool
-	BasesDeny         map[string]bool
-	Limit             int // <=0 = default (200), capped at 500
+	Quote             string         // "" = no restriction (single quote; see Quotes)
+	// Quotes restricts to a set of quote assets (?quote=USDT,USDC).
+	// USDT / USDC / FDUSD / USD are distinct quotes and are NEVER
+	// merged: a row's quote is exactly the venue's quote asset.
+	Quotes     map[string]bool
+	BasesAllow map[string]bool
+	BasesDeny  map[string]bool
+	Limit      int // <=0 = default (200), capped at 500
+
+	// IncludeSuspect keeps rows the asset-identity guard flagged
+	// (default false: excluded, counted in SpreadsResult.ExcludedSuspect).
+	IncludeSuspect bool
+	// IncludeUnknownLiquidity keeps rows whose liquidity is unknown
+	// (default false: excluded regardless of MinLiquidityQuote, counted
+	// in SpreadsResult.ExcludedLiquidityUnknown). A kept row still has
+	// liquidity_quote null — it is never compared with MinLiquidityQuote.
+	IncludeUnknownLiquidity bool
+	// MaxPlausibleSpreadBps is settings.max_plausible_spread_bps; zero
+	// means DefaultMaxPlausibleSpreadBps.
+	MaxPlausibleSpreadBps decimal.Decimal
 }
 
 const (
@@ -86,6 +113,11 @@ const (
 type SpreadsResult struct {
 	Rows  []SpreadRow
 	Total int
+	// Excluded* count lanes the guards removed before the filters
+	// (0 when the matching Include* flag is set) so the caller can say
+	// "N lanes hidden" instead of silently showing fewer rows.
+	ExcludedSuspect          int
+	ExcludedLiquidityUnknown int
 }
 
 // LifetimeTracker tracks, per (base, quote, buy_venue, sell_venue) lane,
@@ -154,8 +186,12 @@ type NetworkLookup func(v Venue, asset string) NetworkStatus
 // untracked) for a pure, stateless computation.
 func ComputeSpreads(book *Book, fees VenueFeeLookup, tracker *LifetimeTracker, netLookup NetworkLookup, now time.Time, f SpreadFilters) SpreadsResult {
 	var all []SpreadRow
+	var excludedSuspect, excludedUnknown int
 	for _, pair := range book.Pairs() {
 		if f.Quote != "" && pair.Quote != f.Quote {
+			continue
+		}
+		if len(f.Quotes) > 0 && !f.Quotes[pair.Quote] {
 			continue
 		}
 		if len(f.BasesAllow) > 0 && !f.BasesAllow[pair.Base] {
@@ -199,7 +235,26 @@ func ComputeSpreads(book *Book, fees VenueFeeLookup, tracker *LifetimeTracker, n
 					continue
 				}
 				row := buildSpreadRow(pair, buyVenue, sellVenue, buyQ, sellQ, buyFeeBps, sellFeeBps, now)
-				if tracker != nil {
+				// Task 1a/1b: the shared guard decides suspect / unknown
+				// liquidity BEFORE any filter or sort, so a mismatched
+				// ticker can never reach the top of the table.
+				g := GuardLane(buyQ, sellQ, byVenue, f.MaxPlausibleSpreadBps)
+				row.Suspect, row.SuspectReason = g.Suspect, g.SuspectReason
+				if g.LiquidityUnknown {
+					row.LiquidityUnknown, row.LiquidityQuote = true, nil
+				}
+				if row.Suspect && !f.IncludeSuspect {
+					excludedSuspect++
+					continue
+				}
+				if row.LiquidityUnknown && !f.IncludeUnknownLiquidity {
+					excludedUnknown++
+					continue
+				}
+				// A suspect lane's lifetime is not tracked: "seconds since
+				// the spread first exceeded the threshold" is meaningless
+				// for a spread that is not between the same asset.
+				if tracker != nil && !row.Suspect {
 					key := SpreadKey{Base: pair.Base, Quote: pair.Quote, BuyVenue: buyVenue, SellVenue: sellVenue}
 					fs, life := tracker.Observe(key, row.SpreadBpsNet, now)
 					row.LifetimeS = life
@@ -226,7 +281,7 @@ func ComputeSpreads(book *Book, fees VenueFeeLookup, tracker *LifetimeTracker, n
 		if f.MinSpreadBpsNet != nil && row.SpreadBpsNet.LessThan(*f.MinSpreadBpsNet) {
 			continue
 		}
-		if f.MinLiquidityQuote != nil && row.LiquidityQuote.LessThan(*f.MinLiquidityQuote) {
+		if f.MinLiquidityQuote != nil && row.LiquidityQuote != nil && row.LiquidityQuote.LessThan(*f.MinLiquidityQuote) {
 			continue
 		}
 		if f.MinLifetimeS > 0 && row.LifetimeS < f.MinLifetimeS {
@@ -250,7 +305,7 @@ func ComputeSpreads(book *Book, fees VenueFeeLookup, tracker *LifetimeTracker, n
 	if len(filtered) > limit {
 		filtered = filtered[:limit]
 	}
-	return SpreadsResult{Rows: filtered, Total: total}
+	return SpreadsResult{Rows: filtered, Total: total, ExcludedSuspect: excludedSuspect, ExcludedLiquidityUnknown: excludedUnknown}
 }
 
 func buildSpreadRow(pair PairKey, buyVenue, sellVenue Venue, buyQ, sellQ Quote, buyFeeBps, sellFeeBps decimal.Decimal, now time.Time) SpreadRow {
@@ -277,7 +332,7 @@ func buildSpreadRow(pair PairKey, buyVenue, sellVenue Venue, buyQ, sellQ Quote, 
 		BuyAsk: buyQ.Ask, BuyAskQty: buyQ.AskQty,
 		SellBid: sellQ.Bid, SellBidQty: sellQ.BidQty,
 		SpreadBpsGross: grossBps, SpreadBpsNet: netBps,
-		LiquidityQuote: liquidity,
+		LiquidityQuote: &liquidity,
 		BuyAgeMs:       ageMs(buyQ.At, now),
 		SellAgeMs:      ageMs(sellQ.At, now),
 		BuyFeeBps:      buyFeeBps, SellFeeBps: sellFeeBps,

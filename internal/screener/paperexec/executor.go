@@ -138,6 +138,10 @@ func (x *Executor) pollInterval() time.Duration {
 	return time.Duration(s) * time.Second
 }
 
+func (x *Executor) maxPlausibleSpreadBps() decimal.Decimal {
+	return x.svc.Current().Settings.EffectiveMaxPlausibleSpreadBps()
+}
+
 func (x *Executor) spotFee(v screener.Venue) (decimal.Decimal, bool) {
 	vs, ok := x.svc.Current().Settings.Venues[v]
 	if !ok || !vs.Enabled {
