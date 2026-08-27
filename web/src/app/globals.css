@@ -1,9 +1,30 @@
 @import "tailwindcss";
 
-/* Dark-first operations-console theme tokens (resources/client-area.md).
-   Dark is the default (BL-24); a light-mode token set follows under
-   prefers-color-scheme so light mode is usable, not merely "not broken". */
+/* Operations-console theme tokens (resources/client-area.md), Scanner
+   Suite light-theme pass (docs/design/scanner-suite.md §5). :root carries
+   the light set as the CSS fallback (no JS / no stored preference / OS
+   light); an explicit toggle persists data-theme in localStorage
+   (ConsoleShell's useThemeToggle) and an OS dark preference applies the
+   dark set automatically unless the operator explicitly picked light —
+   the :not([data-theme="light"]) guard is what makes that override work.
+   Both blocks below carry the FULL 11-token set so neither theme is ever
+   missing a variable the other defines. */
 :root {
+  --bg: #f5f6f8;
+  --bg-panel: #ffffff;
+  --bg-raised: #eceef2;
+  --border: #d7dbe3;
+  --text: #171a21;
+  --text-dim: #5b6270;
+  --accent: #2f66d0;
+  --ok: #1f8f52;
+  --warn: #a8650f;
+  --high: #b8541f;
+  --critical: #c8323a;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
   --bg: #0b0e14;
   --bg-panel: #11151f;
   --bg-raised: #171c29;
@@ -15,28 +36,23 @@
   --warn: #e6a23c;
   --high: #f0713a;
   --critical: #e5484d;
+  color-scheme: dark;
 }
 
-/* color-scheme: dark light (not just "dark") — otherwise the browser
-   forces dark-themed native form controls (checkboxes, date pickers)
-   even once the light token block below takes effect. */
-html {
-  color-scheme: dark light;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f5f6f8;
-    --bg-panel: #ffffff;
-    --bg-raised: #eceef2;
-    --border: #d7dbe3;
-    --text: #171a21;
-    --text-dim: #5b6270;
-    --accent: #2f66d0;
-    --ok: #1f8f52;
-    --warn: #a8650f;
-    --high: #b8541f;
-    --critical: #c8323a;
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b0e14;
+    --bg-panel: #11151f;
+    --bg-raised: #171c29;
+    --border: #232a3b;
+    --text: #d7dce7;
+    --text-dim: #8b93a7;
+    --accent: #4f8cff;
+    --ok: #2fbf71;
+    --warn: #e6a23c;
+    --high: #f0713a;
+    --critical: #e5484d;
+    color-scheme: dark;
   }
 }
 
