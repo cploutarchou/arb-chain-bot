@@ -107,7 +107,10 @@ export function SecretsSection() {
       const info = await api.secrets.delete(removeDialog.name);
       setMsg({
         ok: true,
-        text: `${info.label} removed; falls back to the environment if one is set there.`,
+        text:
+          info.group === "exchange"
+            ? `${info.label} removed.`
+            : `${info.label} removed; falls back to the environment if one is set there.`,
       });
       setRemoveDialog(null);
       setRefresh((n) => n + 1);
@@ -283,9 +286,11 @@ export function SecretsSection() {
           body={
             <div>
               <p>
-                This deletes the stored value; the secret falls back to its
-                environment variable, if any is set there. Applies:{" "}
-                {appliesLabel(removeDialog.applies)}.
+                This deletes the stored value
+                {removeDialog.group === "exchange"
+                  ? "."
+                  : "; the secret falls back to its environment variable, if any is set there."}{" "}
+                Applies: {appliesLabel(removeDialog.applies)}.
               </p>
               {err && <p className="mt-2 text-[var(--critical)]">{err}</p>}
             </div>

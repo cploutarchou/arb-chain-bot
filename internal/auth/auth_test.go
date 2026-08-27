@@ -158,11 +158,12 @@ func TestRBACMatrix(t *testing.T) {
 	viewerAllowed := []Permission{
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
 		PermViewRisk, PermViewSystem, PermReportView,
+		PermScreenerView,
 	}
 	viewerDenied := []Permission{
 		PermViewAudit, PermPaperControl, PermPaperReset, PermScannerConfig,
 		PermAIApprove, PermAlertAck, PermReportGenerate, PermRiskConfig,
-		PermExchangeConfig, PermUserManage, PermSystemConfig,
+		PermExchangeConfig, PermUserManage, PermSystemConfig, PermScreenerConfig,
 	}
 	for _, p := range viewerAllowed {
 		if !Can(RoleViewer, p) {
@@ -176,6 +177,7 @@ func TestRBACMatrix(t *testing.T) {
 	}
 	operatorDenied := []Permission{
 		PermPaperReset, PermRiskConfig, PermExchangeConfig, PermUserManage, PermSystemConfig,
+		PermScreenerConfig,
 	}
 	for _, p := range operatorDenied {
 		if Can(RoleOperator, p) {
@@ -183,7 +185,7 @@ func TestRBACMatrix(t *testing.T) {
 		}
 	}
 	if !Can(RoleOperator, PermPaperControl) || !Can(RoleOperator, PermAIApprove) ||
-		!Can(RoleOperator, PermReportGenerate) {
+		!Can(RoleOperator, PermReportGenerate) || !Can(RoleOperator, PermScreenerView) {
 		t.Fatal("operator missing core permissions")
 	}
 	all := append(append([]Permission{}, viewerAllowed...), viewerDenied...)

@@ -27,6 +27,16 @@ const (
 	PermExchangeConfig Permission = "exchange:config" // keys/markets/fees
 	PermUserManage     Permission = "users:manage"
 	PermSystemConfig   Permission = "system:config"
+
+	// PermScreenerView/PermScreenerConfig gate the Scanner Suite (T-067/
+	// T-068, docs/design/scanner-suite.md §7): reads (spreads,
+	// perpetuals, funding, calculator, rules/events/templates lists) need
+	// PermScreenerView (VIEWER+); every mutation (settings, rules,
+	// templates) needs PermScreenerConfig (ADMIN only) — distinct from
+	// PermScannerConfig above, which gates the triangular-arbitrage
+	// STRATEGY config, a different subsystem.
+	PermScreenerView   Permission = "screener:view"
+	PermScreenerConfig Permission = "screener:config"
 )
 
 // matrix maps each role to its permissions. VIEWER: read-only. OPERATOR:
@@ -36,12 +46,14 @@ var matrix = map[Role]map[Permission]bool{
 	RoleViewer: setOf(
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
 		PermViewRisk, PermViewSystem, PermReportView,
+		PermScreenerView,
 	),
 	RoleOperator: setOf(
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
 		PermViewRisk, PermViewSystem, PermReportView, PermViewAudit,
 		PermPaperControl, PermScannerConfig, PermAIApprove, PermAlertAck,
 		PermReportGenerate, PermRecordControl, PermCampaignRun,
+		PermScreenerView,
 	),
 	RoleAdmin: setOf(
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
@@ -50,6 +62,7 @@ var matrix = map[Role]map[Permission]bool{
 		PermReportGenerate, PermRecordControl, PermCampaignRun,
 		PermPaperReset, PermRiskConfig,
 		PermExchangeConfig, PermUserManage, PermSystemConfig,
+		PermScreenerView, PermScreenerConfig,
 	),
 }
 
