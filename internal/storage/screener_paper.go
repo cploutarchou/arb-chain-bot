@@ -11,6 +11,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
 // CloseEvent / SetEventExecution / CountEvents implement
@@ -42,12 +43,9 @@ func (c *ScreenerEvents) SetEventExecution(ctx context.Context, id, paperExecuti
 
 func (c *ScreenerEvents) CountEvents(ctx context.Context, ruleID string) (int64, error) {
 	var n int64
-	var err error
-	if ruleID == "" {
-		err = c.s.Pool.QueryRow(ctx, `SELECT count(*) FROM screener_events`).Scan(&n)
-	} else {
-		err = c.s.Pool.QueryRow(ctx, `SELECT count(*) FROM screener_events WHERE rule_id = $1`, ruleID).Scan(&n)
-	}
+	where, args := orgFilter(ctx, "org_id", 2)
+	err := c.s.Pool.QueryRow(ctx, `SELECT count(*) FROM screener_events WHERE ($1 = '' OR rule_id = $1)`+where,
+		append([]any{ruleID}, args...)...).Scan(&n)
 	return n, err
 }
 
@@ -62,7 +60,8 @@ func (s *Store) ScreenerPaper() *ScreenerPaper { return &ScreenerPaper{s: s} }
 var _ paperexec.Ledger = (*ScreenerPaper)(nil)
 
 func (c *ScreenerPaper) ListBalances(ctx context.Context) ([]screener.PaperBalance, error) {
-	rows, err := c.s.Pool.Query(ctx, `SELECT venue, asset, balance, updated_at FROM screener_paper_balances ORDER BY venue, asset`)
+	where, args := orgFilter(ctx, "org_id", 1)
+	rows, err := c.s.Pool.Query(ctx, `SELECT venue, asset, balance, updated_at FROM screener_paper_balances WHERE TRUE`+where+` ORDER BY venue, asset`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -82,10 +81,10 @@ func (c *ScreenerPaper) ListBalances(ctx context.Context) ([]screener.PaperBalan
 
 func (c *ScreenerPaper) UpsertBalance(ctx context.Context, venue screener.Venue, asset string, balance decimal.Decimal, at time.Time) error {
 	_, err := c.s.Pool.Exec(ctx, `
-		INSERT INTO screener_paper_balances (venue, asset, balance, updated_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (venue, asset) DO UPDATE SET balance = EXCLUDED.balance, updated_at = EXCLUDED.updated_at`,
-		string(venue), asset, balance, at)
+		INSERT INTO screener_paper_balances (venue, asset, balance, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (org_id, venue, asset) DO UPDATE SET balance = EXCLUDED.balance, updated_at = EXCLUDED.updated_at`,
+		string(venue), asset, balance, at, tenancy.OrgOrPlatform(ctx))
 	return err
 }
 
@@ -100,11 +99,12 @@ func (c *ScreenerPaper) InsertPosition(ctx context.Context, p paperexec.Position
 	_, err = c.s.Pool.Exec(ctx, `
 		INSERT INTO screener_paper_positions
 			(id, rule_id, event_id, strategy, base, quote, venue_a, venue_b, qty, open_payload,
-			 opened_at, closed_at, pnl_quote, funding_quote, status, skipped_reason)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			 opened_at, closed_at, pnl_quote, funding_quote, status, skipped_reason, org_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+		        COALESCE((SELECT org_id FROM screener_rules WHERE id = $2), $17))
 		ON CONFLICT (id) DO NOTHING`,
 		p.ID, p.RuleID, nullStr(p.EventID), string(p.Strategy), p.Base, p.Quote, string(p.VenueA), string(p.VenueB),
-		p.Qty, payload, p.OpenedAt, p.ClosedAt, p.PnLQuote, p.FundingQuote, p.Status, nullStr(p.SkippedReason))
+		p.Qty, payload, p.OpenedAt, p.ClosedAt, p.PnLQuote, p.FundingQuote, p.Status, nullStr(p.SkippedReason), tenancy.OrgOrPlatform(ctx))
 	return err
 }
 
@@ -132,12 +132,13 @@ func (c *ScreenerPaper) ListPositions(ctx context.Context, ruleID, status string
 	if limit <= 0 || limit > 5000 {
 		limit = 5000
 	}
+	where, args := orgFilter(ctx, "org_id", 4)
 	rows, err := c.s.Pool.Query(ctx, `
 		SELECT id, rule_id, event_id, strategy, base, quote, venue_a, venue_b, qty, open_payload,
 		       opened_at, closed_at, pnl_quote, funding_quote, status, skipped_reason
 		FROM screener_paper_positions
-		WHERE ($1 = '' OR rule_id = $1) AND ($2 = '' OR status = $2)
-		ORDER BY opened_at DESC, id DESC LIMIT $3`, ruleID, status, limit)
+		WHERE ($1 = '' OR rule_id = $1) AND ($2 = '' OR status = $2)`+where+`
+		ORDER BY opened_at DESC, id DESC LIMIT $3`, append([]any{ruleID, status, limit}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -194,11 +195,12 @@ func (c *ScreenerPaper) InsertExecution(ctx context.Context, e paperexec.Executi
 	_, err = c.s.Pool.Exec(ctx, `
 		INSERT INTO screener_paper_executions
 			(id, position_id, rule_id, event_id, strategy, kind, base, quote, venue_a, venue_b,
-			 fills, fees_quote, slip_allow_bps, realised_slip_bps, pnl_quote, payload, at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			 fills, fees_quote, slip_allow_bps, realised_slip_bps, pnl_quote, payload, at, org_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+		        COALESCE((SELECT org_id FROM screener_rules WHERE id = $3), $18))
 		ON CONFLICT (id) DO NOTHING`,
 		e.ID, nullStr(e.PositionID), e.RuleID, nullStr(e.EventID), string(e.Strategy), e.Kind, e.Base, e.Quote,
-		string(e.VenueA), string(e.VenueB), fills, e.FeesQuote, e.SlipAllowBps, realised, e.PnLQuote, payload, e.At)
+		string(e.VenueA), string(e.VenueB), fills, e.FeesQuote, e.SlipAllowBps, realised, e.PnLQuote, payload, e.At, tenancy.OrgOrPlatform(ctx))
 	return err
 }
 
@@ -217,14 +219,15 @@ func (c *ScreenerPaper) ListExecutions(ctx context.Context, ruleID string, limit
 	if limit <= 0 || limit > 20000 {
 		limit = 20000
 	}
+	where, args := orgFilter(ctx, "org_id", 3)
 	// Newest-first LIMIT, then reversed so callers get oldest first
 	// (FIFO matching) over the most recent window.
 	rows, err := c.s.Pool.Query(ctx, `
 		SELECT id, position_id, rule_id, event_id, strategy, kind, base, quote, venue_a, venue_b,
 		       fills, fees_quote, slip_allow_bps, realised_slip_bps, pnl_quote, payload, at
 		FROM screener_paper_executions
-		WHERE ($1 = '' OR rule_id = $1)
-		ORDER BY at DESC, id DESC LIMIT $2`, ruleID, limit)
+		WHERE ($1 = '' OR rule_id = $1)`+where+`
+		ORDER BY at DESC, id DESC LIMIT $2`, append([]any{ruleID, limit}, args...)...)
 	if err != nil {
 		return nil, err
 	}

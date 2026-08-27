@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
 // AuthStore implements auth.UserStore and auth.SessionStore over
@@ -25,11 +26,11 @@ var (
 
 func (a *AuthStore) UserByEmail(ctx context.Context, email string) (auth.User, error) {
 	row := a.s.Pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, status = 'disabled'
+		SELECT id, email, password_hash, role, status = 'disabled', platform_admin
 		FROM users WHERE email = $1`, email)
 	var u auth.User
 	var role string
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &role, &u.Disabled); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &role, &u.Disabled, &u.PlatformAdmin); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return auth.User{}, auth.ErrUnknownUser
 		}
@@ -45,15 +46,48 @@ func (a *AuthStore) UpsertUser(ctx context.Context, u auth.User) error {
 	if u.Disabled {
 		status = "disabled"
 	}
-	_, err := a.s.Pool.Exec(ctx, `
-		INSERT INTO users (id, email, display_name, password_hash, role, status)
-		VALUES ($1, $2, $2, $3, $4, $5)
+	tx, err := a.s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The bootstrap admin is the operator: platform_admin is set on
+	// insert and left alone on update (the console may have changed
+	// it). A brand-new row joins the platform organisation as OWNER.
+	var id string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO users (id, email, display_name, password_hash, role, status, platform_admin)
+		VALUES ($1, $2, $2, $3, $4, $5, $6)
 		ON CONFLICT (email) DO UPDATE
 		SET password_hash = EXCLUDED.password_hash,
 		    role = EXCLUDED.role,
-		    status = EXCLUDED.status`,
-		u.ID, u.Email, u.PasswordHash, string(u.Role), status)
-	return err
+		    status = EXCLUDED.status
+		RETURNING id`,
+		u.ID, u.Email, u.PasswordHash, string(u.Role), status, u.PlatformAdmin || u.Role == auth.RoleAdmin).Scan(&id)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memberships (org_id, user_id, role)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (org_id, user_id) DO NOTHING`, tenancy.PlatformOrgID, id, string(platformRoleFor(u.Role))); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// platformRoleFor maps the console RBAC role onto the membership role
+// a platform-staff account gets in organisation 1 (migration 000013
+// uses the same mapping for the backfill).
+func platformRoleFor(r auth.Role) tenancy.Role {
+	switch r {
+	case auth.RoleAdmin:
+		return tenancy.RoleOwner
+	case auth.RoleOperator:
+		return tenancy.RoleAdmin
+	default:
+		return tenancy.RoleViewer
+	}
 }
 
 // ListUsers returns every account, oldest first, for the console user
@@ -61,7 +95,7 @@ func (a *AuthStore) UpsertUser(ctx context.Context, u auth.User) error {
 // method never need them.
 func (a *AuthStore) ListUsers(ctx context.Context) ([]auth.User, error) {
 	rows, err := a.s.Pool.Query(ctx, `
-		SELECT id, email, role, status = 'disabled', created_at
+		SELECT id, email, role, status = 'disabled', created_at, platform_admin
 		FROM users ORDER BY created_at ASC, email ASC`)
 	if err != nil {
 		return nil, err
@@ -71,7 +105,7 @@ func (a *AuthStore) ListUsers(ctx context.Context) ([]auth.User, error) {
 	for rows.Next() {
 		var u auth.User
 		var role string
-		if err := rows.Scan(&u.ID, &u.Email, &role, &u.Disabled, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &role, &u.Disabled, &u.CreatedAt, &u.PlatformAdmin); err != nil {
 			return nil, err
 		}
 		u.Role = auth.Role(role)
@@ -85,11 +119,11 @@ func (a *AuthStore) ListUsers(ctx context.Context) ([]auth.User, error) {
 // alone cannot serve them).
 func (a *AuthStore) UserByID(ctx context.Context, id string) (auth.User, error) {
 	row := a.s.Pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, status = 'disabled', created_at
+		SELECT id, email, password_hash, role, status = 'disabled', created_at, platform_admin
 		FROM users WHERE id = $1`, id)
 	var u auth.User
 	var role string
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &role, &u.Disabled, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &role, &u.Disabled, &u.CreatedAt, &u.PlatformAdmin); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return auth.User{}, auth.ErrUnknownUser
 		}
@@ -104,19 +138,35 @@ func (a *AuthStore) UserByID(ctx context.Context, id string) (auth.User, error) 
 // this must never silently overwrite an existing user's credentials or
 // role (that would be a privilege-escalation primitive, not an "invite"
 // action).
+//
+// Accounts created here are the operator's console accounts (the
+// users & roles console is platform-admin only), so they join the
+// platform organisation; platform_admin is granted only to ADMINs,
+// never inferred later. Tenant users are created through the
+// organisation membership routes instead.
 func (a *AuthStore) CreateUser(ctx context.Context, u auth.User) error {
-	tag, err := a.s.Pool.Exec(ctx, `
-		INSERT INTO users (id, email, display_name, password_hash, role, status, created_at)
-		VALUES ($1, $2, $2, $3, $4, 'active', $5)
+	tx, err := a.s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO users (id, email, display_name, password_hash, role, status, created_at, platform_admin)
+		VALUES ($1, $2, $2, $3, $4, 'active', $5, $6)
 		ON CONFLICT (email) DO NOTHING`,
-		u.ID, u.Email, u.PasswordHash, string(u.Role), u.CreatedAt)
+		u.ID, u.Email, u.PasswordHash, string(u.Role), u.CreatedAt, u.PlatformAdmin || u.Role == auth.RoleAdmin)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return auth.ErrDuplicateEmail
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)
+		ON CONFLICT (org_id, user_id) DO NOTHING`, tenancy.PlatformOrgID, u.ID, string(platformRoleFor(u.Role))); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // lastAdminGuardRows locks, in one deterministic order (ORDER BY id),
@@ -262,13 +312,13 @@ func (a *AuthStore) CreateSession(ctx context.Context, sess auth.Session) error 
 func (a *AuthStore) SessionByToken(ctx context.Context, token string) (auth.Session, error) {
 	row := a.s.Pool.QueryRow(ctx, `
 		SELECT s.id, s.user_id, u.role, s.created_at, s.expires_at,
-		       COALESCE(s.revoked_at, 'epoch'::timestamptz)
+		       COALESCE(s.revoked_at, 'epoch'::timestamptz), u.platform_admin
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.id = $1 AND u.status <> 'disabled'`, token)
 	var sess auth.Session
 	var role string
 	var revoked time.Time
-	if err := row.Scan(&sess.Token, &sess.UserID, &role, &sess.CreatedAt, &sess.ExpiresAt, &revoked); err != nil {
+	if err := row.Scan(&sess.Token, &sess.UserID, &role, &sess.CreatedAt, &sess.ExpiresAt, &revoked, &sess.PlatformAdmin); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return auth.Session{}, auth.ErrInvalidSession
 		}

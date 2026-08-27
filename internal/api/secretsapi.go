@@ -70,8 +70,37 @@ func (s *Server) handleSecretsList(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "secrets_failed", "listing secrets failed", correlationID(r))
 		return
 	}
+	// The exchange-credential group exists for the platform operator
+	// only (compliance review 2026-08-27 #1): tenants never see that it
+	// exists, let alone its presence bits.
+	principal, _ := PrincipalFrom(r.Context())
+	if !principal.PlatformAdmin {
+		filtered := make([]secrets.Info, 0, len(list))
+		for _, in := range list {
+			if in.Group != secrets.GroupExchange {
+				filtered = append(filtered, in)
+			}
+		}
+		list = filtered
+	}
 	out["secrets"] = list
 	WriteData(w, http.StatusOK, out)
+}
+
+// exchangeGroupGate refuses a tenant (non-platform-admin) write to an
+// exchange-group secret with 403 platform_admin_required. Unknown names
+// still 404 first, so the gate leaks nothing about the registry.
+func (s *Server) exchangeGroupGate(w http.ResponseWriter, r *http.Request, name string) bool {
+	spec, ok := secrets.Known[name]
+	if !ok || spec.Group != secrets.GroupExchange {
+		return true
+	}
+	principal, _ := PrincipalFrom(r.Context())
+	if principal.PlatformAdmin {
+		return true
+	}
+	WriteError(w, http.StatusForbidden, "platform_admin_required", "exchange credentials are managed by the platform operator only", correlationID(r))
+	return false
 }
 
 func (s *Server) handleSecretPut(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +111,9 @@ func (s *Server) handleSecretPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := secrets.Known[name]; !ok {
 		WriteError(w, http.StatusNotFound, "unknown_secret", "no such secret in the registry", correlationID(r))
+		return
+	}
+	if !s.exchangeGroupGate(w, r, name) {
 		return
 	}
 	// Bounded read into a buffer that is zeroed before the handler
@@ -230,6 +262,9 @@ func (s *Server) handleSecretDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := secrets.Known[name]; !ok {
 		WriteError(w, http.StatusNotFound, "unknown_secret", "no such secret in the registry", correlationID(r))
+		return
+	}
+	if !s.exchangeGroupGate(w, r, name) {
 		return
 	}
 	principal, _ := PrincipalFrom(r.Context())
