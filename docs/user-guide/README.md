@@ -25,7 +25,7 @@ is not a setting, a package or an add-on.
 | [Auto-paper](auto-paper.md) | Automatic simulated execution: what is and is not simulated, skip reasons, the per-rule evidence table, the production gate |
 | [Reports](reports.md) | Nightly paper reports, where the files land, what the gate checklist means (file to be renamed `reports.md`) |
 | [Packages and billing](packages-and-billing.md) | Packages by capability, trial, upgrades and downgrades, past-due read-only |
-| [Venues](venues.md) | The ten venues, which fees are verified, what each venue cannot publish |
+| [Venues](venues.md) | The fifteen venues, which fees are verified, what each venue cannot publish |
 
 Operators: see also `docs/runbooks/screener-collectors.md` (rate limits,
 self-healing restarts, 418/403/510 handling) and `docs/deployment.md`

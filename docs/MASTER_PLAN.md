@@ -1318,7 +1318,7 @@ PAPER only; the vault's exchange credential group stays unread.
 ### Phase 23 Venue breadth
 - T-073 `Collector` interface + conformance test + venue registry (verified flag, fee defaults). TODO.
 - T-074 Tier-1 venues via public bulk tickers: Binance, OKX, Bybit, Bitget, Gate, MEXC (from T-065/T-066). TODO.
-- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE and ENABLED BY DEFAULT (30-min live soak 2026-08-27, all ten venues, poll 5 s: kucoin 295 polls 1006 spot/664 perps avg 1104 ms max 3346; htx 197 polls 600/301 avg 4145 max 7496; kraken 248 polls 1382/276 avg 2249 max 3806; coinbase 142 polls 921/0 avg 7701 max 9365 — 0 × 429/418/403/510 and 0 errors each; book 6690 pairs / 5231 perps). HTX/Coinbase limits and fees still UNVERIFIED (flagged in the registry). MEXC in-band 510 now detected (1 hit in the soak on contract/ticker → counted, 10 s pause, recovered). Tier-3 (Crypto.com, Bitfinex, BingX, WhiteBIT, BitMart) added 2026-08-27 with research files, recorded fixtures and passing conformance, registered OPT-IN (`tier3Venues`): their 30-minute soaks were NOT run (the authoring agent hit a model usage limit mid-task), so no venue may be enabled by default until each soak is filed here. Remaining venues: Upbit, Bithumb, LBank, Phemex. IN_PROGRESS.
+- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE and ENABLED BY DEFAULT (30-min live soak 2026-08-27, all ten venues, poll 5 s: kucoin 295 polls 1006 spot/664 perps avg 1104 ms max 3346; htx 197 polls 600/301 avg 4145 max 7496; kraken 248 polls 1382/276 avg 2249 max 3806; coinbase 142 polls 921/0 avg 7701 max 9365 — 0 × 429/418/403/510 and 0 errors each; book 6690 pairs / 5231 perps). HTX/Coinbase limits and fees still UNVERIFIED (flagged in the registry). MEXC in-band 510 now detected (1 hit in the soak on contract/ticker → counted, 10 s pause, recovered). Tier-3 (Crypto.com, Bitfinex, BingX, WhiteBIT, BitMart) added 2026-08-27 with research files, recorded fixtures and passing conformance, registered OPT-IN in 227b0d6; their 30-min soak ran 2026-08-28 (TestSoakLive, poll 5 s, ALL FIFTEEN venues in one process, sharing the IP with the running paper stack — a stricter per-IP budget than production) and ALL FIVE PASSED, so they are now ENABLED BY DEFAULT (`tier3Venues` removed; `Defaults()` enables every known venue). Per venue, polls / spot min..last / perps min..last / min-avg-max ms / 429-418-403 / in-band / failed polls: cryptocom 118, 576..576, 10..366, 9623-10243-25108, 0, 0, 0; bitfinex 347, 197..197, 75..75, 100-192-3588, 0, 0, 0; bingx 283, 669..669, 881..881, 915-1370-2573, 0, 0, 0; whitebit 343, 798..798, 305..305, 157-248-641, 0, 0, 0; bitmart 167, 27..27, 354..354, 5441-5790-12539, 0, 0, 0. Book 7015 pairs / 7218 perps; 671 funding-history rows. Reading notes: cryptocom's perps 10..366 is the round-robin mark fill saturating (spot 576 was flat throughout) and its avg 10.2 s poll exceeds the 5 s interval, so it self-paces to ~15 s — the slow venue in the set; BitMart's 27 spot quotes are 100 % of the rows its bulk ticker returns (documented: only pairs with 24 h volume > 0 — 27 of 65 tradable symbols on the day, all normalised, none dropped) plus 354 perps. The in-band column read 0 for every venue but was never exercised this run (MEXC's 510 did not recur), so it is zero-by-absence; what makes the passes robust is errs=0 — a rate-limit answer the classifier missed still surfaces as a failed poll, as HTX's did. SAME RUN, TIER-2 REGRESSION (reported, not acted on — Tier-2 defaults are the coordinator's call): coinbase recorded 20 x HTTP 429 and 20 failed polls out of 61 attempts (41 successful, spot dipping to 61 at the low end, avg 24.4 s) — under this run it would FAIL the rule that admitted it on 2026-08-27; the confound is that the running paper stack polls coinbase from the same IP, roughly doubling its request rate. HTX recorded 1 failed poll of 197, `htx: batch_merged: invalid-parameter: request limit` — a request-limit answer the gate does NOT classify as a rate limit (so it neither counted nor backed off); both warrant review. Remaining venues: Upbit, Bithumb, LBank, Phemex. IN_PROGRESS.
 - T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO.
 
 ### Phase 24 Strategies, auto-paper, unattended operation
@@ -1347,6 +1347,33 @@ PAPER only; the vault's exchange credential group stays unread.
 
 ### Phase 27 Production execution gate
 - T-095 BLOCKED by design (record in docs/decisions/; see compliance review #2, #16 for what client-funds execution would additionally require): live execution requires (a) ≥ 30 days positive auto-paper evidence across regimes, (b) security review, (c) the operator's recorded legal decision, (d) a human-reviewed code change replacing ErrLiveTradingDisabled. No work starts before (a)–(c) exist.
+
+### T-096 Paper balances do not propagate from settings to the ledger
+- status: TODO (found 2026-08-27 during the T-071 evidence run). Editing
+  `paper.balances` in the screener settings changes nothing: the ledger
+  (`screener_paper_balances`) is seeded once and the executor then holds
+  the wallet in memory, so a balance change needs a direct DB write AND a
+  process restart. Fix: apply settings balances on activation (upsert the
+  ledger for assets the operator added, never silently overwriting a
+  balance the executor has already moved), and reload the executor's
+  wallet on the settings-change hook. Until then the console's
+  "simulated balances" control is misleading.
+
+### T-097 Carry entries on illiquid alt perps close immediately at a loss
+- status: TODO (found 2026-08-27, first auto-paper evidence). With
+  `min_carry_apr = 5 %`, `min_liquidity_quote = 500` over Binance USDT
+  perps, the executor opened 78 carry positions in ~20 minutes: 75
+  closed, **0 winners, 0 funding collected, net −398.96 USDT** (avg
+  −5.32 on 1000 notional ≈ −53 bps, i.e. the four taker legs plus
+  slippage). Entries are driven by an apparent basis on thin alt perps
+  that does not survive to the next poll. Investigate: (a) whether the
+  §5.1 breakeven-interval gate is applied on the `carry` path (5 % APR
+  ≈ 1.1 bps per 8 h interval needs ~39 intervals to clear 43 bps of
+  costs, so these entries should not have qualified), (b) whether the
+  perp leg needs the same plausibility/liquidity guard as spot lanes,
+  (c) a minimum-hold or no-immediate-close rule so a position cannot
+  open and close within one poll. Do NOT "fix" this by raising the
+  threshold until the entry gate itself is understood.
 
 ## Status log
 

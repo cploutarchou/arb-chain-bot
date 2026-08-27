@@ -112,12 +112,46 @@ type htxStatus struct {
 	Ts      num    `json:"ts"` // ms; a bare number on market endpoints, a string on /v2/settings
 }
 
-func (s htxStatus) check(path string) error {
-	if s.Status != "ok" {
-		return fmt.Errorf("htx: %s: %s: %s", path, s.ErrCode, s.ErrMsg)
+// htxRateLimited reports whether an HTX error envelope is a request-limit
+// refusal. HTX answers HTTP 200 with status="error" and a message naming
+// the limit (observed 2026-08-28 during the fifteen-venue soak:
+// err-code "invalid-parameter", err-msg "request limit"); the documented
+// codes carry the same wording. Treating it as a plain error would let the
+// poller keep hammering a venue that is already refusing, so it is
+// classified as an in-band rate limit and backs the gate off.
+func htxRateLimited(errCode, errMsg string) bool {
+	hay := strings.ToLower(errCode + " " + errMsg)
+	for _, needle := range []string{"request limit", "rate limit", "too many requests", "too frequent"} {
+		if strings.Contains(hay, needle) {
+			return true
+		}
 	}
-	return nil
+	return false
 }
+
+// check validates the envelope. g may be nil (tests); when the envelope
+// is a request-limit refusal the gate is backed off exactly as it is for
+// an HTTP 429, so the next poll waits instead of hammering.
+func (s htxStatus) check(path string, g *gate) error {
+	if s.Status == "ok" {
+		return nil
+	}
+	if htxRateLimited(s.ErrCode, s.ErrMsg) {
+		e := &InBandRateLimit{
+			Venue: screener.VenueHTX, Path: path, Code: 0,
+			Msg: s.ErrCode + ": " + s.ErrMsg, Pause: htxInBandPause,
+		}
+		if g != nil {
+			g.observeInBand(e)
+		}
+		return e
+	}
+	return fmt.Errorf("htx: %s: %s: %s", path, s.ErrCode, s.ErrMsg)
+}
+
+// htxInBandPause is our policy, not a documented HTX value: the envelope
+// carries no Retry-After.
+const htxInBandPause = 10 * time.Second
 
 type htxSymbol struct {
 	SC    string `json:"sc"`
@@ -148,7 +182,7 @@ func (c *htxCollector) fetchInstruments(ctx context.Context) ([]Instrument, erro
 	if err := c.spot.getJSON(ctx, 1, c.spotBase, "/v2/settings/common/symbols", nil, &spot); err != nil {
 		return nil, err
 	}
-	if err := spot.check("settings/common/symbols"); err != nil {
+	if err := spot.check("settings/common/symbols", c.spotGate); err != nil {
 		return nil, err
 	}
 	var swap struct {
@@ -158,7 +192,7 @@ func (c *htxCollector) fetchInstruments(ctx context.Context) ([]Instrument, erro
 	if err := c.perp.getJSON(ctx, 1, c.perpBase, "/linear-swap-api/v1/swap_contract_info", nil, &swap); err != nil {
 		return nil, err
 	}
-	if err := swap.check("swap_contract_info"); err != nil {
+	if err := swap.check("swap_contract_info", c.perpGate); err != nil {
 		return nil, err
 	}
 	out := make([]Instrument, 0, len(spot.Data)+len(swap.Data))
@@ -205,7 +239,7 @@ func (c *htxCollector) Spot(ctx context.Context) ([]screener.Quote, error) {
 	if err := c.spot.getJSON(ctx, 1, c.spotBase, "/market/tickers", nil, &env); err != nil {
 		return nil, err
 	}
-	if err := env.check("market/tickers"); err != nil {
+	if err := env.check("market/tickers", c.spotGate); err != nil {
 		return nil, err
 	}
 	at := c.now()
@@ -262,7 +296,7 @@ func (c *htxCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 	if err := c.perp.getJSON(ctx, 1, c.perpBase, "/linear-swap-ex/market/detail/batch_merged", url.Values{"business_type": {"swap"}}, &batch); err != nil {
 		return nil, err
 	}
-	if err := batch.check("batch_merged"); err != nil {
+	if err := batch.check("batch_merged", c.perpGate); err != nil {
 		return nil, err
 	}
 	var fund struct {
@@ -272,7 +306,7 @@ func (c *htxCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 	if err := c.perp.getJSON(ctx, 1, c.perpBase, "/linear-swap-api/v1/swap_batch_funding_rate", nil, &fund); err != nil {
 		return nil, err
 	}
-	if err := fund.check("swap_batch_funding_rate"); err != nil {
+	if err := fund.check("swap_batch_funding_rate", c.perpGate); err != nil {
 		return nil, err
 	}
 	var idx struct {
@@ -282,7 +316,7 @@ func (c *htxCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 	if err := c.perp.getJSON(ctx, 1, c.perpBase, "/linear-swap-api/v1/swap_index", nil, &idx); err != nil {
 		return nil, err
 	}
-	if err := idx.check("swap_index"); err != nil {
+	if err := idx.check("swap_index", c.perpGate); err != nil {
 		return nil, err
 	}
 	fundBy := make(map[string]htxFunding, len(fund.Data))
@@ -306,7 +340,7 @@ func (c *htxCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 		if err := c.perp.getJSON(ctx, 1, c.perpBase, "/index/market/history/linear_swap_mark_price_kline", q, &k); err != nil {
 			return nil, err
 		}
-		if err := k.check("linear_swap_mark_price_kline"); err != nil {
+		if err := k.check("linear_swap_mark_price_kline", c.perpGate); err != nil {
 			return nil, err
 		}
 		if len(k.Data) > 0 && k.Data[0].Close.IsPositive() {
