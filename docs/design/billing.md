@@ -134,6 +134,78 @@ convergent) implements packages.md §4:
 No card data reaches this process: checkout runs in Paddle's overlay, payment
 methods live in Paddle's portal, and our API only ever sees ids and statuses.
 
+### 1.6 Client API keys and alert channels (T-086, migration `000015_api_keys`)
+
+| Table / column | Purpose |
+|---|---|
+| `api_keys` | `id`, `org_id`, `user_id` (creator), `name`, `prefix` (non-secret lookup index), `hash` (SHA-256 digest, see below), `scopes` (`text[]`), `created_at`, `last_used_at`, `revoked_at` |
+| `screener_events.delivered` | JSONB, one entry per alert channel the rule requested: `{"status": "sent\|failed\|skipped\|pending", "reason": "…", "at": "…"}` |
+
+**Hashing.** SHA-256 of a 192-bit random token, not argon2id: a KDF's
+deliberate CPU cost buys nothing against brute-forcing a value with this
+much entropy, and it is actively hostile to the per-request authentication
+path an API key sits on. No pepper — there is no existing registry entry
+to derive one from, and the token's own entropy makes one unnecessary.
+Lookup is prefix (indexed, non-secret) then a constant-time digest
+compare, the same shape session tokens already use
+(`internal/auth.HashToken`). The plaintext (`arbk_…`) is generated,
+returned exactly once in the `POST` response, and never stored anywhere.
+
+**Routes** (`internal/api/apikeysapi.go`, OWNER/ADMIN of the organisation,
+CSRF on mutations):
+
+| Route | Behaviour |
+|---|---|
+| `POST /api/v1/org/api-keys {name, scopes[]}` | `scopes` defaults to `["read"]` when omitted (least privilege by default); each requested scope is checked against the organisation's `api.scopes` entitlement (`403 entitlement_exceeded`); `api.keys_max` gates the count of non-revoked keys; response is `{"api_key": <redacted>, "key": "<plaintext, once>"}` |
+| `GET /api/v1/org/api-keys` | redacted list (no hash, no plaintext), plus `keys_max` |
+| `DELETE /api/v1/org/api-keys/{id}` | revokes; a revoked key never authenticates again |
+
+Audit: `apikey.create` / `apikey.revoke` record id/prefix/name/scopes —
+never the hash, never the plaintext.
+
+**Authentication** (`internal/api/auth.go`, `authenticateAPIKey`):
+`Authorization: Bearer <key>` is checked before the session cookie on
+every gated route, so the SAME routes the console uses (`/screener/rules`,
+`/screener/templates`, …) serve API-key callers too. Resolution mirrors a
+session (organisation, entitlements) plus two checks a session never
+needs:
+
+1. `entitlements.CheckAPIScope("read")` against the organisation's
+   package — `403 entitlement_exceeded` (`api.enabled`) if the package has
+   no client API access at all. Checked *before* the rate limiter, so a
+   package without API access gets the entitlement error, not a 429.
+2. `entitlements.RateLimiter` (token bucket, `api.rate_per_min`/`api.burst`,
+   keyed by key id) — `429` with an integer-second `Retry-After` header.
+
+Authorization then runs on TWO independent layers, both required:
+`requirePerm`'s API-key branch (`apiKeyCanPermission`) asks whether the
+organisation's package includes *any* scope for the permission family
+(coarse: is this route family reachable by an API key at all — every
+non-screener permission is refused outright, regardless of `auth.Role`);
+`requireAPIScope(scope, …)` then asks whether *this key* itself was
+granted the exact scope the mutation needs (`rules:write` for rule
+writes, `templates:write` for template writes). A key minted with only
+`read` cannot reach a write route even on an organisation whose package
+allows `rules:write` — the org-level and key-level grants are separate.
+`PlatformAdmin` is unconditionally `false` on every API-key principal,
+even for platform staff: a leaked or intentionally narrow key can never
+reach the exchange-credential vault group or any `platform_admin`-only
+route.
+
+CSRF is skipped for API-key callers (`requireCSRF`): a Bearer token is
+never sent ambiently by a browser, so there is no cross-site forgery
+surface to defend — the exemption is Bearer-only, a cookie-authenticated
+request without `X-CSRF-Token` still fails exactly as before.
+
+**Alert channels** (`internal/screener/alerts`, `internal/notification`):
+a rule's `channels` (`telegram`, `email`, `webhook`) are each gated by
+`entitlements.CheckChannel` at open time, same as the pre-existing
+Telegram-only gate. E-mail (SMTP, `smtp_url` secret, §4) and webhook
+(HMAC-signed `X-Arb-Signature`, retried, SSRF-hardened) are dispatched to
+a bounded worker pool so a slow endpoint never blocks the poll loop;
+Telegram stays synchronous. Every channel's outcome is recorded on
+`screener_events.delivered`. Full detail: `docs/user-guide/alert-rules.md`.
+
 ## 2. Package documents — values derived from packages.md
 
 Everything in `internal/entitlements/packages.go` comes from the packages.md
@@ -193,11 +265,19 @@ host>/api/v1/billing/webhook`, events `subscription.*` and
 |---|---|---|---|
 | `paddle_api_key` (vault) / `PADDLE_API_KEY` (env fallback) | secrets registry, provider group | immediately | server-side API key (transactions, subscription updates, portal sessions) |
 | `paddle_webhook_secret` / `PADDLE_WEBHOOK_SECRET` | secrets registry, provider group | immediately | notification-destination secret for signature verification |
+| `smtp_url` / `SMTP_URL` | secrets registry, provider group | immediately | alert e-mail channel (T-086 §1.6): `smtp://user:pass@host:587` (STARTTLS) or `smtps://user:pass@host:465` (implicit TLS); read fresh on every send, so a rotation applies to the next alert with no restart |
 | `PADDLE_CLIENT_TOKEN` | env (config) | boot | public Paddle.js client-side token, returned by `/billing/checkout` and `/billing/prices` |
 | `PADDLE_ENV` | env (config) | boot | `sandbox` (default) or `production`; selects `sandbox-api.paddle.com` vs `api.paddle.com` |
 
-`TestRegistryIsClosed` now pins four provider entries. The exchange group is
+`TestRegistryIsClosed` now pins five provider entries. The exchange group is
 unchanged: no env fallback, never consumed, platform-admin only.
+
+An SMTP URL over HTTPS was preferred to a Resend-style HTTPS transport API
+because it needs no additional provider account or outbound-HTTPS
+allowlisting decision, matches the "no card data, no third-party secret
+we don't already model" posture of the rest of this document, and the
+`internal/notification.Transport` seam (`Send(ctx, from, to, msg)`) makes
+swapping to an HTTPS provider later a one-file change, not a redesign.
 
 ## 5. Sandbox test procedure (paddle:sandbox-testing)
 
@@ -236,14 +316,30 @@ unchanged: no env fallback, never consumed, platform-admin only.
 
 Automated equivalents: `internal/billing/paddle` (signature, replay,
 lifecycle, checkout/portal against a fake Paddle API), `internal/storage`
-(`TestBillingStoreIdempotency` over pgx), `internal/api` (RBAC, org scoping,
-risk ack, enforcement), `internal/entitlements` (schema, override, live-false).
+(`TestBillingStoreIdempotency`, `TestAPIKeysStoreCRUD`,
+`TestScreenerEventsDeliveredRoundTrip` over pgx), `internal/api` (RBAC, org
+scoping, risk ack, enforcement, `TestAPIKey*` for Bearer auth/scopes/rate
+limit), `internal/entitlements` (schema, override, live-false),
+`internal/notification` (webhook signature/SSRF/retry, e-mail with a fake
+transport), `internal/screener/alerts` (`TestEvaluatorDispatch*` for
+per-channel entitlement gating and delivery-outcome recording).
 
 ## 6. Open items
 
-- Alert-per-day counter and API-key rate limiter are implemented and tested
-  in `internal/entitlements` but not yet wired into the dispatcher / an API-key
-  middleware (API keys do not exist yet).
+- API keys (§1.6, T-086) are implemented: creation/list/revoke, Bearer
+  authentication, the org-level and key-level scope checks, and the
+  per-key rate limiter. Not yet: `api.streaming` (the WebSocket feed
+  Institution's package promises) has no route; `paper:write` is accepted
+  as a scope but nothing distinct from `rules:write` currently requires
+  it (auto-paper fields travel inside the rule payload, so today
+  `rules:write` alone reaches them).
+- Alert channels (§1.6, T-086) are implemented for telegram/email/webhook
+  with per-channel entitlement gating and delivery-outcome recording.
+  Not yet: a retry/backoff policy tunable per organisation (today's
+  webhook retry count and backoff are process-wide constants), and a
+  console UI for `channels`/`email_to`/`webhook_url`/`webhook_secret`
+  (the API accepts them today; screener/page.tsx still shows the legacy
+  `telegram` toggle only).
 - Retention purge job (30-day grace) and seat suspension on downgrade are
   policy in packages.md; the read paths already hide/gate, the jobs are not
   written.

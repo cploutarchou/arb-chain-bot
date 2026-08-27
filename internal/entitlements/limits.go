@@ -149,6 +149,16 @@ func (e Entitlements) CheckAPIScope(scope string) error {
 	return nil
 }
 
+// CheckAPIKeyCount enforces api.keys_max on key creation. Revoked keys
+// do not count against the cap — callers pass the count of active
+// (non-revoked) keys.
+func (e Entitlements) CheckAPIKeyCount(existing int) error {
+	if existing >= e.API.KeysMax {
+		return exceeded("api.keys_max", e.API.KeysMax, "your package allows %d API key(s); revoke one or upgrade", e.API.KeysMax)
+	}
+	return nil
+}
+
 // RetentionCutoff is the oldest timestamp visible under
 // history.retention_days.
 func (e Entitlements) RetentionCutoff(now time.Time) time.Time {

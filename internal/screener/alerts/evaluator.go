@@ -30,11 +30,16 @@ const SkipAlertsPerDay = "ALERTS_PER_DAY"
 // Allow=false skips the alert with Reason (counted in Skipped());
 // Telegram=false keeps the event but withholds the Telegram delivery
 // (alerts.channels no longer includes it — a downgrade after the rule
-// was created; creation itself is gated in the API).
+// was created; creation itself is gated in the API). Channels is the
+// same per-channel answer generalized to every channel the rule asks
+// for (docs/design/packages.md §3.1 alerts.channels); Telegram is kept
+// as a convenience alias for Channels["telegram"] so existing callers
+// (and tests) that only ever cared about Telegram keep working.
 type Entitlement struct {
 	Allow    bool
 	Reason   string
 	Telegram bool
+	Channels map[string]bool
 }
 
 // EntitlementCheck resolves the rule's organisation and consumes one
@@ -50,6 +55,15 @@ type Evaluator struct {
 	idGen   func() string
 	hooks   []OpenHook
 	entitle EntitlementCheck
+
+	// email/webhook are the T-086 optional channel sinks (nil = that
+	// channel always records a "not configured" failure); dispatchSem
+	// bounds concurrent async deliveries and dispatchWG lets tests wait
+	// for them (WaitDispatch).
+	email       EmailSink
+	webhook     WebhookSink
+	dispatchSem chan struct{}
+	dispatchWG  sync.WaitGroup
 
 	mu      sync.Mutex
 	lanes   map[laneID]*laneState
@@ -80,11 +94,12 @@ func New(svc *screener.Service, notify Notifier, log *slog.Logger) *Evaluator {
 	}
 	return &Evaluator{
 		svc: svc, notify: notify, log: log,
-		idGen:   func() string { return "evt-" + ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String() },
-		lanes:   map[laneID]*laneState{},
-		states:  map[string]Signal{},
-		opened:  map[screener.RuleKind]int64{},
-		skipped: map[string]int64{},
+		idGen:       func() string { return "evt-" + ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String() },
+		lanes:       map[laneID]*laneState{},
+		states:      map[string]Signal{},
+		opened:      map[screener.RuleKind]int64{},
+		skipped:     map[string]int64{},
+		dispatchSem: make(chan struct{}, dispatchWorkers),
 	}
 }
 
@@ -245,7 +260,7 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 	// merely warming up never spends it. A refused lane stays
 	// "not opened": no cooldown is charged, and it opens as soon as the
 	// quota resets (UTC day) or the package changes.
-	telegram := s.Rule.Telegram
+	var allowedChannels map[string]bool
 	if e.entitle != nil {
 		e.mu.Unlock()
 		ent := e.entitle(ctx, s.Rule, now)
@@ -261,11 +276,17 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 			return
 		}
 		st.skipped = ""
-		telegram = telegram && ent.Telegram
+		allowedChannels = ent.Channels
+		if allowedChannels == nil {
+			// Legacy callers that only ever set Telegram: fold it into
+			// the generic map so planChannels sees the same answer.
+			allowedChannels = map[string]bool{"telegram": ent.Telegram}
+		}
 	}
 	e.opened[s.Rule.Kind]++
+	eventID := e.idGen()
 	ev := screener.Event{
-		ID: e.idGen(), RuleID: s.Rule.ID, Kind: s.Rule.Kind,
+		ID: eventID, RuleID: s.Rule.ID, Kind: s.Rule.Kind,
 		Base: s.Lane.Base, Quote: s.Lane.Quote,
 		BuyVenue: s.Lane.VenueA, SellVenue: s.Lane.VenueB,
 		OpenedAt: now, LifetimeS: lifetime, PeakNetBps: score.String(),
@@ -275,14 +296,11 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 	st.lastOpen = now
 	e.mu.Unlock()
 
-	if telegram && e.notify != nil {
-		title, body := OpenText(s, lifetime)
-		e.notify(notification.Event{
-			Severity: notification.SeverityInfo,
-			Key:      "screener:" + s.Rule.ID + ":" + laneKey(s.Lane),
-			Title:    title, Body: body, At: now,
-		})
-		ev.TelegramSent = true
+	title, body := OpenText(s, lifetime)
+	delivered, telegramSent, pending := e.planChannels(eventID, s.Rule, allowedChannels, title, body, "screener:"+s.Rule.ID+":"+laneKey(s.Lane), now)
+	ev.Delivered = delivered
+	ev.TelegramSent = telegramSent
+	if telegramSent {
 		e.mu.Lock()
 		st.openEvent.TelegramSent = true
 		e.mu.Unlock()
@@ -292,6 +310,10 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 			e.log.Error("screener alerts: event insert failed", "rule", s.Rule.ID, "error", err)
 		}
 	}
+	// Async channel work only starts once the row above exists (or the
+	// attempt at least happened): dispatchPending's later UPDATE must
+	// never race the INSERT.
+	e.dispatchPending(eventID, pending)
 	e.log.Info("screener alert opened", "rule", s.Rule.ID, "base", s.Lane.Base, "quote", s.Lane.Quote,
 		"venue_a", s.Lane.VenueA, "venue_b", s.Lane.VenueB, "score_bps", score.StringFixed(2), "lifetime_s", lifetime)
 	for _, h := range e.hooks {
@@ -306,13 +328,35 @@ func (e *Evaluator) closeEvent(ctx context.Context, ev screener.Event, s Signal,
 			e.log.Error("screener alerts: event close failed", "event", ev.ID, "error", err)
 		}
 	}
-	if s.Rule.Telegram && e.notify != nil {
-		title, body := CloseText(s, lifetime, peak)
-		e.notify(notification.Event{
-			Severity: notification.SeverityInfo,
-			Key:      "screener:" + s.Rule.ID + ":" + laneKey(s.Lane) + ":closed",
-			Title:    title, Body: body, At: now,
-		})
+	// Close notifications are best-effort and fire-and-forget on every
+	// channel the rule effectively asks for — the entitlement gate and
+	// the alerts.per_day quota were already spent when the event opened;
+	// closing does not spend them again and is not itself audited on
+	// the event's Delivered map (that field is the OPEN alert's delivery
+	// record).
+	title, body := CloseText(s, lifetime, peak)
+	for _, ch := range s.Rule.EffectiveChannels() {
+		switch ch {
+		case "telegram":
+			if e.notify != nil {
+				e.notify(notification.Event{
+					Severity: notification.SeverityInfo,
+					Key:      "screener:" + s.Rule.ID + ":" + laneKey(s.Lane) + ":closed",
+					Title:    title, Body: body, At: now,
+				})
+			}
+		case "email":
+			if e.email != nil {
+				to, sink := s.Rule.EmailTo, e.email
+				e.dispatchFireAndForget(ev.ID, ch, func(ctx context.Context) error { return sink.Send(ctx, to, title, body) })
+			}
+		case "webhook":
+			if e.webhook != nil {
+				url, secret, sink := s.Rule.WebhookURL, s.Rule.WebhookSecret, e.webhook
+				payload := webhookPayload(ev.ID, s.Rule, title, body, now)
+				e.dispatchFireAndForget(ev.ID, ch, func(ctx context.Context) error { return sink.Send(ctx, url, secret, payload) })
+			}
+		}
 	}
 	e.log.Info("screener alert closed", "rule", ev.RuleID, "event", ev.ID, "lifetime_s", lifetime, "peak_bps", peak.StringFixed(2))
 }
