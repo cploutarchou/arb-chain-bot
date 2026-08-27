@@ -1313,6 +1313,41 @@ PAPER only; the vault's exchange credential group stays unread.
 - status: DONE (2026-08-27) — `.claude/skills/scanner-suite/SKILL.md`,
   `.claude/agents/screener-engineer.md`; deployment notes follow T-068.
 
+## Phases 23–27 — Product programme (docs/design/crypto-arb-platform-command.md)
+
+### Phase 23 Venue breadth
+- T-073 `Collector` interface + conformance test + venue registry (verified flag, fee defaults). TODO.
+- T-074 Tier-1 venues via public bulk tickers: Binance, OKX, Bybit, Bitget, Gate, MEXC (from T-065/T-066). TODO.
+- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase, Crypto.com, Bitfinex, BingX, Upbit, Bithumb, WhiteBIT, LBank, BitMart, Phemex — each researched, fixtured, soaked. TODO.
+- T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO.
+
+### Phase 24 Strategies, auto-paper, unattended operation
+- T-077 Strategy registry (cross-venue spot, carry, futures-futures, funding harvest, triangular) with per-strategy paper ledger and statistics. TODO.
+- T-078 Nightly automatic campaign/report per strategy → docs/campaigns/<strategy>/<date>/; Telegram summary. TODO.
+- T-079 Operations automation: scheduled migrations, backups, health checks, self-healing collectors, alerting on failure. TODO.
+- T-080 Evidence dashboard: per-strategy net PnL after fees, hit rate, drawdown, sample size vs production-gate thresholds. TODO.
+
+### Phase 25 SaaS
+- T-081 Tenancy: organisations, memberships, roles; console per tenant. TODO.
+- T-082 Packages + entitlements (docs/design/packages.md, product-manager) enforced server-side. TODO.
+- T-083 Paddle billing lifecycle + webhooks + customer portal (sandbox-tested). TODO.
+- T-084 Affiliate programme ledger + payouts report. TODO.
+- T-085 Marketing site (site/) with evidence-based copy and legal pages; compliance review. TODO.
+- T-086 Client onboarding, e-mail/web alert channels, API keys for client API access (our API, not exchange keys). TODO.
+- T-087 Client console re-skin (ux-designer → ui-designer → frontend). TODO.
+- T-088 White-label option (later). TODO.
+
+### Phase 26 Production infrastructure
+- T-089 deploy/ as code: Helm/Kustomize + Terraform; envs dev / paper-test / prod. TODO.
+- T-090 HA Postgres + PITR + restore drill; tick partitioning. TODO.
+- T-091 CI/CD staged deploys with canary + rollback. TODO.
+- T-092 Observability stack, SLOs, alert rules, runbooks. TODO.
+- T-093 Edge security (WAF, rate limiting), image/dependency scanning, GDPR data map. TODO.
+- T-094 Load/soak tests at target scale (venues × pairs × tenants). TODO.
+
+### Phase 27 Production execution gate
+- T-095 BLOCKED by design: live execution requires (a) ≥ 30 days positive auto-paper evidence across regimes, (b) security review, (c) the operator's recorded legal decision, (d) a human-reviewed code change replacing ErrLiveTradingDisabled. No work starts before (a)–(c) exist.
+
 ## Status log
 
 - 2026-08-26: Plan created. Phases 0–1 are DONE (research in
