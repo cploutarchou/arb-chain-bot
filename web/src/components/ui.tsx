@@ -70,6 +70,32 @@ export function Unavailable({ code, message }: { code?: string; message?: string
   );
 }
 
+// StaleVersionNotice is the shared "lost update" banner for the four
+// optimistic-concurrency writes (T-058: config apply/rollback, platform
+// settings apply/rollback). A 409 stale_version means another actor
+// (another tab, Telegram, AI approval) applied a version while this
+// operator was editing — the draft is never silently reconciled or
+// re-sent; the only way forward is Reload, which the caller wires to
+// discard the draft and refetch the current version.
+export function StaleVersionNotice({
+  currentVersion,
+  onReload,
+}: {
+  currentVersion: number | null;
+  onReload: () => void;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-[var(--warn)] bg-[var(--bg-panel)] px-3 py-2 text-[13px] text-[var(--warn)]">
+      <span>
+        {currentVersion !== null
+          ? `Someone applied version ${currentVersion} while you were editing — reload to continue.`
+          : "Someone applied a newer version while you were editing — reload to continue."}
+      </span>
+      <Button onClick={onReload}>Reload</Button>
+    </div>
+  );
+}
+
 export function ErrorBox({ message, status, code }: { message: string; status?: number; code?: string }) {
   if (code && ABSENCE_CODES[code]) return <Unavailable code={code} message={message} />;
   return (

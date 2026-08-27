@@ -17,10 +17,43 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly apiError: APIError | null,
+    // data carries the envelope's `data` alongside an error response
+    // (e.g. stale_version's {current_version} — WriteErrorData sends
+    // both fields together, T-058) — never populated for a plain
+    // WriteError response.
+    readonly data: unknown = null,
   ) {
     super(apiError?.message ?? `API error (HTTP ${status})`);
     this.name = "ApiError";
   }
+}
+
+// isStaleVersion flags the 409 the optimistic-concurrency check (T-058)
+// returns when parent_version no longer matches the active version —
+// distinct from staleVersion() below, which can return null for a
+// stale_version error whose current_version happens to be absent.
+export function isStaleVersion(err: unknown): boolean {
+  return err instanceof ApiError && err.apiError?.code === "stale_version";
+}
+
+// staleVersion reads {current_version} out of a 409 stale_version
+// ApiError — the one machine-readable field the optimistic-concurrency
+// check needs to render "reload to continue". Returns null when the
+// field is unexpectedly absent; callers should still check
+// isStaleVersion() first and fall back to the backend's message
+// verbatim (never render "version undefined").
+export function staleVersion(err: unknown): number | null {
+  if (!isStaleVersion(err)) return null;
+  const data = (err as ApiError).data as { current_version?: number } | null;
+  return typeof data?.current_version === "number" ? data.current_version : null;
+}
+
+// isNotReady flags the 503 a campaign/replay POST can return briefly
+// after boot (the runner's background context isn't wired yet) — the
+// backend's message already ends in "try again shortly"; callers show
+// it verbatim and add a retry affordance, never reword it.
+export function isNotReady(err: unknown): boolean {
+  return err instanceof ApiError && err.apiError?.code === "not_ready";
 }
 
 // CSRF token lives in module state; login and /auth/me both supply it
@@ -71,7 +104,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // non-JSON error body — fall through with env null
   }
   if (!res.ok || env?.error) {
-    throw new ApiError(res.status, env?.error ?? null);
+    throw new ApiError(res.status, env?.error ?? null, env?.data ?? null);
   }
   if (env === null || env.data === null) {
     throw new ApiError(res.status, { code: "empty_response", message: "Empty response" });
@@ -1184,8 +1217,18 @@ export const api = {
     current: () => get<ConfigSnapshot>("/api/v1/config"),
     version: (version: number) => get<ConfigSnapshot>(`/api/v1/config/version/${version}`),
     versions: (limit = 25) => get<ConfigVersion[]>(`/api/v1/config/versions?limit=${limit}`),
-    apply: (params: StrategyParams) => post<ConfigSnapshot>("/api/v1/config", params),
-    rollback: (version: number) => post<ConfigSnapshot>("/api/v1/config/rollback", { version }),
+    // parent_version (T-058 optimistic concurrency) is required on every
+    // web-console write: the backend 400s parent_version_required without
+    // it, and 409 stale_versions when it no longer matches the active
+    // version — see staleVersion() above. It rides as a sibling of the
+    // params fields (extractParentVersion pulls it off the raw body
+    // before the strict decode), so it must be spread LAST: it must win
+    // over any stray "parent_version" key an operator typed into the
+    // Advanced: JSON draft.
+    apply: (params: StrategyParams, parentVersion: number) =>
+      post<ConfigSnapshot>("/api/v1/config", { ...params, parent_version: parentVersion }),
+    rollback: (version: number, parentVersion: number) =>
+      post<ConfigSnapshot>("/api/v1/config/rollback", { version, parent_version: parentVersion }),
   },
   alerts: {
     list: (state = "", limit = 50) =>
@@ -1274,10 +1317,15 @@ export const api = {
     version: (version: number) => get<PlatformSnapshot>(`/api/v1/platform/settings/version/${version}`),
     preview: (settings: PlatformSettingsDoc) =>
       post<PlatformPreviewResponse>("/api/v1/platform/settings/preview", { settings }),
-    apply: (settings: PlatformSettingsDoc) =>
-      post<PlatformSnapshotView>("/api/v1/platform/settings", { settings }),
-    rollback: (version: number) =>
-      post<PlatformSnapshotView>("/api/v1/platform/settings/rollback", { version }),
+    // parent_version required (T-058), same as api.config.apply above —
+    // decodePlatformSettings reads it as a sibling of `settings`.
+    apply: (settings: PlatformSettingsDoc, parentVersion: number) =>
+      post<PlatformSnapshotView>("/api/v1/platform/settings", { settings, parent_version: parentVersion }),
+    rollback: (version: number, parentVersion: number) =>
+      post<PlatformSnapshotView>("/api/v1/platform/settings/rollback", {
+        version,
+        parent_version: parentVersion,
+      }),
   },
   engine: {
     status: () => get<EngineStatusResponse>("/api/v1/engine/status"),

@@ -11,6 +11,8 @@ import { useState } from "react";
 import {
   api,
   ApiError,
+  isStaleVersion,
+  staleVersion,
   type PlatformPreviewResponse,
   type PlatformSettingsDoc,
   type PlatformSnapshotView,
@@ -33,7 +35,18 @@ import {
   updateTelegram,
   updateVenue,
 } from "@/lib/platformFields";
-import { Await, Badge, Button, ConfirmDialog, DiffTable, Section, Stat, Table, fmtTime } from "@/components/ui";
+import {
+  Await,
+  Badge,
+  Button,
+  ConfirmDialog,
+  DiffTable,
+  Section,
+  StaleVersionNotice,
+  Stat,
+  Table,
+  fmtTime,
+} from "@/components/ui";
 
 // ---- shared bits ------------------------------------------------------
 
@@ -44,6 +57,10 @@ function TimingChip({ effect }: { effect: "hot" | "restart" }) {
 interface PreviewDraft {
   draft: PlatformSettingsDoc;
   resp: PlatformPreviewResponse;
+  // parentVersion (T-058): captured at startEdit — the version the
+  // draft was actually cloned from — never re-read from a live poll at
+  // review/apply time (usePoll can advance underneath an open editor).
+  parentVersion: number;
 }
 
 function previewRows(preview: PlatformPreviewResponse, fieldTiming: Record<string, string>) {
@@ -96,11 +113,17 @@ function PlatformApplyDialog({
   fieldTiming,
   onApplied,
   onCancel,
+  onStale,
 }: {
   state: PreviewDraft;
   fieldTiming: Record<string, string>;
   onApplied: (snap: PlatformSnapshotView) => void;
   onCancel: () => void;
+  // onStale (T-058): a 409 stale_version fires this instead of setting
+  // the inline `err` — the caller closes this dialog and shows the
+  // page-level StaleVersionNotice/Reload affordance rather than letting
+  // the operator retry Apply against a version that no longer exists.
+  onStale: (currentVersion: number | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -112,9 +135,13 @@ function PlatformApplyDialog({
     setBusy(true);
     setErr("");
     try {
-      const snap = await api.platform.apply(state.draft);
+      const snap = await api.platform.apply(state.draft, state.parentVersion);
       onApplied(snap);
     } catch (e: unknown) {
+      if (isStaleVersion(e)) {
+        onStale(staleVersion(e));
+        return;
+      }
       setErr(e instanceof ApiError ? e.message : "Apply failed.");
     } finally {
       setBusy(false);
@@ -169,6 +196,7 @@ function appliedMessage(snap: PlatformSnapshotView): { ok: true; text: string } 
 
 async function runPreview(
   draft: PlatformSettingsDoc,
+  parentVersion: number,
   setBusy: (b: boolean) => void,
   setErr: (s: string) => void,
   setState: (s: PreviewDraft | null) => void,
@@ -183,7 +211,7 @@ async function runPreview(
       setMsg({ ok: false, text: "No changes to apply." });
       return;
     }
-    setState({ draft, resp });
+    setState({ draft, resp, parentVersion });
   } catch (e: unknown) {
     setErr(e instanceof ApiError ? e.message : "Preview failed.");
   } finally {
@@ -214,9 +242,16 @@ export function OperatingModeSection() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [previewState, setPreviewState] = useState<PreviewDraft | null>(null);
+  // baseVersion/stale (T-058): the version startEdit cloned the draft
+  // from, captured once and never re-read off the live poll while
+  // editing; stale is set when apply comes back 409.
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
-  const startEdit = (doc: PlatformSettingsDoc) => {
+  const startEdit = (doc: PlatformSettingsDoc, version: number) => {
     setDraft(clonePlatformSettings(doc));
+    setBaseVersion(version);
+    setStale(null);
     setMsg(null);
     setPreviewErr("");
     setEditing(true);
@@ -224,21 +259,33 @@ export function OperatingModeSection() {
   const discard = () => {
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
+  };
+  const reloadAfterStale = () => {
+    setStale(null);
+    discard();
+    setRefresh((n) => n + 1);
   };
   const setMode = (mode: string) => {
     setDraft((d) => (d ? updatePlatform(d, (p) => ({ ...p, mode })) : d));
   };
 
   const review = () => {
-    if (!draft) return;
-    void runPreview(draft, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
+    if (!draft || baseVersion === null) return;
+    void runPreview(draft, baseVersion, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
   };
   const applied = (snap: PlatformSnapshotView) => {
     setMsg(appliedMessage(snap));
+    setStale(null);
     setPreviewState(null);
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
     setRefresh((n) => n + 1);
+  };
+  const onStale = (current: number | null) => {
+    setStale({ current });
+    setPreviewState(null);
   };
 
   return (
@@ -247,6 +294,7 @@ export function OperatingModeSection() {
         The process-level mode this engine runs in. Changing it is restart-scoped — saved
         immediately as a new settings version, applied on the next engine restart.
       </p>
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>}
       <Await state={current} what="platform settings">
         {(c) => {
@@ -257,7 +305,7 @@ export function OperatingModeSection() {
               <div className="mb-3 flex items-center gap-2">
                 <Badge tone="ok">v{c.version}</Badge>
                 <TimingChip effect={effect} />
-                {mayEdit && !editing && <Button onClick={() => startEdit(c.settings)}>Edit mode</Button>}
+                {mayEdit && !editing && <Button onClick={() => startEdit(c.settings, c.version)}>Edit mode</Button>}
                 {editing && (
                   <>
                     <Button onClick={review} disabled={previewBusy}>
@@ -330,6 +378,7 @@ export function OperatingModeSection() {
           state={previewState}
           fieldTiming={current.data.field_timing}
           onApplied={applied}
+          onStale={onStale}
           onCancel={() => setPreviewState(null)}
         />
       )}
@@ -357,9 +406,13 @@ export function LoggingAccessSection() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [previewState, setPreviewState] = useState<PreviewDraft | null>(null);
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
-  const startEdit = (doc: PlatformSettingsDoc) => {
+  const startEdit = (doc: PlatformSettingsDoc, version: number) => {
     setDraft(clonePlatformSettings(doc));
+    setBaseVersion(version);
+    setStale(null);
     setMsg(null);
     setPreviewErr("");
     setEditing(true);
@@ -367,6 +420,12 @@ export function LoggingAccessSection() {
   const discard = () => {
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
+  };
+  const reloadAfterStale = () => {
+    setStale(null);
+    discard();
+    setRefresh((n) => n + 1);
   };
   const setLogLevel = (log_level: string) => {
     setDraft((d) => (d ? updatePlatform(d, (p) => ({ ...p, log_level })) : d));
@@ -376,21 +435,28 @@ export function LoggingAccessSection() {
   };
 
   const review = () => {
-    if (!draft) return;
-    void runPreview(draft, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
+    if (!draft || baseVersion === null) return;
+    void runPreview(draft, baseVersion, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
   };
   const applied = (snap: PlatformSnapshotView) => {
     setMsg(appliedMessage(snap));
+    setStale(null);
     setPreviewState(null);
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
     setRefresh((n) => n + 1);
+  };
+  const onStale = (current: number | null) => {
+    setStale({ current });
+    setPreviewState(null);
   };
 
   const logLevels = capabilities.kind === "ready" ? capabilities.data.log_levels : [];
 
   return (
     <Section title="Logging & access">
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>}
       <Await state={current} what="platform settings">
         {(c) => {
@@ -401,7 +467,9 @@ export function LoggingAccessSection() {
             <div className="max-w-xl space-y-3">
               <div className="flex items-center gap-2">
                 <Badge tone="ok">v{c.version}</Badge>
-                {mayEdit && !editing && <Button onClick={() => startEdit(c.settings)}>Edit logging & access</Button>}
+                {mayEdit && !editing && (
+                  <Button onClick={() => startEdit(c.settings, c.version)}>Edit logging & access</Button>
+                )}
                 {editing && (
                   <>
                     <Button onClick={review} disabled={previewBusy}>
@@ -466,6 +534,7 @@ export function LoggingAccessSection() {
           state={previewState}
           fieldTiming={current.data.field_timing}
           onApplied={applied}
+          onStale={onStale}
           onCancel={() => setPreviewState(null)}
         />
       )}
@@ -492,6 +561,8 @@ export function MarketsSection() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [previewState, setPreviewState] = useState<PreviewDraft | null>(null);
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
   // startEdit clones the doc as-is without a syncPaperBalances pass: the
   // ACTIVE snapshot is always already set-equality-consistent (the backend
@@ -500,8 +571,10 @@ export function MarketsSection() {
   // on every structural edit — this is the one invariant a future editor
   // must preserve if this section gains another way to change the
   // enabled/starting-asset union.
-  const startEdit = (doc: PlatformSettingsDoc) => {
+  const startEdit = (doc: PlatformSettingsDoc, version: number) => {
     setDraft(clonePlatformSettings(doc));
+    setBaseVersion(version);
+    setStale(null);
     setSymbolInput({});
     setAssetInput({});
     setMsg(null);
@@ -511,6 +584,12 @@ export function MarketsSection() {
   const discard = () => {
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
+  };
+  const reloadAfterStale = () => {
+    setStale(null);
+    discard();
+    setRefresh((n) => n + 1);
   };
 
   const addSymbol = (venueId: string) => {
@@ -552,16 +631,22 @@ export function MarketsSection() {
   };
 
   const review = () => {
-    if (!draft) return;
-    void runPreview(draft, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
+    if (!draft || baseVersion === null) return;
+    void runPreview(draft, baseVersion, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
   };
 
   const applied = (snap: PlatformSnapshotView) => {
     setMsg(appliedMessage(snap));
+    setStale(null);
     setPreviewState(null);
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
     setRefresh((n) => n + 1);
+  };
+  const onStale = (current: number | null) => {
+    setStale({ current });
+    setPreviewState(null);
   };
 
   return (
@@ -571,6 +656,7 @@ export function MarketsSection() {
         document. Every field here applies on restart — the timing chip is always what the backend
         reports, not assumed.
       </p>
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>}
       <Await state={current} what="platform settings">
         {(c) => {
@@ -580,7 +666,9 @@ export function MarketsSection() {
             <div className="max-w-3xl space-y-4">
               <div className="flex items-center gap-2">
                 <Badge tone="ok">v{c.version}</Badge>
-                {mayEditVenues && !editing && <Button onClick={() => startEdit(c.settings)}>Edit markets & assets</Button>}
+                {mayEditVenues && !editing && (
+                  <Button onClick={() => startEdit(c.settings, c.version)}>Edit markets & assets</Button>
+                )}
                 {editing && (
                   <>
                     <Button onClick={review} disabled={previewBusy}>
@@ -722,6 +810,7 @@ export function MarketsSection() {
           state={previewState}
           fieldTiming={current.data.field_timing}
           onApplied={applied}
+          onStale={onStale}
           onCancel={() => setPreviewState(null)}
         />
       )}
@@ -749,14 +838,18 @@ export function VenuesSection() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [previewState, setPreviewState] = useState<PreviewDraft | null>(null);
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
   // startEdit clones the doc as-is: the ACTIVE snapshot always already
   // satisfies paper.balances' set-equality invariant. toggleEnabled is the
   // only control here that changes the enabled-venue union, and it calls
   // syncPaperBalances itself — a future control that adds/removes
   // starting_assets in this section would need the same call.
-  const startEdit = (doc: PlatformSettingsDoc) => {
+  const startEdit = (doc: PlatformSettingsDoc, version: number) => {
     setDraft(clonePlatformSettings(doc));
+    setBaseVersion(version);
+    setStale(null);
     setMsg(null);
     setPreviewErr("");
     setEditing(true);
@@ -764,6 +857,12 @@ export function VenuesSection() {
   const discard = () => {
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
+  };
+  const reloadAfterStale = () => {
+    setStale(null);
+    discard();
+    setRefresh((n) => n + 1);
   };
 
   const toggleEnabled = (venueId: string) => {
@@ -810,15 +909,21 @@ export function VenuesSection() {
   };
 
   const review = () => {
-    if (!draft) return;
-    void runPreview(draft, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
+    if (!draft || baseVersion === null) return;
+    void runPreview(draft, baseVersion, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
   };
   const applied = (snap: PlatformSnapshotView) => {
     setMsg(appliedMessage(snap));
+    setStale(null);
     setPreviewState(null);
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
     setRefresh((n) => n + 1);
+  };
+  const onStale = (current: number | null) => {
+    setStale({ current });
+    setPreviewState(null);
   };
 
   return (
@@ -831,6 +936,7 @@ export function VenuesSection() {
         </a>{" "}
         page.
       </p>
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>}
       <Await state={current} what="platform settings">
         {(c) => {
@@ -839,7 +945,9 @@ export function VenuesSection() {
             <div className="max-w-3xl space-y-4">
               <div className="flex items-center gap-2">
                 <Badge tone="ok">v{c.version}</Badge>
-                {mayEdit && !editing && <Button onClick={() => startEdit(c.settings)}>Edit venues & fees</Button>}
+                {mayEdit && !editing && (
+                  <Button onClick={() => startEdit(c.settings, c.version)}>Edit venues & fees</Button>
+                )}
                 {editing && (
                   <>
                     <Button onClick={review} disabled={previewBusy}>
@@ -1007,6 +1115,7 @@ export function VenuesSection() {
           state={previewState}
           fieldTiming={current.data.field_timing}
           onApplied={applied}
+          onStale={onStale}
           onCancel={() => setPreviewState(null)}
         />
       )}
@@ -1050,9 +1159,13 @@ export function TelegramAllowlistSection() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [previewState, setPreviewState] = useState<PreviewDraft | null>(null);
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
-  const startEdit = (doc: PlatformSettingsDoc) => {
+  const startEdit = (doc: PlatformSettingsDoc, version: number) => {
     setDraft(clonePlatformSettings(doc));
+    setBaseVersion(version);
+    setStale(null);
     setIdInput("");
     setMsg(null);
     setPreviewErr("");
@@ -1061,6 +1174,12 @@ export function TelegramAllowlistSection() {
   const discard = () => {
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
+  };
+  const reloadAfterStale = () => {
+    setStale(null);
+    discard();
+    setRefresh((n) => n + 1);
   };
   const addId = () => {
     const n = Number(idInput.trim());
@@ -1083,15 +1202,21 @@ export function TelegramAllowlistSection() {
   };
 
   const review = () => {
-    if (!draft) return;
-    void runPreview(draft, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
+    if (!draft || baseVersion === null) return;
+    void runPreview(draft, baseVersion, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
   };
   const applied = (snap: PlatformSnapshotView) => {
     setMsg(appliedMessage(snap));
+    setStale(null);
     setPreviewState(null);
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
     setRefresh((n) => n + 1);
+  };
+  const onStale = (current: number | null) => {
+    setStale({ current });
+    setPreviewState(null);
   };
 
   return (
@@ -1099,6 +1224,7 @@ export function TelegramAllowlistSection() {
       <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
         Telegram
       </h3>
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>}
       {status.kind === "ready" && (
         <p className="mb-2 text-[12px] text-[var(--text-dim)]">
@@ -1164,7 +1290,9 @@ export function TelegramAllowlistSection() {
                 ))}
               </div>
               <div className="flex items-center gap-2">
-                {mayEdit && !editing && <Button onClick={() => startEdit(c.settings)}>Edit Telegram settings</Button>}
+                {mayEdit && !editing && (
+                  <Button onClick={() => startEdit(c.settings, c.version)}>Edit Telegram settings</Button>
+                )}
                 {editing && (
                   <>
                     <input
@@ -1193,6 +1321,7 @@ export function TelegramAllowlistSection() {
                   state={previewState}
                   fieldTiming={c.field_timing}
                   onApplied={applied}
+                  onStale={onStale}
                   onCancel={() => setPreviewState(null)}
                 />
               )}
@@ -1246,9 +1375,13 @@ export function AIAdvisorSection() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [previewState, setPreviewState] = useState<PreviewDraft | null>(null);
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
-  const startEdit = (doc: PlatformSettingsDoc) => {
+  const startEdit = (doc: PlatformSettingsDoc, version: number) => {
     setDraft(clonePlatformSettings(doc));
+    setBaseVersion(version);
+    setStale(null);
     setMsg(null);
     setPreviewErr("");
     setEditing(true);
@@ -1256,6 +1389,12 @@ export function AIAdvisorSection() {
   const discard = () => {
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
+  };
+  const reloadAfterStale = () => {
+    setStale(null);
+    discard();
+    setRefresh((n) => n + 1);
   };
   const setEnabled = (enabled: boolean) => {
     setDraft((d) => (d ? updateAI(d, (a) => ({ ...a, enabled })) : d));
@@ -1274,15 +1413,21 @@ export function AIAdvisorSection() {
   };
 
   const review = () => {
-    if (!draft) return;
-    void runPreview(draft, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
+    if (!draft || baseVersion === null) return;
+    void runPreview(draft, baseVersion, setPreviewBusy, setPreviewErr, setPreviewState, setMsg);
   };
   const applied = (snap: PlatformSnapshotView) => {
     setMsg(appliedMessage(snap));
+    setStale(null);
     setPreviewState(null);
     setEditing(false);
     setDraft(null);
+    setBaseVersion(null);
     setRefresh((n) => n + 1);
+  };
+  const onStale = (current: number | null) => {
+    setStale({ current });
+    setPreviewState(null);
   };
 
   return (
@@ -1296,6 +1441,7 @@ export function AIAdvisorSection() {
         page like a manual config edit.
       </p>
       <AIStatusCard />
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>}
       <Await state={current} what="platform settings">
         {(c) => {
@@ -1306,7 +1452,9 @@ export function AIAdvisorSection() {
               <div className="flex items-center gap-2">
                 <Badge tone="ok">v{c.version}</Badge>
                 <TimingChip effect={effect} />
-                {mayEdit && !editing && <Button onClick={() => startEdit(c.settings)}>Edit AI advisor</Button>}
+                {mayEdit && !editing && (
+                  <Button onClick={() => startEdit(c.settings, c.version)}>Edit AI advisor</Button>
+                )}
                 {editing && (
                   <>
                     <Button onClick={review} disabled={previewBusy}>
@@ -1459,6 +1607,7 @@ export function AIAdvisorSection() {
           state={previewState}
           fieldTiming={current.data.field_timing}
           onApplied={applied}
+          onStale={onStale}
           onCancel={() => setPreviewState(null)}
         />
       )}
@@ -1476,18 +1625,28 @@ export function PlatformVersionHistorySection() {
   const [refresh, setRefresh] = useState(0);
   const versions = usePoll(() => api.platform.versions(25), 15000, [refresh]);
 
-  const [rollbackConfirm, setRollbackConfirm] = useState<{ version: number } | null>(null);
+  // rollbackConfirm.parentVersion (T-058) is the ACTIVE version at the
+  // moment the operator opened this dialog — captured from the same
+  // `list` render the "Roll back to" button came from, never re-read at
+  // confirm time (the versions poll can advance while the dialog is
+  // open).
+  const [rollbackConfirm, setRollbackConfirm] = useState<{ version: number; parentVersion: number } | null>(null);
   const [rollbackLoading, setRollbackLoading] = useState<number | null>(null);
   const [rollbackErr, setRollbackErr] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
-  const openRollback = async (version: number) => {
+  const openRollback = async (version: number, parentVersion: number | null) => {
     setRollbackErr("");
+    if (parentVersion === null) {
+      setRollbackErr("Could not determine the active version — reload and try again.");
+      return;
+    }
     setRollbackLoading(version);
     try {
       await api.platform.version(version);
-      setRollbackConfirm({ version });
+      setRollbackConfirm({ version, parentVersion });
     } catch (err: unknown) {
       setRollbackErr(err instanceof ApiError ? err.message : "Could not load that version.");
     } finally {
@@ -1500,27 +1659,40 @@ export function PlatformVersionHistorySection() {
     setBusy(true);
     setMsg(null);
     try {
-      const snap = await api.platform.rollback(rollbackConfirm.version);
+      const snap = await api.platform.rollback(rollbackConfirm.version, rollbackConfirm.parentVersion);
       setMsg({ ok: true, text: `Rolled back as new version ${snap.version}.` });
+      setStale(null);
       setRefresh((n) => n + 1);
     } catch (err: unknown) {
-      setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Rollback failed." });
+      if (isStaleVersion(err)) {
+        setStale({ current: staleVersion(err) });
+      } else {
+        setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Rollback failed." });
+      }
     } finally {
       setBusy(false);
       setRollbackConfirm(null);
     }
   };
 
+  const reloadAfterStale = () => {
+    setStale(null);
+    setRefresh((n) => n + 1);
+  };
+
   return (
     <Section title="Platform settings — version history">
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>}
       {rollbackErr && <p className="mb-2 text-[12px] text-[var(--critical)]">{rollbackErr}</p>}
       <Await state={versions} what="platform settings versions">
-        {(list) => (
-          <Table
-            head={["Version", "Created", "By", "Parent", "Changed paths", ""]}
-            empty="versions"
-            rows={(list ?? []).map((v) => [
+        {(list) => {
+          const activeVersion = (list ?? []).find((v) => v.active)?.version ?? null;
+          return (
+            <Table
+              head={["Version", "Created", "By", "Parent", "Changed paths", ""]}
+              empty="versions"
+              rows={(list ?? []).map((v) => [
               v.active ? (
                 <Badge key="a" tone="ok">
                   v{v.version} active
@@ -1544,7 +1716,11 @@ export function PlatformVersionHistorySection() {
                 "—"
               ),
               !v.active && mayRollback ? (
-                <Button key="rb" onClick={() => openRollback(v.version)} disabled={rollbackLoading === v.version}>
+                <Button
+                  key="rb"
+                  onClick={() => openRollback(v.version, activeVersion)}
+                  disabled={rollbackLoading === v.version}
+                >
                   {rollbackLoading === v.version ? "Loading…" : "Roll back to"}
                 </Button>
               ) : (
@@ -1552,7 +1728,8 @@ export function PlatformVersionHistorySection() {
               ),
             ])}
           />
-        )}
+          );
+        }}
       </Await>
       {rollbackConfirm && (
         <ConfirmDialog

@@ -6,7 +6,7 @@
 // fee schedule; nothing here trades live.
 
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type CampaignRun, type RecorderStatus } from "@/lib/api/client";
+import { api, ApiError, isNotReady, type CampaignRun, type RecorderStatus } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { connectHub, type HubMessage } from "@/lib/ws";
@@ -89,7 +89,11 @@ export default function CampaignsPage() {
   const [wsRuns, setWsRuns] = useState<Record<string, CampaignRun>>({});
 
   const [recorderErr, setRecorderErr] = useState("");
-  const [runMsg, setRunMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // retryable marks the 503 not_ready a campaign launch can return
+  // briefly after boot (the runner's background context isn't wired
+  // yet) — the message is shown verbatim, with a Retry action rather
+  // than a reworded hint.
+  const [runMsg, setRunMsg] = useState<{ ok: boolean; text: string; retryable?: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [detail, setDetail] = useState<RunDetail | null>(null);
 
@@ -193,7 +197,11 @@ export default function CampaignsPage() {
       setRunMsg({ ok: true, text: `Run ${res.run.id} queued.` });
       setRefresh((n) => n + 1);
     } catch (err: unknown) {
-      setRunMsg({ ok: false, text: err instanceof ApiError ? err.message : "Campaign launch failed." });
+      setRunMsg({
+        ok: false,
+        text: err instanceof ApiError ? err.message : "Campaign launch failed.",
+        retryable: isNotReady(err),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -419,8 +427,13 @@ export default function CampaignsPage() {
                 )}
               </div>
               {runMsg && (
-                <p className={`text-[13px] ${runMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
-                  {runMsg.text}
+                <p className={`flex items-center gap-2 text-[13px] ${runMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
+                  <span>{runMsg.text}</span>
+                  {runMsg.retryable && (
+                    <Button onClick={() => void submitRun()} disabled={submitting}>
+                      Retry
+                    </Button>
+                  )}
                 </p>
               )}
             </div>
