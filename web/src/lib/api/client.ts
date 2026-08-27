@@ -760,6 +760,11 @@ export interface RiskEventRow {
 export interface TelegramStatusView {
   enabled: boolean;
   allowlist: number[] | null;
+  // Disabled mirrors telegram.disabled (T-059 §4.2: hot mute); reason
+  // explains a non-running or muted bot ("disabled in settings" / "no
+  // token configured" / "allowlist empty at boot").
+  disabled: boolean;
+  reason?: string;
   bot_username?: string;
   messages: number;
   errors: number;
@@ -849,12 +854,52 @@ export interface PlatformTelegramSettings {
   // added — marshals as JSON null, not []; always read this through
   // lib/platformFields.ts's allowlistOf(), never directly.
   allowlist: number[] | null;
+  // Disabled is NEGATIVE on purpose (settings-expansion §4.2/D3): a
+  // document persisted before this field existed unmarshals with the
+  // zero value, which must mean "keep delivering". The console renders
+  // a toggle labelled "Telegram notifications" whose ON position
+  // submits disabled:false — never invert this into an "enabled" field,
+  // the wire name and the diff path are both "telegram.disabled".
+  disabled: boolean;
+}
+
+// PlatformPlatformSettings is the platform.* section (T-059 §2/§4.3):
+// mode is restart-scoped, log_level and allowed_origin are hot.
+export interface PlatformPlatformSettings {
+  mode: string; // MARKET_DATA | RECORD | PAPER (SHADOW enumerated, never settable)
+  log_level: string; // debug | info | warn | error
+  allowed_origin: string; // scheme://host[:port]
+}
+
+export interface PlatformAISchedule {
+  hourly_minutes: number; // 0 or 15..1440
+  daily_hours: number; // 0 or 1..168
+  weekly_hours: number; // 0 or 24..720
+}
+
+export interface PlatformAIBudget {
+  max_analyses_per_day: number; // 1..96
+  max_output_tokens: number; // 256..8192
+}
+
+// PlatformAISettings is the ai.* section (T-059 §4.1). Every field is
+// hot — ai.Service/ai.Scheduler are always constructed behind an
+// ai.Switch, so a runtime enable/provider/schedule/budget change takes
+// effect without a restart.
+export interface PlatformAISettings {
+  enabled: boolean;
+  provider: string; // anthropic | fake (openai listed in capabilities, not settable)
+  model: string;
+  schedule: PlatformAISchedule;
+  budget: PlatformAIBudget;
 }
 
 export interface PlatformSettingsDoc {
+  platform: PlatformPlatformSettings;
   venues: Record<string, PlatformVenueSettings>;
   paper: PlatformPaperSettings;
   telegram: PlatformTelegramSettings;
+  ai: PlatformAISettings;
 }
 
 // PlatformPlan is the topology one venue's settings would produce
@@ -894,6 +939,11 @@ export interface PlatformSnapshotView {
   field_timing: Record<string, string>;
   plan?: Record<string, PlatformPlan>;
   restart?: RestartStatus;
+  // warnings is populated when the document was accepted but something
+  // about it is not fully in effect yet (settings-expansion §4.1) — e.g.
+  // ai.enabled with no resolvable provider key. Rendered verbatim, never
+  // reworded or softened.
+  warnings?: string[];
 }
 
 // PlatformSnapshot is the raw stored version (GET .../version/{n}) — no
@@ -924,6 +974,94 @@ export interface PlatformPreviewResponse {
 
 export interface EngineStatusResponse {
   restart: RestartStatus;
+}
+
+// ---- capabilities / AI status / secrets (T-059..T-061) -------------------
+// Three enumerated tables (modes, venues, AI providers) sharing one shape,
+// plus the secrets-vault status and field_timing — all backend-computed so
+// the console never hardcodes availability, reasons or timing.
+
+export interface ModeProfile {
+  id: string;
+  available: boolean;
+  reason?: string;
+}
+
+// CompiledVenueDiscount is the read-only compiled-in token-discount
+// profile for one venue (fees.go constants); modeled is always false
+// today — the discount toggle stays disabled everywhere until a
+// pay-asset ledger exists.
+export interface CompiledVenueDiscount {
+  pay_asset: string;
+  rate: string;
+  applies_to_api: boolean;
+  modeled: boolean;
+  reason: string;
+}
+
+export interface VenueProfile {
+  id: string;
+  name: string;
+  available: boolean;
+  reason?: string;
+  discount?: CompiledVenueDiscount;
+}
+
+export interface AIProviderProfile {
+  id: string;
+  available: boolean;
+  reason?: string;
+}
+
+export interface CapabilitiesVaultStatus {
+  vault_configured: boolean;
+  key_id?: string;
+  reason?: string;
+}
+
+export interface CapabilitiesResponse {
+  modes: ModeProfile[];
+  venues: VenueProfile[];
+  ai_providers: AIProviderProfile[];
+  log_levels: string[];
+  secrets: CapabilitiesVaultStatus;
+  field_timing?: Record<string, string>;
+}
+
+// AIRuntimeStatus is GET /api/v1/ai/status's shape (settings-expansion
+// §4.1): configured intent (enabled) vs what is actually installed
+// (running), with the reason when they differ.
+export interface AIRuntimeStatus {
+  enabled: boolean;
+  running: boolean;
+  reason?: string;
+  provider: string;
+  model: string;
+  key_source?: string; // vault | env
+  analyses_today: number;
+  max_per_day: number;
+  last_analysis?: string;
+}
+
+// SecretInfo is one registry row (internal/secrets.Info) — never a value,
+// never a prefix, never a last-4.
+export interface SecretInfo {
+  name: string;
+  label: string;
+  present: boolean;
+  source?: string; // vault | env
+  readable: boolean;
+  reason?: string;
+  updated_at?: string;
+  updated_by?: string;
+  applies: string; // immediately | process_restart
+}
+
+export interface SecretsListResponse {
+  vault_configured: boolean;
+  key_id?: string;
+  reason?: string;
+  secrets: SecretInfo[];
 }
 
 export interface CampaignRun {
@@ -1056,6 +1194,10 @@ export const api = {
     resolve: (id: string) => post<Alert>(`/api/v1/alerts/${encodeURIComponent(id)}/resolve`),
   },
   ai: {
+    // T-059 §4.1: configured vs actually-running, with the reason when
+    // they differ and today's budget usage. Served even with no
+    // ai.Service so the console can say "not configured" from data.
+    status: () => get<AIRuntimeStatus>("/api/v1/ai/status"),
     analyses: (limit = 10) => get<AIAnalysis[] | null>(`/api/v1/ai/analyses?limit=${limit}`),
     recommendations: (status = "") =>
       get<AIRecommendation[] | null>(`/api/v1/ai/recommendations?status=${status}`),
@@ -1063,6 +1205,18 @@ export const api = {
       post<{ config_version: number }>(`/api/v1/ai/recommendations/${encodeURIComponent(id)}/approve`),
     reject: (id: string) =>
       post<{ status: string }>(`/api/v1/ai/recommendations/${encodeURIComponent(id)}/reject`),
+  },
+  // T-060: write-only vault. PUT/DELETE never return a value — only
+  // presence/source/provenance (SecretInfo).
+  secrets: {
+    list: () => get<SecretsListResponse>("/api/v1/secrets"),
+    put: (name: string, value: string) =>
+      request<SecretInfo>(`/api/v1/secrets/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        body: JSON.stringify({ value }),
+      }),
+    delete: (name: string) =>
+      request<SecretInfo>(`/api/v1/secrets/${encodeURIComponent(name)}`, { method: "DELETE" }),
   },
   reports: {
     list: (kind = "", limit = 20) =>
@@ -1110,6 +1264,10 @@ export const api = {
     run: (req: CampaignRequest) => post<{ run: CampaignRun }>("/api/v1/campaigns", req),
   },
   platform: {
+    // T-061: modes, venues, AI providers, log levels and vault status —
+    // one shape, one source each. Static except the vault status; the
+    // console renders availability/reasons from this, never hardcoded.
+    capabilities: () => get<CapabilitiesResponse>("/api/v1/platform/capabilities"),
     current: () => get<PlatformSnapshotView>("/api/v1/platform/settings"),
     versions: (limit = 25) =>
       get<PlatformVersionInfo[]>(`/api/v1/platform/settings/versions?limit=${limit}`),
