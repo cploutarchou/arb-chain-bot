@@ -237,7 +237,7 @@ AES-256-GCM under `ARB_SECRET_KEY`. Generate a key once and keep it out
 of the repo:
 
 ```sh
-ARB_SECRET_KEY=$(head -c 32 /dev/urandom | base64)   # must decode to exactly 32 bytes
+make create-secret   # writes ARB_SECRET_KEY to .env (32 random bytes, base64); keeps an existing key
 ```
 
 - Unset or invalid key → the vault stays closed (logged at boot), the
