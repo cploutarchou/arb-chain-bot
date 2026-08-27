@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
 import { Badge, ErrorBox, Loading, type Tone } from "@/components/ui";
+import { CheckIcon } from "@/components/icons";
 
 // ScreenerAwait degrades a missing/unbuilt screener backend to one honest
 // notice instead of the generic ErrorBox: a 404 (route not registered
@@ -96,12 +97,56 @@ export function isStaleAge(
   return ms > pollIntervalS * 1000 * 3;
 }
 
+// ageTone implements the three-band data-age rule shared by every Scanner
+// Suite table (design-system.md §1.7 / UX §3): <=1x poll = dim, 1-3x =
+// warn, >3x = bad. Threshold comparisons only, never a recomputed number.
+export function ageTone(ms: number | undefined, pollIntervalS: number): Tone {
+  if (ms === undefined) return "dim";
+  const poll = Math.max(1, pollIntervalS) * 1000;
+  if (ms <= poll) return "dim";
+  if (ms <= poll * 3) return "warn";
+  return "bad";
+}
+
+// ageCellText renders the literal "STALE {age}" text required by §1.7 —
+// the carrier of the stale state is the word, never colour alone.
+export function ageCellText(
+  ms: number | undefined,
+  pollIntervalS: number,
+): string {
+  const text = fmtAge(ms);
+  return ageTone(ms, pollIntervalS) === "bad" ? `STALE ${text}` : text;
+}
+
+// staleCellClass: per-cell opacity dimming for every cell in a stale row
+// EXCEPT the age cell(s) itself (§1.7 — the STALE text stays full
+// opacity, dimming is secondary reinforcement on the rest of the row).
+// group-hover:opacity-100 suspends the dim on a hovered row (dimmed
+// --text-dim over --bg-raised falls under AA — §1.7 "hover suspends the
+// dim"); Table/VirtualTable's <tr> carries the `group` class this reads.
+export function staleCellClass(stale: boolean): string {
+  return stale ? "opacity-[var(--opacity-stale)] group-hover:opacity-100" : "";
+}
+
 // signTone picks a colour from the SIGN of a backend decimal string —
 // string comparison against "-", never a parse-and-recompute of the
 // value itself.
 export function signTone(value: string | undefined): Tone {
   if (!value) return "dim";
   return value.trim().startsWith("-") ? "bad" : "ok";
+}
+
+// signedText prefixes an explicit "+" on a positive backend decimal
+// string (design-system.md §1.8: "Sign is on the number ... never a bare
+// figure that needs the colour to be read"). This only ever prepends a
+// character already implied by the absence of "-" in the backend's own
+// string — it is not a parse-and-recompute, the digits are untouched.
+export function signedText(value: string | undefined): string {
+  if (value === undefined || value === "") return "—";
+  const t = value.trim();
+  if (t === "—" || t.startsWith("-") || t.startsWith("+")) return value;
+  if (/^0(\.0+)?$/.test(t)) return value;
+  return `+${value}`;
 }
 
 const NETWORK_TONE: Record<ScreenerNetworkState, Tone> = {
@@ -143,6 +188,11 @@ export const VENUE_OPTIONS = [
   "mexc",
 ];
 
+// VenueChips — design-system.md §4.7 chip spec: 24px tall, border-strong
+// outline; "on" fills --accent with --on-accent ink and a leading check
+// glyph, "off" stays unfilled with --text-dim ink; hover only paints
+// --bg-raised on the off state (the on state is already the strongest
+// visual, so hover leaves it unchanged).
 export function VenueChips({
   selected,
   onToggle,
@@ -160,12 +210,13 @@ export function VenueChips({
             type="button"
             onClick={() => onToggle(v)}
             aria-pressed={on}
-            className={`rounded border px-2 py-0.5 text-[12px] ${
+            className={`flex h-6 items-center gap-1 rounded border border-[var(--border-strong)] px-2 text-[12px] font-medium ${
               on
-                ? "border-[var(--accent)] text-[var(--accent)]"
-                : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
+                ? "bg-[var(--accent)] text-[var(--on-accent)]"
+                : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
             }`}
           >
+            {on && <CheckIcon />}
             {v}
           </button>
         );
@@ -194,108 +245,6 @@ export function pollIntervalSFromStatus(
 ): number {
   const s = status.kind === "ready" ? status.data.poll_interval_s : 0;
   return s > 0 ? s : 3;
-}
-
-// FundingRateChart: a small multi-series line chart in the same
-// hand-rolled-SVG convention as ui.tsx's PnLSeriesChart — Number()
-// conversions below are ONLY for screen-space x/y pixel geometry, never
-// a recomputed funding/carry figure; every rate rendered in the legend
-// or a tooltip would be the backend's own decimal string.
-export function FundingRateChart({
-  series,
-  width = 640,
-  height = 220,
-}: {
-  series: { venue: string; points: { at: string; rate: string }[] }[];
-  width?: number;
-  height?: number;
-}) {
-  const flat = series.flatMap((s) =>
-    s.points.map((p) => ({
-      venue: s.venue,
-      at: new Date(p.at).getTime(),
-      rate: Number(p.rate),
-    })),
-  );
-  if (flat.length === 0) {
-    return (
-      <p className="text-[13px] text-[var(--text-dim)]">
-        No funding history for this selection.
-      </p>
-    );
-  }
-  const minX = Math.min(...flat.map((p) => p.at));
-  const maxX = Math.max(...flat.map((p) => p.at));
-  const minY = Math.min(0, ...flat.map((p) => p.rate));
-  const maxY = Math.max(0, ...flat.map((p) => p.rate));
-  const spanX = maxX - minX || 1;
-  const spanY = maxY - minY || 1;
-  const padL = 8;
-  const padR = 8;
-  const padT = 10;
-  const padB = 8;
-  const plotW = width - padL - padR;
-  const plotH = height - padT - padB;
-  const sx = (t: number) => padL + ((t - minX) / spanX) * plotW;
-  const sy = (v: number) => padT + plotH - ((v - minY) / spanY) * plotH;
-  const zeroY = sy(0);
-  const colors = [
-    "var(--accent)",
-    "var(--ok)",
-    "var(--warn)",
-    "var(--high)",
-    "var(--critical)",
-    "var(--text-dim)",
-  ];
-  return (
-    <div>
-      <svg
-        width={width}
-        height={height}
-        role="img"
-        aria-label="Funding rate history by venue"
-      >
-        <line
-          x1={padL}
-          y1={zeroY}
-          x2={width - padR}
-          y2={zeroY}
-          stroke="var(--border)"
-          strokeWidth={1}
-        />
-        {series.map((s, i) => {
-          if (s.points.length === 0) return null;
-          const d = s.points
-            .map(
-              (p, j) =>
-                `${j === 0 ? "M" : "L"} ${sx(new Date(p.at).getTime()).toFixed(1)} ${sy(Number(p.rate)).toFixed(1)}`,
-            )
-            .join(" ");
-          return (
-            <path
-              key={s.venue}
-              d={d}
-              fill="none"
-              stroke={colors[i % colors.length]}
-              strokeWidth={1.5}
-            />
-          );
-        })}
-      </svg>
-      <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-[var(--text-dim)]">
-        {series.map((s, i) => (
-          <span key={s.venue} className="flex items-center gap-1">
-            <span
-              aria-hidden
-              style={{ background: colors[i % colors.length] }}
-              className="inline-block h-2 w-2 rounded-full"
-            />
-            {s.venue} (n={s.points.length})
-          </span>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 // parseCsv: shared comma-separated-list parser for base allow/deny,

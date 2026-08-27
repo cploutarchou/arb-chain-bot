@@ -21,6 +21,7 @@ import {
   ScreenerAwait,
   VenueChips,
   parseCsv,
+  signedText,
 } from "@/components/screener/ScreenerShared";
 import {
   Badge,
@@ -120,7 +121,7 @@ function RuleForm({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -128,7 +129,7 @@ function RuleForm({
           <select
             value={kind}
             onChange={(e) => setKind(e.target.value as ScreenerRuleKind)}
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none"
           >
             {KINDS.map((k) => (
               <option key={k} value={k}>
@@ -146,7 +147,7 @@ function RuleForm({
               value={minSpreadBps}
               onChange={(e) => setMinSpreadBps(e.target.value)}
               inputMode="decimal"
-              className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+              className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
             />
           </label>
         ) : (
@@ -158,7 +159,7 @@ function RuleForm({
               value={minCarryApr}
               onChange={(e) => setMinCarryApr(e.target.value)}
               inputMode="decimal"
-              className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+              className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
             />
           </label>
         )}
@@ -170,7 +171,7 @@ function RuleForm({
             value={minLiquidityQuote}
             onChange={(e) => setMinLiquidityQuote(e.target.value)}
             inputMode="decimal"
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -181,7 +182,7 @@ function RuleForm({
             value={minLifetimeS}
             onChange={(e) => setMinLifetimeS(e.target.value)}
             inputMode="numeric"
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -192,7 +193,7 @@ function RuleForm({
             value={cooldownS}
             onChange={(e) => setCooldownS(e.target.value)}
             inputMode="numeric"
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
       </div>
@@ -232,7 +233,7 @@ function RuleForm({
           <input
             value={quotesText}
             onChange={(e) => setQuotesText(e.target.value)}
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -242,7 +243,7 @@ function RuleForm({
           <input
             value={basesAllowText}
             onChange={(e) => setBasesAllowText(e.target.value)}
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -252,7 +253,7 @@ function RuleForm({
           <input
             value={basesDenyText}
             onChange={(e) => setBasesDenyText(e.target.value)}
-            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
       </div>
@@ -290,7 +291,7 @@ function RuleForm({
             value={paperSizeQuote}
             onChange={(e) => setPaperSizeQuote(e.target.value)}
             inputMode="decimal"
-            className="w-40 rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+            className="w-40 rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
           />
         </label>
       )}
@@ -430,6 +431,17 @@ export default function ScannerAlertsPage() {
                 "Auto-paper",
                 "",
               ]}
+              align={[
+                "text",
+                "text",
+                "text",
+                "num",
+                "text",
+                "num",
+                "text",
+                "text",
+                "text",
+              ]}
               empty="alert rules"
               rows={list.map((r) => [
                 r.name,
@@ -497,6 +509,16 @@ export default function ScannerAlertsPage() {
                 "Telegram",
                 "Paper execution",
               ]}
+              align={[
+                "text",
+                "text",
+                "num",
+                "text",
+                "text",
+                "num",
+                "text",
+                "text",
+              ]}
               empty="alert events"
               sticky
               maxHeight={420}
@@ -508,7 +530,7 @@ export default function ScannerAlertsPage() {
                 ev.lifetime_s,
                 `${ev.base}/${ev.quote}`,
                 `${ev.buy_venue} → ${ev.sell_venue}`,
-                ev.peak_net_bps,
+                signedText(ev.peak_net_bps),
                 <Badge key="tg" tone={ev.telegram_sent ? "ok" : "dim"}>
                   {ev.telegram_sent ? "sent" : "not sent"}
                 </Badge>,

@@ -11,13 +11,14 @@ import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
-  FundingRateChart,
   ScreenerAwait,
   signTone,
+  signedText,
   pollMsFromStatus,
   useScreenerStatus,
 } from "@/components/screener/ScreenerShared";
 import { PageTitle, Section, Table } from "@/components/ui";
+import { FundingHistoryChart } from "@/components/FundingHistoryChart";
 
 export default function FundingPage() {
   const status = useScreenerStatus();
@@ -68,6 +69,7 @@ export default function FundingPage() {
             ) : (
               <Table
                 head={["Base", ...venues]}
+                align={["text", ...venues.map(() => "num" as const)]}
                 empty="bases"
                 sticky
                 maxHeight={480}
@@ -87,11 +89,11 @@ export default function FundingPage() {
                         key={v}
                         className={
                           tone === "ok"
-                            ? "text-[var(--ok)]"
-                            : "text-[var(--critical)]"
+                            ? "text-[var(--pos)]"
+                            : "text-[var(--neg)]"
                         }
                       >
-                        {rate}
+                        {signedText(rate)}
                       </span>
                     );
                   }),
@@ -120,7 +122,7 @@ export default function FundingPage() {
         </div>
         <ScreenerAwait state={history} what="funding history">
           {(h) => (
-            <FundingRateChart
+            <FundingHistoryChart
               series={(h.series ?? []).map((s) => ({
                 venue: s.venue,
                 points: s.points ?? [],

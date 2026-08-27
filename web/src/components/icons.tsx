@@ -211,7 +211,114 @@ const GLYPHS: Record<string, ReactNode> = {
       <polygon points="6.4,5 6.4,11 11,8" fill="currentColor" stroke="none" />
     </>
   ),
+  Evidence: (
+    <>
+      <rect x="3" y="2" width="10" height="12" rx="1" />
+      <polyline points="5.5,9.5 7.5,7.5 9,9 11,6" />
+    </>
+  ),
 };
+
+// Rail group glyphs (design-system.md §3): one per nav *group*, drawn at
+// 20px in IconRail. Kept in a separate map from the per-page GLYPHS above
+// since a rail button represents a whole group, not a single page.
+const GROUP_GLYPHS: Record<string, ReactNode> = {
+  Operate: (
+    <rect
+      x="2"
+      y="2"
+      width="12"
+      height="12"
+      rx="1.2"
+      fill="currentColor"
+      stroke="none"
+    />
+  ),
+  "Scanner Suite": (
+    <>
+      <circle cx="8" cy="8" r="6.3" />
+      <polygon
+        points="9,3.5 5.2,8.6 7.8,8.6 7,12.5 10.8,7.4 8.2,7.4"
+        fill="currentColor"
+        stroke="none"
+      />
+    </>
+  ),
+  Portfolio: (
+    <>
+      <rect x="2" y="2" width="12" height="12" rx="1.2" />
+      <rect
+        x="8"
+        y="2"
+        width="6"
+        height="12"
+        fill="currentColor"
+        stroke="none"
+      />
+    </>
+  ),
+  Research: (
+    <>
+      <line x1="4" y1="4" x2="12" y2="4" />
+      <line x1="4" y1="4" x2="8" y2="12" />
+      <line x1="12" y1="4" x2="8" y2="12" />
+      <circle cx="4" cy="4" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="4" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="12" r="1.6" fill="currentColor" stroke="none" />
+    </>
+  ),
+  Control: <polygon points="8,1.8 14.2,8 8,14.2 1.8,8" />,
+  System: <polygon points="8,1.8 13.4,4.9 13.4,11.1 8,14.2 2.6,11.1 2.6,4.9" />,
+};
+
+// Non-nav glyphs (design-system.md §3): chevron/close/lock/etc, used by
+// the shell's new components (IconRail, GatedControl, RowDrawer,
+// NotificationBell/Panel, FilterCard). Rendered via the dedicated
+// exports below rather than NavIcon's label lookup, since these are not
+// per-page nav glyphs.
+const GLYPH_CHEVRON = <polyline points="4.5,6 8,9.5 11.5,6" />;
+const GLYPH_BELL = (
+  <>
+    <path d="M8 2.2 A2.8 2.8 0 0 1 10.8 5 V7.3 L12.2 10.2 H3.8 L5.2 7.3 V5 A2.8 2.8 0 0 1 8 2.2 Z" />
+    <path d="M6.5 12 a1.5 1.5 0 0 0 3 0" />
+  </>
+);
+const GLYPH_LOCK = (
+  <>
+    <rect x="3.5" y="7" width="9" height="7" rx="1" />
+    <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" />
+  </>
+);
+const GLYPH_CLOSE = <path d="M4 4l8 8M12 4l-8 8" />;
+const GLYPH_EXTERNAL = (
+  <>
+    <path d="M9 2.5h4.5V7M13.5 2.5L7 9" />
+    <path d="M6 3.5H3v9.5h9.5V10" />
+  </>
+);
+const GLYPH_COLLAPSE_RAIL = (
+  <>
+    <path d="M2.5 2.5v11" />
+    <polyline points="10,5 7,8 10,11" />
+  </>
+);
+const GLYPH_CHECK = <polyline points="3,8.5 6.5,12 13,4.5" />;
+const GLYPH_PLUS = <path d="M8 3v10M3 8h10" />;
+const GLYPH_MINUS = <path d="M3 8h10" />;
+const GLYPH_INFO = (
+  <>
+    <circle cx="8" cy="8" r="6.3" />
+    <path d="M8 7v4.5" />
+    <circle cx="8" cy="4.8" r="0.9" fill="currentColor" stroke="none" />
+  </>
+);
+const GLYPH_WARN_TRI = (
+  <>
+    <path d="M8 2.2 14 13.5H2Z" />
+    <path d="M8 6.5v3.5" />
+    <circle cx="8" cy="11.6" r="0.8" fill="currentColor" stroke="none" />
+  </>
+);
 
 const DEFAULT_GLYPH = (
   <circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none" />
@@ -221,8 +328,8 @@ export function NavIcon({ label }: { label: string }) {
   return (
     <svg
       viewBox="0 0 16 16"
-      width="15"
-      height="15"
+      width="16"
+      height="16"
       fill="none"
       stroke="currentColor"
       strokeWidth="1.3"
@@ -234,6 +341,129 @@ export function NavIcon({ label }: { label: string }) {
       {GLYPHS[label] ?? DEFAULT_GLYPH}
     </svg>
   );
+}
+
+// GroupIcon: the 20px icon-rail glyph for a nav group (design-system.md
+// §3/§4.1) — falls back to the same dot DEFAULT_GLYPH as NavIcon for any
+// group name that hasn't been drawn yet, so a new group never renders a
+// blank rail button.
+export function GroupIcon({ group }: { group: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="shrink-0"
+    >
+      {GROUP_GLYPHS[group] ?? DEFAULT_GLYPH}
+    </svg>
+  );
+}
+
+// Small icon primitive shared by the rest of §3's glyph table — size 16
+// (strokeWidth 1.3, inline-in-text/nav uses) or 20 (strokeWidth 1.5, rail/
+// bell/drawer-close/empty-state uses), per §3's "two rendered sizes" rule.
+function Glyph({
+  d,
+  size = 16,
+  className,
+}: {
+  d: ReactNode;
+  size?: 16 | 20 | 12;
+  className?: string;
+}) {
+  const strokeWidth = size === 20 ? 1.5 : size === 12 ? 1.2 : 1.3;
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={className ?? "shrink-0"}
+    >
+      {d}
+    </svg>
+  );
+}
+
+export function ChevronIcon({ className }: { className?: string }) {
+  return <Glyph d={GLYPH_CHEVRON} size={16} className={className} />;
+}
+export function BellIcon() {
+  return <Glyph d={GLYPH_BELL} size={20} />;
+}
+// LockIcon renders at 12px per §3 ("rendered at 12px"); the accessible
+// name belongs on this glyph directly (design-system.md §1.6/UX §9), not
+// on a wrapping element, so a screen reader announces the gate reason in
+// the same breath as the control.
+export function LockIcon({ label }: { label: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={12}
+      height={12}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="img"
+      aria-label={label}
+      className="shrink-0"
+    >
+      {GLYPH_LOCK}
+    </svg>
+  );
+}
+export function CloseIcon() {
+  return <Glyph d={GLYPH_CLOSE} size={20} />;
+}
+export function ExternalIcon() {
+  return <Glyph d={GLYPH_EXTERNAL} size={16} />;
+}
+export function CollapseRailIcon({ collapsed }: { collapsed?: boolean }) {
+  return (
+    <Glyph
+      d={GLYPH_COLLAPSE_RAIL}
+      size={20}
+      className={collapsed ? "shrink-0 -scale-x-100" : "shrink-0"}
+    />
+  );
+}
+export function CheckIcon({ className }: { className?: string }) {
+  return <Glyph d={GLYPH_CHECK} size={12} className={className} />;
+}
+export function PlusMinusIcon({
+  open,
+  className,
+}: {
+  open: boolean;
+  className?: string;
+}) {
+  return (
+    <Glyph
+      d={open ? GLYPH_MINUS : GLYPH_PLUS}
+      size={12}
+      className={className}
+    />
+  );
+}
+export function InfoIcon() {
+  return <Glyph d={GLYPH_INFO} size={16} />;
+}
+export function WarnTriIcon() {
+  return <Glyph d={GLYPH_WARN_TRI} size={16} />;
 }
 
 // SunIcon / MoonIcon back the theme toggle (top bar) — same own-icon

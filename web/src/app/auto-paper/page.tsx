@@ -13,15 +13,14 @@ import {
   ScreenerAwait,
   pollMsFromStatus,
   signTone,
+  signedText,
   useScreenerStatus,
 } from "@/components/screener/ScreenerShared";
 import { Badge, PageTitle, Section, Table, fmtTime } from "@/components/ui";
-
-function skippedText(skipped: Record<string, number>): string {
-  const entries = Object.entries(skipped).filter(([, n]) => n > 0);
-  if (entries.length === 0) return "none";
-  return entries.map(([reason, n]) => `${reason}: ${n}`).join(", ");
-}
+import {
+  RuleEvidenceTable,
+  type RuleEvidenceRow,
+} from "@/components/RuleEvidenceTable";
 
 export default function AutoPaperPage() {
   const status = useScreenerStatus();
@@ -40,38 +39,28 @@ export default function AutoPaperPage() {
 
       <Section title="Per-rule summary">
         <ScreenerAwait state={autoPaper} what="auto-paper summary">
-          {(a) => (
-            <Table
-              head={[
-                "Rule",
-                "Alerts",
-                "Executed",
-                "Skipped (reason)",
-                "Net PnL (quote)",
-                "Hit rate",
-                "Mean lifetime (s)",
-              ]}
-              empty="rule summaries (no alerts have fired yet)"
-              rows={(a.summary.per_rule ?? []).map((s) => [
-                s.rule_id,
-                s.alerts,
-                s.executed,
-                skippedText(s.skipped),
-                <span
-                  key="pnl"
-                  className={
-                    signTone(s.net_pnl_quote) === "ok"
-                      ? "text-[var(--ok)]"
-                      : "text-[var(--critical)]"
-                  }
-                >
-                  {s.net_pnl_quote}
-                </span>,
-                s.hit_rate,
-                s.mean_lifetime_s,
-              ])}
-            />
-          )}
+          {(a) => {
+            // ScreenerAutoPaperRuleSummary (§7) has no explicit `n` field;
+            // hit_rate is computed over executed cycles, so `executed` is
+            // the sample size §4.5 requires as its own column — an
+            // inference, not a wire field, named here so it doesn't read
+            // as a backend value the frontend invented independently.
+            const rows: RuleEvidenceRow[] = (a.summary.per_rule ?? []).map(
+              (s) => ({
+                id: s.rule_id,
+                label: s.rule_id,
+                alertsFired: s.alerts,
+                executed: s.executed,
+                skipped: s.skipped,
+                netPnlQuote: s.net_pnl_quote,
+                hitRate: s.hit_rate,
+                hitRateN: s.executed,
+                meanLifetimeS: s.mean_lifetime_s,
+                sampleSize: s.executed,
+              }),
+            );
+            return <RuleEvidenceTable rows={rows} />;
+          }}
         </ScreenerAwait>
       </Section>
 
@@ -89,6 +78,16 @@ export default function AutoPaperPage() {
                 "Opened",
                 "Net PnL (quote)",
               ]}
+              align={[
+                "text",
+                "text",
+                "text",
+                "text",
+                "text",
+                "text",
+                "text",
+                "num",
+              ]}
               empty="open positions"
               rows={(a.positions ?? []).map((p) => [
                 p.id,
@@ -98,11 +97,33 @@ export default function AutoPaperPage() {
                 p.buy_venue && p.sell_venue
                   ? `${p.buy_venue} → ${p.sell_venue}`
                   : "—",
-                <Badge key="st" tone={p.status === "open" ? "warn" : "dim"}>
+                <Badge
+                  key="st"
+                  tone={
+                    p.status === "open"
+                      ? "warn"
+                      : p.status === "stopped (maintenance margin)"
+                        ? "warn"
+                        : "dim"
+                  }
+                >
                   {p.status ?? "—"}
                 </Badge>,
                 p.opened_at ? fmtTime(p.opened_at) : "—",
-                p.net_pnl_quote ?? "—",
+                p.net_pnl_quote !== undefined ? (
+                  <span
+                    key="pnl"
+                    className={
+                      signTone(p.net_pnl_quote) === "ok"
+                        ? "text-[var(--pos)]"
+                        : "text-[var(--neg)]"
+                    }
+                  >
+                    {signedText(p.net_pnl_quote)}
+                  </span>
+                ) : (
+                  "—"
+                ),
               ])}
             />
           )}
