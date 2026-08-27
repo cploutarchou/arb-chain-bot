@@ -250,6 +250,13 @@ server → {"topic":"scanner","seq":123,"snapshot":true,"data":{...}}
 server → {"topic":"scanner","seq":124,"data":{...batched diff...}}
 ```
 
+Background job topics (`campaigns`, `replays`) follow the same
+subscribe/snapshot/diff shape but publish on job-state transitions
+(queued → running → done/failed) rather than a fixed tick: the topic's
+snapshot handler lists in-memory + persisted runs, and every
+`Runner.persist()` call re-publishes the changed run so a page reload
+never needs to poll (T-058 BL-17).
+
 - On subscribe: snapshot, then diffs; per-topic monotonically increasing
   `seq` lets clients detect loss; a gap triggers client-side resubscribe
   (server treats resubscribe as snapshot request).
@@ -321,6 +328,37 @@ events; only `internal/notification` talks to Telegram.
   `market_recording_metadata`.
 - Audit events are insert-only; application role has no UPDATE/DELETE on
   audit tables.
+- Background job runners (`internal/campaign.Runner`, `internal/replay.Runner`)
+  persist one row per run (`campaign_runs`, `replay_runs`) through their own
+  small `RunStore` interfaces, upserted on every state transition — not
+  the outbox: a job runner already owns a single background goroutine, so
+  there is no hot-path contention to decouple, and the row must be
+  visible synchronously enough that a restart's orphan-reconciliation
+  pass sees it. That pass does NOT mark every row still "queued"/
+  "running" as "failed: interrupted": each row also carries an
+  `owner_id` + `heartbeat_at` (migration 000009, review T-058 P3-h),
+  stamped on every write and re-stamped by a dedicated heartbeat
+  goroutine independent of progress callbacks; reconciliation only
+  reclaims a row whose heartbeat has gone stale (or is absent —
+  pre-migration rows, or one this process never itself started) via
+  `internal/jobrun.Reclaimable` — never a row a DIFFERENT, still-live
+  process is actively updating (two processes sharing one Postgres, a
+  rolling-deploy overlap or an operator running two instances, would
+  otherwise each reclaim the other's active run at boot).
+  `internal/jobrun` is a small shared package (`Gate` for the Start-
+  before-Run lifetime-context race, `Bound`/`ClampLimit` for the
+  in-memory run map's 200-entry ring, `Reclaimable`/`NewOwnerID`/
+  heartbeat constants) both runners use identically so a fix to one
+  cannot drift from the other; each `Runner` keeps its own
+  `execute()`/`persist()`/`List()` around it — not a shared generic
+  Runner, the two job shapes (`replay.Run` vs `campaign.Run`) differ
+  enough that collapsing them would cost more clarity than it buys.
+  `risk_events` (breaker transitions and throttled risk rejections, T-058
+  BL-31) goes through the outbox instead, because it IS on the hot path
+  (`internal/risk`'s breaker callback and the scanner's reject branch).
+
+  `GET /api/v1/risk/events`, `GET /api/v1/replays[/{id}]`, and
+  `GET /api/v1/campaigns[/{id}]` are the read side of these three tables.
 
 ## 13. Configuration model
 
@@ -332,6 +370,64 @@ diff) → audit event → hot-swap via atomic pointer; components read a
 consistent config snapshot per evaluation (config version cited in every
 opportunity and risk decision). Rollback = re-activating a prior version
 (itself a new version + audit event).
+
+**Platform settings (T-057, `docs/design/platform-settings-and-restart.md`).**
+A second versioned document — symbols, starting assets, per-asset paper
+balances, venue enabled/paper-enabled, per-venue fee tier and per-symbol fee
+overrides, Telegram allowlist — lives in `internal/platform` and
+`platform_settings`, deliberately **not** in `strategy.Params`: the
+section→permission mapping (`auth.PermissionForConfigSection`) fails open to
+OPERATOR for any new section, strategy versions are cited as provenance by
+every opportunity, and symbol validation is impure (needs `exchangeInfo` plus
+a `graph.Build` dry-run). Env vars are first-boot seeds only. Every field is
+restart-scoped except the Telegram allowlist; restart-scoped changes are
+applied by `app.Supervisor`, which re-enters one stable `Engine.Run` (so all
+existing engine seams keep working) after draining the recorder, pausing
+paper and waiting for the outbox — persisted history is never lost.
+
+**Settings expansion (T-059/T-060/T-061,
+`docs/design/settings-expansion.md`).** The same document gains
+`platform.mode` (restart-scoped; enum `MARKET_DATA|RECORD|PAPER|SHADOW` —
+`LIVE` is rejected by name, `REPLAY`/`BACKTEST` stay batch-only entry
+points), `platform.log_level` and `platform.allowed_origin` (hot), an `ai`
+section and `telegram.disabled` (hot — a negative field so its zero value
+on an already-persisted document means "keep delivering"). The
+hot/restart split follows what a
+*restart actually rebuilds*: the Supervisor re-enters `Engine.Run` only, so
+anything owned by a sibling Component (AI scheduler, Telegram bot,
+`api.Server`) is made hot through an atomic accessor rather than labelled
+"restart", which would silently mean "redeploy". Because the payload is
+JSONB, `Settings.WithDefaults` normalizes pre-expansion versions wherever a
+stored payload becomes a `Settings` (load, get, rollback) — otherwise a
+deploy would fail validation at boot. The fill is field by field, and when
+the `ARB_MODE`-seeded `platform.mode` breaks a cross-field rule the stored
+venues carry (e.g. `PAPER` over `paper_enabled=false`) it falls back to
+`MARKET_DATA` with a WARN naming the substitution; a stored mode is never
+rewritten. Secrets (Anthropic key, Telegram
+token) move to a `secrets` table encrypted with AES-256-GCM under
+`ARB_SECRET_KEY`, resolved through a vault-first/env-fallback
+`SecretSource` (a vault read that fails at the store level logs a WARN
+before the env fallback; an unreadable row does not), write-only over the
+API (the value is decoded into a `[]byte` that is zeroed after the write;
+`secret.write`/`secret.delete` audit rows carry
+`after={name,present,key_id}`), with a closed two-name registry:
+no exchange trading key is ever stored, and live trading stays disabled.
+
+Implemented surface (backend): `platform.ModeTable`/`VenueTable`/
+`AIProviderTable` are the single source for `GET /api/v1/platform/
+capabilities` (and the `/platform/venues` alias); `ai.Switch` holds the
+swappable advisor, `ai.Scheduler` re-arms from `ai.schedule` at every
+wake, and `ai.Service` enforces `budget.max_analyses_per_day`
+(per-process UTC counter) and passes `max_output_tokens` to the provider;
+`app.SetLogLevel` drives a package-scoped `slog.LevelVar`;
+`api.Server.SetAllowedOrigin` feeds the websocket origin check; `app.
+Supervisor` names a mode transition in `pending_reasons`
+(`"platform settings v9: mode MARKET_DATA→PAPER"`) and `Engine.Mode()`
+reports the running mode (snapshotted per run). Tables: `secrets(name PK,
+ciphertext, nonce, key_id, updated_at, updated_by)`. Routes: `GET/PUT/
+DELETE /api/v1/secrets[/{name}]`, `GET /api/v1/ai/status`. Audit actions:
+`secret.write`, `secret.delete` (entity `secret:{name}`, no before
+payload). The `health` topic's `mode` is now `{running, configured}`.
 
 ## 14. Observability
 

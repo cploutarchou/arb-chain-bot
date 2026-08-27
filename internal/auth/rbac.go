@@ -19,7 +19,9 @@ const (
 	PermAIApprove      Permission = "ai:approve"     // approve/reject recommendations
 	PermAlertAck       Permission = "alerts:ack"
 	PermReportView     Permission = "reports:view"
-	PermReportGenerate Permission = "reports:generate" // on-demand generation (costs queries)
+	PermReportGenerate Permission = "reports:generate"   // on-demand generation (costs queries)
+	PermRecordControl  Permission = "recordings:control" // start/stop in-process market-data recording
+	PermCampaignRun    Permission = "campaigns:run"      // launch a §80 campaign over a recording
 
 	PermRiskConfig     Permission = "risk:config"     // limits/breaker policy
 	PermExchangeConfig Permission = "exchange:config" // keys/markets/fees
@@ -39,13 +41,14 @@ var matrix = map[Role]map[Permission]bool{
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
 		PermViewRisk, PermViewSystem, PermReportView, PermViewAudit,
 		PermPaperControl, PermScannerConfig, PermAIApprove, PermAlertAck,
-		PermReportGenerate,
+		PermReportGenerate, PermRecordControl, PermCampaignRun,
 	),
 	RoleAdmin: setOf(
 		PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
 		PermViewRisk, PermViewSystem, PermReportView, PermViewAudit,
 		PermPaperControl, PermScannerConfig, PermAIApprove, PermAlertAck,
-		PermReportGenerate, PermPaperReset, PermRiskConfig,
+		PermReportGenerate, PermRecordControl, PermCampaignRun,
+		PermPaperReset, PermRiskConfig,
 		PermExchangeConfig, PermUserManage, PermSystemConfig,
 	),
 }

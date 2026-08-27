@@ -209,3 +209,44 @@ func TestBookMarkerInversePair(t *testing.T) {
 		t.Fatal("unmarkable asset marked")
 	}
 }
+
+// Acceptance (BL-10): Reset clears realized P&L, exposure, fees, and
+// cycle counters, and restarts the high-water mark at the new initial
+// balances (not zero) so drawdown is not fabricated on the next snapshot.
+func TestResetRestartsSession(t *testing.T) {
+	resv := newResv("10000")
+	p := New(resv, map[exchange.Asset]decimal.Decimal{"USDT": d("10000")})
+
+	if err := p.ApplyCycle(completedCycle("c1", "1000", "1004"), false); err != nil {
+		t.Fatal(err)
+	}
+	p.exposure["BTC"] = d("0.01") // simulate stranded exposure directly
+	snap := p.TakeSnapshot(t0, nil)
+	if snap.Cycles != 1 || !snap.Realized["USDT"].Equal(d("4")) {
+		t.Fatalf("pre-reset snapshot = %+v", snap)
+	}
+
+	// A real paper reset resets the cash ledger and the portfolio
+	// together (BL-10's ResetPaper does both); do the same here so
+	// equity matches the new peak and drawdown is not fabricated purely
+	// by the cash side lagging the portfolio side.
+	resv.Reset(map[exchange.Asset]decimal.Decimal{"USDT": d("20000")})
+	p.Reset(map[exchange.Asset]decimal.Decimal{"USDT": d("20000")})
+
+	snap = p.TakeSnapshot(t0, nil)
+	if snap.Cycles != 0 || snap.Completed != 0 || snap.Failed != 0 {
+		t.Fatalf("post-reset counters = %+v", snap)
+	}
+	if !snap.Realized["USDT"].IsZero() {
+		t.Fatalf("post-reset realized = %s", snap.Realized["USDT"])
+	}
+	if len(snap.Exposure) != 0 {
+		t.Fatalf("post-reset exposure survived: %v", snap.Exposure)
+	}
+	if !snap.Equity["USDT"].Equal(d("20000")) {
+		t.Fatalf("post-reset equity = %s, want 20000", snap.Equity["USDT"])
+	}
+	if dd := snap.Drawdown["USDT"]; !dd.IsZero() {
+		t.Fatalf("fabricated drawdown after reset: %s", dd)
+	}
+}

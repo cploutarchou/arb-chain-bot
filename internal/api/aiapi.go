@@ -24,6 +24,17 @@ func (s *Server) aiRoutes(mux *http.ServeMux) {
 			next(w, r)
 		}
 	}
+	// GET /api/v1/ai/status (T-059 §4.1): configured intent vs what is
+	// actually installed, with the reason when they differ, and today's
+	// budget usage. Served even without an ai.Service so the console can
+	// say "not configured in this profile" from data.
+	mux.HandleFunc("GET /api/v1/ai/status", s.requirePerm(auth.PermViewDashboard, func(w http.ResponseWriter, r *http.Request) {
+		if s.AIStatus == nil {
+			WriteData(w, http.StatusOK, AIRuntimeStatus{Reason: "AI advisor not configured in this profile"})
+			return
+		}
+		WriteData(w, http.StatusOK, s.AIStatus())
+	}))
 	mux.HandleFunc("GET /api/v1/ai/analyses", s.requirePerm(auth.PermViewDashboard, gate(func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		WriteData(w, http.StatusOK, s.AI.Analyses(limit))

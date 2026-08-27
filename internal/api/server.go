@@ -12,12 +12,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
+	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
@@ -62,13 +64,76 @@ type Server struct {
 	AI *ai.Service
 	// AuditAction records control actions (source=web) with the caller's
 	// IP and correlation ID for forensics (audit S-008); nil = log only.
-	AuditAction func(actor, action, entity, ip, correlationID string)
+	// after is an optional JSON payload for the row's "after" column
+	// (nil for actions with no safe state to record).
+	AuditAction func(actor, action, entity, ip, correlationID string, after []byte)
 	// Reads, when set, backs the live read groups (engine profiles).
 	Reads ReadModel
 	// Store, when set, backs the history read groups.
 	Store *storage.Store
 	// Reports, when set, backs on-demand report generation.
 	Reports *reporting.Generator
+	// Recorder, when set, backs the in-process recording controls.
+	Recorder RecorderController
+	// Campaigns, when set, backs the §80 campaign routes.
+	Campaigns CampaignService
+	// Users, when set, backs the users & roles console routes (BL-11).
+	Users UserAdmin
+	// Platform, when set, backs the versioned platform-settings routes
+	// (T-057: venues/symbols/fees/paper balances/Telegram allowlist).
+	Platform *platform.Service
+	// PlatformCatalog, when set, backs the "plan" (markets/triangles)
+	// field on GET/preview/apply. nil omits "plan" from the response
+	// rather than failing the request.
+	PlatformCatalog platform.Catalog
+	// Restart, when set, backs the supervised-engine restart routes.
+	Restart RestartController
+	// BotRunning, when set, reports whether the Telegram bot was
+	// actually constructed — field_timing's "telegram.allowlist" is hot
+	// only then (components.go:170: an empty boot allowlist never
+	// builds the bot, so the first entry needs a restart).
+	BotRunning func() bool
+	// Telegram, when set, backs GET /api/v1/telegram/status (BL-21).
+	// nil means the token was never configured; the route still answers
+	// 200 with enabled:false rather than 404 — "not configured" is a
+	// legitimate status, not an absent route.
+	Telegram func() TelegramStatusView
+	// Triangles, when set, backs the live half of GET
+	// /api/v1/triangles/{id} (BL-26); nil (no engine in this profile)
+	// leaves the route serving only store-backed history.
+	Triangles TriangleReader
+	// Replays, when set, backs the console-driven replay routes (BL-17).
+	Replays ReplayService
+	// Mode, when set, reports the operating mode for /system/status
+	// (T-059: the engine's RUNNING mode in engine profiles, the
+	// configured document's mode in the API profile). nil falls back to
+	// the boot cfg.Mode.
+	Mode func() string
+	// Secrets, when set, backs the write-only secrets routes (T-060).
+	Secrets SecretsAdmin
+	// AIStatus, when set, backs GET /api/v1/ai/status and the
+	// "warnings" field on a platform-settings apply.
+	AIStatus func() AIRuntimeStatus
+
+	// allowedOrigin is platform.allowed_origin (hot, D7): the websocket
+	// origin check reads it through an atomic accessor because the
+	// Supervisor never rebuilds the api.Server.
+	allowedOrigin atomic.Pointer[string]
+}
+
+// AIRuntimeStatus is the advisor's runtime status line (settings-
+// expansion §4.1): the configured intent (enabled) versus what is
+// actually installed (running), with the reason when they differ.
+type AIRuntimeStatus struct {
+	Enabled       bool       `json:"enabled"`
+	Running       bool       `json:"running"`
+	Reason        string     `json:"reason,omitempty"`
+	Provider      string     `json:"provider"`
+	Model         string     `json:"model"`
+	KeySource     string     `json:"key_source,omitempty"` // vault | env
+	AnalysesToday int        `json:"analyses_today"`
+	MaxPerDay     int        `json:"max_per_day"`
+	LastAnalysis  *time.Time `json:"last_analysis,omitempty"`
 }
 
 // PaperController is the paper engine's control surface (shared with
@@ -77,16 +142,51 @@ type PaperController interface {
 	Pause()
 	Resume()
 	Running() bool
+	// Reset rebuilds the paper portfolio/reservations to the configured
+	// initial balances and starts a new paper session row, preserving
+	// historical cycles/orders (BL-10). Returns ErrPaperNotIdle if the
+	// engine is running or a simulation is in flight — callers must
+	// Pause() first.
+	Reset(ctx context.Context) error
 }
+
+// ErrPaperNotIdle is returned by PaperController.Reset when the engine
+// is still running or a simulation is in flight (BL-10); the HTTP layer
+// maps it to 409.
+var ErrPaperNotIdle = errors.New("api: paper engine must be paused with zero active simulations before reset")
 
 func NewServer(cfg config.Bootstrap, log *slog.Logger, info BuildInfo) *Server {
 	if info.Version == "" {
 		info.Version = "dev"
 	}
-	return &Server{cfg: cfg, log: log, info: info, start: time.Now(), csrfKey: newCSRFKey()}
+	s := &Server{cfg: cfg, log: log, info: info, start: time.Now(), csrfKey: newCSRFKey()}
+	origin := cfg.AllowedOrigin
+	s.allowedOrigin.Store(&origin)
+	return s
 }
 
 func (s *Server) Name() string { return "api" }
+
+// SetAllowedOrigin applies platform.allowed_origin at runtime (hot).
+func (s *Server) SetAllowedOrigin(origin string) {
+	s.allowedOrigin.Store(&origin)
+}
+
+// AllowedOrigin returns the origin currently admitted cross-origin.
+func (s *Server) AllowedOrigin() string {
+	if p := s.allowedOrigin.Load(); p != nil {
+		return *p
+	}
+	return s.cfg.AllowedOrigin
+}
+
+// mode resolves the reported operating mode (see Mode).
+func (s *Server) mode() string {
+	if s.Mode != nil {
+		return s.Mode()
+	}
+	return string(s.cfg.Mode)
+}
 
 // Run serves until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context) error {
@@ -142,7 +242,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/system/status", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
 		WriteData(w, http.StatusOK, map[string]any{
-			"mode":       string(s.cfg.Mode),
+			"mode":       s.mode(),
 			"version":    s.info.Version,
 			"commit":     s.info.Commit,
 			"uptime_sec": int64(time.Since(s.start).Seconds()),
@@ -174,12 +274,21 @@ func (s *Server) routes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("POST /api/v1/paper/pause", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate("paper.pause", func(p PaperController) { p.Pause() }))))
 	mux.HandleFunc("POST /api/v1/paper/resume", s.requirePerm(auth.PermPaperControl, s.requireCSRF(paperGate("paper.resume", func(p PaperController) { p.Resume() }))))
+	s.paperResetRoute(mux)
 	mux.HandleFunc("GET /api/v1/ws", s.requireAuth(s.handleWS))
 	s.configRoutes(mux)
 	s.alertRoutes(mux)
 	s.aiRoutes(mux)
 	s.readRoutes(mux)
+	s.pnlRoutes(mux)
+	s.triangleRoutes(mux)
 	s.reportRoutes(mux)
+	s.opsRoutes(mux)
+	s.replayRoutes(mux)
+	s.usersRoutes(mux)
+	s.platformRoutes(mux)
+	s.secretsRoutes(mux)
+	s.telegramRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays behind RBAC (audit S-003):
 		// metric names and label values map the platform's internals.
@@ -191,10 +300,26 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 // audit records one web control action with request forensics; nil-safe.
 func (s *Server) audit(r *http.Request, actor, action, entity string) {
+	s.auditWith(r, actor, action, entity, nil)
+}
+
+// auditWith is audit with a structured "after" payload (marshalled here;
+// a value that does not marshal is recorded without a payload rather
+// than dropping the event). Callers pass only state that is safe to
+// persist — never a secret value.
+func (s *Server) auditWith(r *http.Request, actor, action, entity string, after any) {
 	if s.AuditAction == nil {
 		return
 	}
-	s.AuditAction(actor, action, entity, clientAddr(r).String(), correlationID(r))
+	var payload []byte
+	if after != nil {
+		if b, err := json.Marshal(after); err == nil {
+			payload = b
+		} else {
+			s.log.Error("audit payload not marshalled", "action", action, "error", err)
+		}
+	}
+	s.AuditAction(actor, action, entity, clientAddr(r).String(), correlationID(r), payload)
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {
@@ -267,6 +392,13 @@ func WriteData(w http.ResponseWriter, status int, data any) {
 
 func WriteError(w http.ResponseWriter, status int, code, msg, correlationID string) {
 	writeJSON(w, status, Envelope{Error: &APIError{Code: code, Message: msg, CorrelationID: correlationID}})
+}
+
+// WriteErrorData writes an error alongside a data payload (e.g.
+// stale_version's current_version) — the envelope keeps both fields so
+// the client never has to parse the message string for machine data.
+func WriteErrorData(w http.ResponseWriter, status int, code, msg, correlationID string, data any) {
+	writeJSON(w, status, Envelope{Data: data, Error: &APIError{Code: code, Message: msg, CorrelationID: correlationID}})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

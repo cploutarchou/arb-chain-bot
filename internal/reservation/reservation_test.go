@@ -203,3 +203,56 @@ func TestConcurrentDuplicateKey(t *testing.T) {
 		t.Fatalf("double spend: available = %s", avail)
 	}
 }
+
+// Acceptance (BL-10): Reset discards every reservation/hold and restores
+// a fresh initial ledger, preserving all conservation invariants.
+func TestResetRebuildsLedger(t *testing.T) {
+	m := newMgr("1000")
+	r1, err := m.Reserve("op-1", "USDT", d("400"), "tri-A", []string{"mkt:BTCUSDT:buy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Settle(r1.ID, d("400")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Reserve("op-2", "USDT", d("100"), "tri-B", []string{"mkt:ETHUSDT:buy"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CheckInvariants(); err != nil {
+		t.Fatal(err)
+	}
+
+	m.Reset(map[exchange.Asset]decimal.Decimal{"USDT": d("5000")})
+
+	if err := m.CheckInvariants(); err != nil {
+		t.Fatalf("invariants after reset: %v", err)
+	}
+	avail, reserved := m.Balance("USDT")
+	if !avail.Equal(d("5000")) || !reserved.IsZero() {
+		t.Fatalf("post-reset balance = %s/%s", avail, reserved)
+	}
+	// The old op-1 idempotency key is gone: a fresh Reserve with the same
+	// key does not replay the pre-reset reservation.
+	r, err := m.Reserve("op-1", "USDT", d("50"), "tri-A", []string{"mkt:BTCUSDT:buy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.State != StateActive || !r.Amount.Equal(d("50")) {
+		t.Fatalf("post-reset reservation reused stale state: %+v", r)
+	}
+	// The old conflict key was cleared too.
+	if _, err := m.Reserve("op-3", "USDT", d("10"), "tri-C", []string{"mkt:ETHUSDT:buy"}); err != nil {
+		t.Fatalf("stale conflict key survived reset: %v", err)
+	}
+	// A different starting asset set entirely also works (no leftover
+	// USDT-only assumptions baked into the new ledger).
+	m.Reset(map[exchange.Asset]decimal.Decimal{"USDC": d("2000")})
+	availUSDT, reservedUSDT := m.Balance("USDT")
+	if !availUSDT.IsZero() || !reservedUSDT.IsZero() {
+		t.Fatalf("old asset balance survived reset: %s/%s", availUSDT, reservedUSDT)
+	}
+	availUSDC, _ := m.Balance("USDC")
+	if !availUSDC.Equal(d("2000")) {
+		t.Fatalf("new asset balance = %s", availUSDC)
+	}
+}

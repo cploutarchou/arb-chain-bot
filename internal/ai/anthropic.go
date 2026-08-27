@@ -18,6 +18,9 @@ type Anthropic struct {
 	ModelID string
 	BaseURL string // default https://api.anthropic.com; injectable for tests
 	HTTP    *http.Client
+	// MaxTokens is the request's max_tokens (platform ai.budget.
+	// max_output_tokens); 0 falls back to the pre-T-059 constant 2048.
+	MaxTokens int
 }
 
 func NewAnthropic(apiKey, model string) *Anthropic {
@@ -32,9 +35,13 @@ func (a *Anthropic) Name() string  { return "anthropic" }
 func (a *Anthropic) Model() string { return a.ModelID }
 
 func (a *Anthropic) Analyze(ctx context.Context, prompt string) (string, error) {
+	maxTokens := a.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 2048
+	}
 	body, err := json.Marshal(map[string]any{
 		"model":      a.ModelID,
-		"max_tokens": 2048,
+		"max_tokens": maxTokens,
 		"messages": []map[string]any{
 			{"role": "user", "content": prompt},
 		},

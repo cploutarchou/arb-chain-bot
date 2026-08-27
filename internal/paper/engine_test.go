@@ -2,6 +2,7 @@ package paper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -309,4 +310,47 @@ func TestSameTriangleSerializedByConflictKeys(t *testing.T) {
 	waitFor(t, func() bool { return e.Snapshot().Skipped == 1 })
 	close(exec.block)
 	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+}
+
+// Acceptance (BL-10): Reset refuses while running, refuses with a
+// simulation still in flight even when paused, and otherwise rebuilds
+// the ledger/portfolio and zeroes the session counters.
+func TestResetRequiresIdleEngine(t *testing.T) {
+	exec := &scriptedExecutor{result: completed, block: make(chan struct{})}
+	e, in, resv, port := harness(t, exec)
+	cancel, wait := runEngine(t, e)
+	defer wait()
+	defer cancel()
+
+	if err := e.Reset(map[exchange.Asset]decimal.Decimal{"USDT": d("5000")}); !errors.Is(err, ErrActive) {
+		t.Fatalf("reset while running = %v, want ErrActive", err)
+	}
+
+	in <- qualifiedEvent("op-r1", "100")
+	waitFor(t, func() bool { return exec.inFlight.Load() == 1 })
+	e.Pause()
+	if err := e.Reset(map[exchange.Asset]decimal.Decimal{"USDT": d("5000")}); !errors.Is(err, ErrActive) {
+		t.Fatalf("reset with a simulation in flight = %v, want ErrActive", err)
+	}
+	close(exec.block)
+	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+
+	if err := e.Reset(map[exchange.Asset]decimal.Decimal{"USDT": d("5000")}); err != nil {
+		t.Fatalf("reset when idle: %v", err)
+	}
+	if err := resv.CheckInvariants(); err != nil {
+		t.Fatalf("invariants after reset: %v", err)
+	}
+	avail, reserved := resv.Balance("USDT")
+	if !avail.Equal(d("5000")) || !reserved.IsZero() {
+		t.Fatalf("post-reset balance = %s/%s", avail, reserved)
+	}
+	snap := port.TakeSnapshot(t0, nil)
+	if snap.Cycles != 0 || snap.Completed != 0 {
+		t.Fatalf("post-reset portfolio snapshot = %+v", snap)
+	}
+	st := e.Snapshot()
+	if st != (Stats{}) {
+		t.Fatalf("post-reset stats = %+v, want zero", st)
+	}
 }

@@ -25,7 +25,7 @@ func newAlertServer(t *testing.T) (*Server, *http.ServeMux, *notification.Center
 	}})
 	s.Alerts = center
 	var audits []string
-	s.AuditAction = func(actor, action, entity, _, _ string) {
+	s.AuditAction = func(actor, action, entity, _, _ string, _ []byte) {
 		audits = append(audits, actor+"|"+action+"|"+entity)
 	}
 	return s, mux, center, &audits

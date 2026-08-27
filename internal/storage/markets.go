@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
+	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 )
 
 // UpsertMarkets syncs normalized instrument metadata after each metadata
@@ -47,4 +48,55 @@ func (s *Store) UpsertMarkets(ctx context.Context, markets []exchange.Market) er
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// ListMarkets returns the persisted market metadata for one exchange —
+// the API-profile fallback Catalog (platform.Catalog) when no live
+// Engine is attached (design §1.5); the engine profile prefers its own
+// retained bootstrap slice instead of round-tripping through storage.
+func (s *Store) ListMarkets(ctx context.Context, ex exchange.ExchangeID) ([]exchange.Market, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT symbol, base_asset, quote_asset, status, enabled, rules
+		FROM markets WHERE exchange_id = $1`, string(ex))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []exchange.Market
+	for rows.Next() {
+		var (
+			m     exchange.Market
+			rules []byte
+		)
+		if err := rows.Scan(&m.ID.Symbol, &m.Base, &m.Quote, &m.Status, &m.Enabled, &rules); err != nil {
+			return nil, err
+		}
+		m.ID.Exchange = ex
+		if len(rules) > 0 {
+			if err := json.Unmarshal(rules, &m.Rules); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// Catalog adapts the store to platform.Catalog — the API-profile
+// fallback when no *app.Engine is attached (design §1.5). An empty
+// result is reported as platform.ErrCatalogNotReady, the same "not
+// bootstrapped yet, not genuinely empty" distinction engineCatalog
+// makes, so the two implementations behave identically from the
+// platform.Service caller's point of view.
+type Catalog struct{ S *Store }
+
+func (c Catalog) Markets(ctx context.Context, ex exchange.ExchangeID) ([]exchange.Market, error) {
+	out, err := c.S.ListMarkets(ctx, ex)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, platform.ErrCatalogNotReady
+	}
+	return out, nil
 }
