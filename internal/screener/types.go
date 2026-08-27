@@ -35,7 +35,8 @@ const (
 	VenueBitget  Venue = "bitget"
 	VenueGate    Venue = "gate"
 	VenueMEXC    Venue = "mexc"
-	// Tier-2 venues (T-075): opt-in until a 30-min soak (settings.go).
+	// Tier-2 venues (T-075): enabled by default since the 2026-08-27
+	// 30-min soak (settings.go Defaults).
 	VenueKuCoin   Venue = "kucoin"
 	VenueHTX      Venue = "htx"
 	VenueKraken   Venue = "kraken"

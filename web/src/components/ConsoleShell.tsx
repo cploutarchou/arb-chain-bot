@@ -10,7 +10,7 @@ import {
 } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
 import { connectHub, type HubMessage } from "@/lib/ws";
-import { useAuth, can } from "@/lib/auth";
+import { useAuth, useEntitlement, can } from "@/lib/auth";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { MoonIcon, NavIcon, SunIcon } from "@/components/icons";
 import { IconRail, NavGroupHeader } from "@/components/IconRail";
@@ -550,6 +550,14 @@ function NavContent({
   )?.title;
   const { isCollapsed, toggle, expand } = useCollapsedGroups(activeGroupTitle);
   const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // Auto-Paper is the UX spec's own package-gating example (console-v2.md
+  // §2.1: "Auto-Paper 🔒Pro") — Watch's auto_paper.strategies is empty
+  // (packages.md §2 "none (manual paper only)"), so an organisation on
+  // Watch sees the nav item as package-gated rather than a plain link.
+  // undefined (auth still loading, or anonymous) never gates optimistically.
+  const autoPaperStrategies = useEntitlement("auto_paper.strategies");
+  const autoPaperGated =
+    autoPaperStrategies !== undefined && autoPaperStrategies.length === 0;
 
   const labelColumn = (
     <>
@@ -581,7 +589,9 @@ function NavContent({
                     // VIEWER who clicks through.
                     const restrictedForViewer =
                       item.label === "Audit Log" && role === "VIEWER";
-                    if (item.href && !restrictedForViewer) {
+                    const packageGated =
+                      item.label === "Auto-Paper" && autoPaperGated;
+                    if (item.href && !restrictedForViewer && !packageGated) {
                       return (
                         <Link
                           key={item.label}
@@ -596,6 +606,21 @@ function NavContent({
                           <NavIcon label={item.label} />
                           {item.label}
                         </Link>
+                      );
+                    }
+                    if (packageGated) {
+                      return (
+                        <GatedControl
+                          key={item.label}
+                          as="nav"
+                          state="package"
+                          reason=""
+                          icon={<NavIcon label={item.label} />}
+                          upgradeHref="/billing"
+                          packageName="Signal"
+                        >
+                          {item.label}
+                        </GatedControl>
                       );
                     }
                     return (
@@ -620,10 +645,34 @@ function NavContent({
           );
         })}
       </nav>
+      {/* Organisation and Billing (T-081/T-083): pinned like Settings, not
+          inside a Scanner Suite/Operate group — this is the tenancy/
+          account surface, reachable regardless of which product group is
+          collapsed. Always shown to any authenticated account: /org is
+          member-readable, /billing subscription is member-readable, and
+          both routes' own pages gate mutation controls on OWNER/ADMIN. */}
+      {["Organisation", "Billing"].map((label) => {
+        const href = label === "Organisation" ? "/org" : "/billing";
+        return (
+          <Link
+            key={label}
+            href={href}
+            onClick={onNavigate}
+            className={`mt-1 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
+              active === label
+                ? "bg-[var(--bg-raised)] text-[var(--text)]"
+                : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
+            }`}
+          >
+            <NavIcon label={label} />
+            {label}
+          </Link>
+        );
+      })}
       <Link
         href="/settings"
         onClick={onNavigate}
-        className={`mt-3 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
+        className={`mt-1 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
           active === "Settings"
             ? "bg-[var(--bg-raised)] text-[var(--text)]"
             : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"

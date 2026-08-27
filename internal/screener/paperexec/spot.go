@@ -182,6 +182,7 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 		pos.SkippedReason = SkipPartialLeg
 	}
 	pos.OpenPayload = toMap(exec)
+	x.countOutcome(pos)
 	if err := x.ledger.InsertPosition(ctx, pos); err != nil {
 		x.log.Error("paperexec: position insert failed", "error", err)
 	}

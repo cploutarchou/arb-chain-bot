@@ -82,6 +82,19 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		store = s
 		log.Info("persistence enabled")
+		// db_migrations_pending: compared once at boot against the
+		// version this binary was built for (storage.LatestMigrationVersion).
+		bctx, bcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if pending, err := s.MigrationsPending(bctx); err != nil {
+			log.Error("schema_migrations check failed; reporting migrations as pending", "error", err)
+			migrationsPending.Store(1)
+		} else {
+			migrationsPending.Store(pending)
+			if pending > 0 {
+				log.Warn("schema migrations pending: run `make migrate`", "built_for", storage.LatestMigrationVersion)
+			}
+		}
+		bcancel()
 	} else {
 		log.Warn("ARB_DATABASE_URL unset; running without persistence (sessions and history are memory-only)")
 	}
@@ -157,6 +170,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	if mtr != nil && cfg.MetricsAddr != "" {
 		others = append(others, &metrics.Server{Addr: cfg.MetricsAddr, Handler: mtr.Handler, Log: log})
 	}
+	if mtr != nil && store != nil {
+		if err := mtr.RegisterMigrations(migrationsPending.Load); err != nil {
+			log.Error("migrations metric registration failed", "error", err)
+		}
+	}
 
 	// One notification router for every channel; routing config follows
 	// the versioned strategy config (hot swap included).
@@ -174,16 +192,27 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	// on, in-memory otherwise; it never touches paper_cycles nor places
 	// a real order (execution.LiveExecutor stays disabled).
 	var screenerReports *report.Generator
+	// feedRateLimited feeds exchange_rate_limited_total{venue="binance"}
+	// from the engine's Binance feed once the engine exists (below).
+	var feedRateLimited func() int64
 	if p == ProfileFull || p == ProfileAPI {
 		var ledger paperexec.Ledger = paperexec.NewMemoryLedger()
 		if store != nil {
 			ledger = store.ScreenerPaper()
 		}
 		evaluator := alerts.New(screenerSvc, notify.Notify, log)
+		// T-082: alerts.per_day + alerts.channels are enforced at open
+		// time per the rule's organisation (nil without tenancy).
+		evaluator.SetEntitle(tenant.alertEntitle())
 		executor := paperexec.New(screenerSvc, ledger, log, paperexec.Options{Seed: 1, IDGen: newULID, Entitle: tenant.paperEntitle(ledger)})
 		evaluator.OnOpen(executor.OnOpen)
 		screenerSvc.SetAutoPaper(executor)
 		others = append(others, screener.NewAutomation(screenerSvc, executor, evaluator))
+		if mtr != nil {
+			if err := mtr.RegisterScreener(screenerMetricSources(screenerSvc, evaluator, executor, &feedRateLimited)); err != nil {
+				log.Error("screener metrics registration failed", "error", err)
+			}
+		}
 
 		// T-078: nightly (00:05 UTC) and on-demand paper reports per
 		// strategy / rule over the same ledger; files under
@@ -269,6 +298,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		engine.Store = store
 		engine.Strategy = stratSvc
 		engine.Metrics = mtr
+		feedRateLimited = engine.FeedRateLimited
 		engine.Notifier = notify
 		engine.Center = center
 		// The engine is no longer an app.Component in its own right: the
@@ -312,6 +342,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
 			}
 			others = append(others, campaigns)
+			if mtr != nil {
+				if err := mtr.RegisterCampaign(campaigns.RunCounts); err != nil {
+					log.Error("campaign metrics registration failed", "error", err)
+				}
+			}
 
 			// Console-driven replays (BL-17): one baseline backtest.Run
 			// against a recording, optionally pinned to a persisted

@@ -1318,7 +1318,7 @@ PAPER only; the vault's exchange credential group stays unread.
 ### Phase 23 Venue breadth
 - T-073 `Collector` interface + conformance test + venue registry (verified flag, fee defaults). TODO.
 - T-074 Tier-1 venues via public bulk tickers: Binance, OKX, Bybit, Bitget, Gate, MEXC (from T-065/T-066). TODO.
-- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE (2026-08-27; opt-in until a 30-min soak; HTX/Coinbase limits and fees UNVERIFIED; MEXC in-band "too frequent" 510 needs handling). Remaining: Crypto.com, Bitfinex, BingX, Upbit, Bithumb, WhiteBIT, LBank, BitMart, Phemex. IN_PROGRESS.
+- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE and ENABLED BY DEFAULT (30-min live soak 2026-08-27, all ten venues, poll 5 s: kucoin 295 polls 1006 spot/664 perps avg 1104 ms max 3346; htx 197 polls 600/301 avg 4145 max 7496; kraken 248 polls 1382/276 avg 2249 max 3806; coinbase 142 polls 921/0 avg 7701 max 9365 — 0 × 429/418/403/510 and 0 errors each; book 6690 pairs / 5231 perps). HTX/Coinbase limits and fees still UNVERIFIED (flagged in the registry). MEXC in-band 510 now detected (1 hit in the soak on contract/ticker → counted, 10 s pause, recovered). Remaining: Crypto.com, Bitfinex, BingX, Upbit, Bithumb, WhiteBIT, LBank, BitMart, Phemex. IN_PROGRESS.
 - T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO.
 
 ### Phase 24 Strategies, auto-paper, unattended operation

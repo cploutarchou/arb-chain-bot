@@ -97,6 +97,20 @@ function RuleForm({
         kind !== "carry" && minSpreadBps.trim()
           ? minSpreadBps.trim()
           : undefined,
+      // KNOWN ISSUE (found, not fixed here): this field is labelled "Min
+      // carry APR (%)" but the wire contract (internal/screener/basis.go
+      // MinCarryAPR / signals.go CarryAPR) is a fraction, e.g. 0.10 for
+      // 10% — same class of bug as the Perpetuals page's min_carry_apr
+      // filter (fixed separately). Left unconverted here because
+      // RuleForm also loads an existing rule's already-stored (fraction)
+      // value straight into this same input for editing; a naive /100
+      // on submit would corrupt every edit-save round trip of an
+      // existing carry rule. Fixing this needs the load path converted
+      // too (fraction → percent on `initial?.min_carry_apr`) plus this
+      // kind's missing "basis" branch (kind=basis also requires
+      // min_carry_apr per rules.go Validate, but this form only shows
+      // the carry-APR field for kind==="carry", not "basis" — a second,
+      // separate defect). Out of scope for this change.
       min_carry_apr:
         kind === "carry" && minCarryApr.trim() ? minCarryApr.trim() : undefined,
       min_liquidity_quote: minLiquidityQuote.trim() || "0",

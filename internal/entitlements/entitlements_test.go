@@ -301,3 +301,35 @@ func TestDailyCounterAndRateLimiter(t *testing.T) {
 		t.Fatal("rate 0 must refuse")
 	}
 }
+
+func TestDailyCounterUnlimitedAndReset(t *testing.T) {
+	c := NewDailyCounter()
+	now := time.Date(2026, 8, 27, 23, 59, 0, 0, time.UTC)
+	for i := 0; i < 1000; i++ {
+		if !c.Allow(7, Unlimited, now) {
+			t.Fatalf("Unlimited refused at %d", i)
+		}
+	}
+	if c.Used(7, now) != 0 {
+		t.Fatalf("Unlimited must not consume: used=%d", c.Used(7, now))
+	}
+	for i := 0; i < 3; i++ {
+		if got, want := c.Allow(7, 2, now), i < 2; got != want {
+			t.Fatalf("per_day=2 call %d: allow=%v, want %v", i, got, want)
+		}
+	}
+	if c.Used(7, now) != 2 || c.Used(8, now) != 0 {
+		t.Fatalf("used = %d/%d", c.Used(7, now), c.Used(8, now))
+	}
+	if !c.Allow(8, 1, now) {
+		t.Fatal("another organisation has its own quota")
+	}
+	if c.Allow(7, 0, now) {
+		t.Fatal("per_day=0 (read-only) must refuse")
+	}
+	// UTC midnight resets every organisation.
+	next := now.Add(2 * time.Minute)
+	if !c.Allow(7, 2, next) || c.Used(7, next) != 1 {
+		t.Fatal("quota did not reset at UTC midnight")
+	}
+}

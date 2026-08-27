@@ -41,6 +41,11 @@ func TestSkipDataAge(t *testing.T) {
 	if len(h.execs(r.ID)) != 0 {
 		t.Fatal("execution booked despite DATA_AGE")
 	}
+	// screener_paper_executions_total{strategy,outcome} source.
+	oc := h.x.Outcomes()
+	if len(oc) != 1 || oc[0].Strategy != screener.StrategyCrossVenueSpot || oc[0].Outcome != OutcomeSkipped || oc[0].Count != 1 {
+		t.Fatalf("Outcomes() = %+v", oc)
+	}
 }
 
 func TestSkipDepth(t *testing.T) {
