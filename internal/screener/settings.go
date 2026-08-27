@@ -178,18 +178,19 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 	VenueBitMart:   {spotBps: "25", perpBps: "6"},
 }
 
-// tier3Venues (T-078: Crypto.com Exchange, Bitfinex, BingX, WhiteBIT,
-// BitMart) start DISABLED: they are opt-in until each venue's 30-minute
-// live soak shows zero rate-limit hits and zero errors (SKILL.md step 5),
-// exactly as Tier-2 was before the 2026-08-27 soak. An operator enables
-// them per venue from the console; Defaults() must not.
-var tier3Venues = map[Venue]bool{
-	VenueCryptoCom: true,
-	VenueBitfinex:  true,
-	VenueBingX:     true,
-	VenueWhiteBIT:  true,
-	VenueBitMart:   true,
-}
+// Tier-3 venues (T-078: Crypto.com Exchange, Bitfinex, BingX, WhiteBIT,
+// BitMart) shipped opt-in and are enabled by default since the 30-minute
+// live soak of 2026-08-28 (venue.TestSoakLive, poll 5 s, all fifteen
+// venues in ONE process and sharing the IP with the running paper stack,
+// so the per-IP budget was stricter than production): cryptocom 118
+// polls 576 spot/366 perps avg 10243 ms max 25108; bitfinex 347 polls
+// 197/75 avg 192 max 3588; bingx 283 polls 669/881 avg 1370 max 2573;
+// whitebit 343 polls 798/305 avg 248 max 641; bitmart 167 polls 27/354
+// avg 5790 max 12539 — 0 x HTTP 429/418/403, 0 in-band rate limits and
+// 0 failed polls each (SKILL.md step 5). Full table: docs/MASTER_PLAN.md
+// T-075. BitMart's 27 spot quotes are 100 % of the rows its bulk ticker
+// returns (it lists only pairs with 24 h volume > 0); cryptocom's perps
+// count is the round-robin mark fill saturating, not a dip.
 
 // Tier-2 venues (T-075: KuCoin, HTX, Kraken, Coinbase) were opt-in until
 // a 30-min live soak showed zero 429/418/403/510 and zero errors. Soak of
@@ -200,18 +201,26 @@ var tier3Venues = map[Venue]bool{
 // like Tier-1. Coinbase has no retail perps
 // (docs/research/venues/coinbase.md §3) so PerpsEnabled stays false.
 
-// Defaults returns the first-boot document: every known venue (Tier-1
-// and, since the 2026-08-27 soak, Tier-2 — Tier-3 stays opt-in, see
-// tier3Venues) enabled with regular-tier
-// taker fees (spot/perp) "to be
-// confirmed by T-065" (docs/research/screener-endpoints.md verifies each
-// against the venue's current official fee schedule).
+// Defaults returns the first-boot document: every known venue enabled
+// (Tier-1; Tier-2 since the 2026-08-27 soak; Tier-3 since the 2026-08-28
+// soak, see the Tier-3 note above) with regular-tier taker fees
+// (spot/perp) "to be confirmed by T-065"
+// (docs/research/screener-endpoints.md verifies each against the venue's
+// current official fee schedule).
 func Defaults() Settings {
 	venues := make(map[Venue]VenueSettings, len(OrderedVenues))
 	for _, id := range OrderedVenues {
 		f := defaultVenueFees[id]
 		venues[id] = VenueSettings{
-			Enabled: !tier3Venues[id], PerpsEnabled: id != VenueCoinbase,
+			// Coinbase is the one venue OFF by default: the 30-minute
+			// fifteen-venue soak on 2026-08-28 recorded 20 × HTTP 429 and
+			// 20 failed polls of 61 attempts for it (MASTER_PLAN T-075),
+			// failing the same zero-rate-limit rule that admitted it on
+			// 2026-08-27. Its per-product book sweep costs one request per
+			// product, so it is the first venue to feel a shared IP. An
+			// operator can still enable it per deployment; re-enabling it
+			// by default needs a clean soak after the gate is retuned.
+			Enabled: id != VenueCoinbase, PerpsEnabled: id != VenueCoinbase,
 			SpotTakerBps: decimal.RequireFromString(f.spotBps),
 			PerpTakerBps: decimal.RequireFromString(f.perpBps),
 		}
