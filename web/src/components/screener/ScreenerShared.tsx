@@ -262,3 +262,70 @@ export function parseCsv(text: string): string[] {
 // it, worded identically everywhere.
 export const NO_TRANSFER_NOTE =
   "No-transfer model, top-of-book liquidity, net of taker fees — nothing here is a guarantee.";
+
+// HYPOTHETICAL_PERFORMANCE_FOOTER is docs/site/copy/alerts.md's fixed
+// "F2" footer, verbatim, for every view that carries a paper/simulated
+// figure (nightly screener reports carry net_pnl_quote, hit_rate, etc.).
+// {brand} is substituted with "Arb Console" — the same brand string
+// web/src/content/riskDisclosure.ts uses (metadata.title / the
+// ConsoleShell wordmark). {risk_url} has no live route in this console
+// yet (riskDisclosure.ts's own comment: "that route does not exist in
+// this console yet; do not ship a dead link"), so it renders as plain
+// text here too, not a link.
+export const HYPOTHETICAL_PERFORMANCE_FOOTER =
+  "SIMULATED. Paper result from modelled fees and top-of-book fills; no order " +
+  "was sent to any venue. Simulated results have inherent limitations: they " +
+  "are prepared with hindsight, exclude transfers between venues, assume " +
+  "withdrawal availability, model perpetual legs at one-times notional with " +
+  "a hard stop, and do not reflect real liquidity, venue outages or the " +
+  "effect of one's own orders. No account has traded this result and no " +
+  "representation is made that any account will achieve similar results. " +
+  "Arb Console does not trade, hold funds or advise. Read the full Risk Disclosure.";
+
+// ---- Exact decimal-string conversions between a fraction (the wire
+// contract for min_carry_apr, etc. — e.g. "0.07") and a percent (what
+// the console shows an operator — "7") ---------------------------------
+// Number(x)*100 / Number(x)/100 introduce binary-float noise on values
+// that round-trip through storage (0.07*100 === 7.000000000000001 in
+// JS) — an edit-save round trip of an existing rule would then persist
+// that noise as the new min_carry_apr. shiftDecimalPoint moves the
+// decimal point by `places` using only string/digit manipulation, so
+// the result is exact for any finite decimal input. Non-numeric input
+// (empty string, a value still being typed) passes through unchanged —
+// conversion only ever runs at a form's load/submit boundary, never on
+// every keystroke.
+function shiftDecimalPoint(raw: string, places: number): string {
+  const trimmed = raw.trim();
+  if (trimmed === "" || !/^-?\d*\.?\d*$/.test(trimmed) || trimmed === "-") {
+    return raw;
+  }
+  const neg = trimmed.startsWith("-");
+  const unsigned = neg ? trimmed.slice(1) : trimmed;
+  const dot = unsigned.indexOf(".");
+  const intPart = dot === -1 ? unsigned : unsigned.slice(0, dot);
+  const fracPart = dot === -1 ? "" : unsigned.slice(dot + 1);
+  let digits = intPart + fracPart;
+  let pointPos = intPart.length + places;
+  if (pointPos < 0) {
+    digits = "0".repeat(-pointPos) + digits;
+    pointPos = 0;
+  }
+  if (pointPos > digits.length) {
+    digits = digits + "0".repeat(pointPos - digits.length);
+  }
+  let newInt = digits.slice(0, pointPos).replace(/^0+(?=\d)/, "");
+  const newFrac = digits.slice(pointPos).replace(/0+$/, "");
+  if (newInt === "") newInt = "0";
+  const result = newFrac ? `${newInt}.${newFrac}` : newInt;
+  return neg && result !== "0" ? `-${result}` : result;
+}
+
+// fractionToPercentStr: wire fraction ("0.07") → form percent ("7").
+export function fractionToPercentStr(fraction: string): string {
+  return shiftDecimalPoint(fraction, 2);
+}
+
+// percentToFractionStr: form percent ("7") → wire fraction ("0.07").
+export function percentToFractionStr(percent: string): string {
+  return shiftDecimalPoint(percent, -2);
+}

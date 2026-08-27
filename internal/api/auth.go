@@ -8,11 +8,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/apikey"
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/entitlements"
 	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
@@ -46,6 +50,13 @@ type Principal struct {
 	// Suspended marks a seat suspended after a downgrade (packages.md
 	// §3.2 seats.max); every gated route refuses it.
 	Suspended bool
+	// APIKey is set only when the request authenticated with
+	// Authorization: Bearer <key> (T-086) rather than the session
+	// cookie. Its presence is the one signal every scope/CSRF/RBAC
+	// special-case keys off; it is never both set and unset for the
+	// same request, and it is never forged into a session-authenticated
+	// Principal.
+	APIKey *apikey.Key
 }
 
 // Ent returns the effective entitlements (never nil: falls back to the
@@ -211,6 +222,10 @@ func (s *Server) requireAuthPreAck(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) authenticate(gateAck bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := bearerToken(r); ok {
+			s.authenticateAPIKey(gateAck, token, next)(w, r)
+			return
+		}
 		if s.Auth == nil {
 			WriteError(w, http.StatusServiceUnavailable, "auth_unconfigured", "no users configured", correlationID(r))
 			return
@@ -280,6 +295,125 @@ func (s *Server) resolvePrincipal(ctx context.Context, sess auth.Session) (Princ
 	return p, nil
 }
 
+// bearerToken extracts the plaintext key from "Authorization: Bearer
+// <token>", ok=false for any other (or absent) header so the caller
+// falls back to the session-cookie path.
+func bearerToken(r *http.Request) (string, bool) {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(h, prefix) {
+		return "", false
+	}
+	tok := strings.TrimSpace(strings.TrimPrefix(h, prefix))
+	return tok, tok != ""
+}
+
+// authenticateAPIKey is the Bearer counterpart of authenticate(): it
+// resolves the organisation and entitlements exactly like a session
+// (resolveAPIKeyPrincipal), then applies the two checks that have no
+// session equivalent — api.enabled/api.scopes (packages.md §3.2 "api.*"
+// -> 403 entitlement_exceeded) and the per-key token bucket (429 +
+// Retry-After) — in that order, so a Watch/Signal organisation without
+// API access gets the entitlement error rather than a confusing rate
+// limit on a bucket it was never granted.
+func (s *Server) authenticateAPIKey(gateAck bool, token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.APIKeys == nil {
+			WriteError(w, http.StatusServiceUnavailable, "auth_unconfigured", "API keys are not available in this profile", correlationID(r))
+			return
+		}
+		key, ok, err := apikey.Authenticate(r.Context(), s.APIKeys, token)
+		if err != nil {
+			s.log.Error("api key authentication failed", "error", err)
+			WriteError(w, http.StatusInternalServerError, "api_key_failed", "authentication failed", correlationID(r))
+			return
+		}
+		if !ok {
+			WriteError(w, http.StatusUnauthorized, "unauthenticated", "invalid or revoked API key", correlationID(r))
+			return
+		}
+		principal, err := s.resolveAPIKeyPrincipal(r.Context(), key)
+		if err != nil {
+			if errors.Is(err, tenancy.ErrUnknownOrg) {
+				WriteError(w, http.StatusUnauthorized, "unauthenticated", "invalid API key", correlationID(r))
+				return
+			}
+			s.log.Error("api key principal resolution failed", "key_id", key.ID, "error", err)
+			WriteError(w, http.StatusInternalServerError, "tenancy_failed", "resolving the organisation failed", correlationID(r))
+			return
+		}
+		ent := principal.Ent()
+		if s.writeEntitlementError(w, r, ent.CheckAPIScope("read")) {
+			return
+		}
+		if s.APIRateLimiter != nil {
+			allowed, retryAfter := s.APIRateLimiter.Allow(key.ID, ent.API.RatePerMin, ent.API.Burst, time.Now())
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+				WriteError(w, http.StatusTooManyRequests, "rate_limited", "API rate limit exceeded", correlationID(r))
+				return
+			}
+		}
+		if gateAck && s.riskAckRequired(principal) {
+			WriteErrorData(w, http.StatusForbidden, "risk_ack_required",
+				"the organisation must acknowledge the current risk disclosure before using the API", correlationID(r),
+				map[string]any{"required_version": s.RiskAckVersion})
+			return
+		}
+		s.touchAPIKey(key.ID)
+		ctx := context.WithValue(r.Context(), principalKey, principal)
+		ctx = tenancy.WithOrg(ctx, principal.OrgID)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// resolveAPIKeyPrincipal builds a Principal for a Bearer caller. Role is
+// always the lowest console role (VIEWER): API-key authorization runs
+// entirely on api.scopes (requirePerm and requireAPIScope special-case
+// p.APIKey), never on the auth.Role RBAC matrix built for human staff.
+// PlatformAdmin is always false, unconditionally — an API key minted by
+// staff who happen to hold platform_admin must never reach the
+// exchange-credential vault group or any platform_admin-only route.
+func (s *Server) resolveAPIKeyPrincipal(ctx context.Context, key apikey.Key) (Principal, error) {
+	p := Principal{UserID: key.UserID, Role: auth.RoleViewer, PlatformAdmin: false, APIKey: &key}
+	if s.Tenancy == nil {
+		return Principal{}, tenancy.ErrUnknownOrg
+	}
+	org, err := s.Tenancy.Org(ctx, key.OrgID)
+	if err != nil {
+		return Principal{}, err
+	}
+	p.OrgID, p.Org, p.OrgRole = org.ID, org, tenancy.RoleViewer
+	if s.Entitlements != nil {
+		doc, err := s.Entitlements.For(ctx, p.OrgID)
+		if err != nil {
+			return Principal{}, err
+		}
+		p.Entitlements = &doc
+	}
+	return p, nil
+}
+
+// touchAPIKey persists last_used_at at most once per apiKeyTouchInterval
+// per key: a synchronous UPDATE on every authenticated request would be
+// pure write amplification on the hot path.
+func (s *Server) touchAPIKey(id string) {
+	now := time.Now()
+	if v, ok := s.apiKeyTouch.Load(id); ok {
+		if now.Sub(v.(time.Time)) < apiKeyTouchInterval {
+			return
+		}
+	}
+	s.apiKeyTouch.Store(id, now)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := s.APIKeys.Touch(ctx, id, now); err != nil {
+			s.log.Warn("api key last_used_at update failed", "key_id", id, "error", err)
+		}
+	}()
+}
+
 func platformRoleFor(r auth.Role) tenancy.Role {
 	switch r {
 	case auth.RoleAdmin:
@@ -339,8 +473,18 @@ func (s *Server) writeEntitlementError(w http.ResponseWriter, r *http.Request, e
 }
 
 // requireCSRF enforces the double-submit token on mutating requests.
+// Bearer-authenticated (API key) callers are exempt: CSRF defends
+// against a browser being tricked into replaying an ambient cookie, and
+// a Bearer token is never sent ambiently by a browser — there is no
+// cross-site forgery surface to defend (requireCSRF must run after
+// requireAuth so PrincipalFrom is populated; every call site in this
+// package already nests it inside requireAuth/requirePerm).
 func (s *Server) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := PrincipalFrom(r.Context()); ok && p.APIKey != nil {
+			next(w, r)
+			return
+		}
 		c, err := r.Cookie(sessionCookie)
 		if err != nil {
 			WriteError(w, http.StatusUnauthorized, "unauthenticated", "session required", correlationID(r))
@@ -355,16 +499,83 @@ func (s *Server) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // requirePerm gates a handler on an RBAC permission — the backend gate,
-// not the UI (docs/security.md §5).
+// not the UI (docs/security.md §5). An API-key principal never consults
+// the auth.Role matrix (it is always RoleViewer and must not silently
+// gain it); apiKeyCanPermission is the one place that decides which
+// permissions a Bearer caller may ever reach, keyed off api.scopes.
 func (s *Server) requirePerm(p auth.Permission, next http.HandlerFunc) http.HandlerFunc {
 	return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		principal, _ := PrincipalFrom(r.Context())
-		if !auth.Can(principal.Role, p) {
+		allowed := auth.Can(principal.Role, p)
+		if principal.APIKey != nil {
+			allowed = apiKeyCanPermission(principal, p)
+		}
+		if !allowed {
 			WriteError(w, http.StatusForbidden, "forbidden", "insufficient role", correlationID(r))
 			return
 		}
 		next(w, r)
 	})
+}
+
+// apiKeyCanPermission is the coarse permission gate for Bearer callers
+// (T-086): only the two screener permissions are reachable at all, and
+// each requires BOTH layers to agree — the organisation's package must
+// include the scope (ent.CheckAPIScope, packages.md §3.2 api.*) AND the
+// key itself must have been granted it (hasScope: a key minted with
+// only "read" must never reach a write route just because its
+// organisation's package would allow a differently-scoped key to).
+// Every other permission — user management, exchange config, risk
+// config, system config, paper control, platform settings — is refused
+// outright, regardless of what auth.Role the matrix would otherwise
+// grant a human with the same scopes. Handlers that need the EXACT
+// scope for their own mutation (rules:write vs templates:write) narrow
+// further with requireAPIScope; this function only decides whether the
+// route family is reachable by an API key at all.
+func apiKeyCanPermission(p Principal, perm auth.Permission) bool {
+	ent := p.Ent()
+	keyHasScope := func(scope string) bool {
+		return ent.CheckAPIScope(scope) == nil && hasScope(p.APIKey.Scopes, scope)
+	}
+	switch perm {
+	case auth.PermScreenerView:
+		return keyHasScope("read")
+	case auth.PermScreenerConfig:
+		return keyHasScope("rules:write") || keyHasScope("templates:write") || keyHasScope("paper:write")
+	default:
+		return false
+	}
+}
+
+// requireAPIScope narrows a route to one exact api.scopes value for
+// Bearer callers (T-086); session-authenticated principals pass through
+// unchanged — the console's own RBAC already governs them, and api.*
+// says nothing about a human operator using the browser.
+func (s *Server) requireAPIScope(scope string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, _ := PrincipalFrom(r.Context())
+		if p.APIKey == nil {
+			next(w, r)
+			return
+		}
+		if s.writeEntitlementError(w, r, p.Ent().CheckAPIScope(scope)) {
+			return
+		}
+		if !hasScope(p.APIKey.Scopes, scope) {
+			WriteError(w, http.StatusForbidden, "forbidden", "this API key does not hold the "+scope+" scope", correlationID(r))
+			return
+		}
+		next(w, r)
+	}
+}
+
+func hasScope(scopes []string, scope string) bool {
+	for _, s := range scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
 }
 
 // correlationIDPattern bounds what a client-supplied correlation ID may

@@ -66,10 +66,14 @@ func (s *Server) screenerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/screener/settings", view(s.handleScreenerSettingsGet))
 	mux.HandleFunc("POST /api/v1/screener/settings", config(s.handleScreenerSettingsApply))
 
+	// Rule mutations additionally require rules:write for Bearer (API
+	// key) callers (packages.md §3.1 api.scopes); requireAPIScope is a
+	// no-op for session callers, who stay governed by PermScreenerConfig
+	// alone, as before.
 	mux.HandleFunc("GET /api/v1/screener/rules", view(s.handleScreenerRulesList))
-	mux.HandleFunc("POST /api/v1/screener/rules", config(s.handleScreenerRuleCreate))
-	mux.HandleFunc("PUT /api/v1/screener/rules/{id}", config(s.handleScreenerRuleUpdate))
-	mux.HandleFunc("DELETE /api/v1/screener/rules/{id}", config(s.handleScreenerRuleDelete))
+	mux.HandleFunc("POST /api/v1/screener/rules", config(s.requireAPIScope("rules:write", s.handleScreenerRuleCreate)))
+	mux.HandleFunc("PUT /api/v1/screener/rules/{id}", config(s.requireAPIScope("rules:write", s.handleScreenerRuleUpdate)))
+	mux.HandleFunc("DELETE /api/v1/screener/rules/{id}", config(s.requireAPIScope("rules:write", s.handleScreenerRuleDelete)))
 
 	mux.HandleFunc("GET /api/v1/screener/events", view(s.handleScreenerEvents))
 	mux.HandleFunc("GET /api/v1/screener/auto-paper", view(s.handleScreenerAutoPaper))
@@ -89,8 +93,8 @@ func (s *Server) screenerRoutes(mux *http.ServeMux) {
 	// password change (requireAuth + requireCSRF only, no admin
 	// permission): everyone manages their own row, nobody else's.
 	mux.HandleFunc("GET /api/v1/screener/templates", view(s.handleScreenerTemplatesList))
-	mux.HandleFunc("POST /api/v1/screener/templates", s.requirePerm(auth.PermScreenerView, s.requireCSRF(gate(s.handleScreenerTemplateCreate))))
-	mux.HandleFunc("DELETE /api/v1/screener/templates/{id}", s.requirePerm(auth.PermScreenerView, s.requireCSRF(gate(s.handleScreenerTemplateDelete))))
+	mux.HandleFunc("POST /api/v1/screener/templates", s.requirePerm(auth.PermScreenerView, s.requireCSRF(gate(s.requireAPIScope("templates:write", s.handleScreenerTemplateCreate)))))
+	mux.HandleFunc("DELETE /api/v1/screener/templates/{id}", s.requirePerm(auth.PermScreenerView, s.requireCSRF(gate(s.requireAPIScope("templates:write", s.handleScreenerTemplateDelete)))))
 }
 
 func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
@@ -460,7 +464,11 @@ func (s *Server) handleScreenerRulesList(w http.ResponseWriter, r *http.Request)
 		WriteError(w, http.StatusInternalServerError, "rules_list_failed", "listing rules failed", correlationID(r))
 		return
 	}
-	WriteData(w, http.StatusOK, map[string]any{"rules": rules})
+	out := make([]screener.Rule, len(rules))
+	for i, rl := range rules {
+		out[i] = rl.Redact()
+	}
+	WriteData(w, http.StatusOK, map[string]any{"rules": out})
 }
 
 func (s *Server) decodeScreenerRule(w http.ResponseWriter, r *http.Request) (screener.Rule, bool) {
@@ -501,7 +509,7 @@ func (s *Server) handleScreenerRuleCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.audit(r, principal.UserID, "screener.rule.create", "screener_rule:"+created.ID)
-	WriteData(w, http.StatusCreated, map[string]any{"rule": created})
+	WriteData(w, http.StatusCreated, map[string]any{"rule": created.Redact()})
 }
 
 func (s *Server) handleScreenerRuleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -510,6 +518,15 @@ func (s *Server) handleScreenerRuleUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	rule.ID = r.PathValue("id")
+	// webhook_secret is write-only (never returned by GET/list, so the
+	// console cannot echo it back): an empty value on update means
+	// "keep the existing secret", not "clear it". A caller that wants
+	// to rotate the secret sends a new non-empty value.
+	if rule.WebhookSecret == "" {
+		if existing, err := s.Screener.Rules.GetRule(r.Context(), rule.ID); err == nil {
+			rule.WebhookSecret = existing.WebhookSecret
+		}
+	}
 	if err := rule.Validate(); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_rule", err.Error(), correlationID(r))
 		return
@@ -524,13 +541,14 @@ func (s *Server) handleScreenerRuleUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.audit(r, principal.UserID, "screener.rule.update", "screener_rule:"+rule.ID)
-	WriteData(w, http.StatusOK, map[string]any{"rule": updated})
+	WriteData(w, http.StatusOK, map[string]any{"rule": updated.Redact()})
 }
 
 // enforceRule applies the packages.md §3.2 rule-level entitlements:
-// kind, venues (fixed set / count), cooldown floor, Telegram channel,
-// and — when the rule asks for automatic paper execution — the
-// strategy list and the decimal size cap. Writes the 403 itself.
+// kind, venues (fixed set / count), cooldown floor, every requested
+// alert channel, and — when the rule asks for automatic paper
+// execution — the strategy list and the decimal size cap. Writes the
+// 403 itself.
 func (s *Server) enforceRule(w http.ResponseWriter, r *http.Request, ent entitlements.Entitlements, rule screener.Rule) bool {
 	venues := make([]string, 0, len(rule.BuyVenues)+len(rule.SellVenues))
 	for _, v := range rule.BuyVenues {
@@ -544,8 +562,8 @@ func (s *Server) enforceRule(w http.ResponseWriter, r *http.Request, ent entitle
 		ent.CheckVenues(venues),
 		ent.CheckCooldown(rule.CooldownS),
 	}
-	if rule.Telegram {
-		checks = append(checks, ent.CheckChannel("telegram"))
+	for _, ch := range rule.EffectiveChannels() {
+		checks = append(checks, ent.CheckChannel(ch))
 	}
 	if rule.AutoPaper {
 		checks = append(checks, ent.CheckAutoPaper(string(rule.EffectiveStrategy()), rule.PaperSizeQuote))

@@ -204,6 +204,18 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		// T-082: alerts.per_day + alerts.channels are enforced at open
 		// time per the rule's organisation (nil without tenancy).
 		evaluator.SetEntitle(tenant.alertEntitle())
+		// T-086: e-mail (SMTP, secrets registry "smtp_url", read fresh on
+		// every send so a vault write applies immediately) and webhook
+		// (signed X-Arb-Signature, SSRF-hardened, retried with backoff)
+		// alert channels. Both sinks always exist; email simply reports
+		// "not configured" per delivery until an operator sets smtp_url.
+		evaluator.SetChannels(
+			&notification.EmailSink{Transport: &notification.SMTPTransport{URL: func(ctx context.Context) string {
+				v, _, _ := secretsMgr.Get(ctx, "smtp_url")
+				return v
+			}}},
+			notification.NewWebhookSink(),
+		)
 		executor := paperexec.New(screenerSvc, ledger, log, paperexec.Options{Seed: 1, IDGen: newULID, Entitle: tenant.paperEntitle(ledger)})
 		evaluator.OnOpen(executor.OnOpen)
 		screenerSvc.SetAutoPaper(executor)
@@ -508,6 +520,8 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		apiServer.Entitlements = tenant.resolver
 		apiServer.Billing = tenant.billing
 		apiServer.RiskAckVersion = RiskDisclosureVersion
+		apiServer.APIKeys = tenant.apiKeys
+		apiServer.APIRateLimiter = tenant.apiRateLimiter
 		apiServer.Screener = screenerSvc
 		apiServer.ScreenerReports = screenerReports
 		apiServer.AIStatus = func() api.AIRuntimeStatus {
