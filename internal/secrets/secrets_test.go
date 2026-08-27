@@ -152,16 +152,16 @@ func TestChainPrecedenceAndSource(t *testing.T) {
 		t.Fatalf("after delete source = %q", src)
 	}
 	// Unknown name never resolves and never writes.
-	if _, _, ok := m.Get(ctx, "binance_api_key"); ok {
+	if _, _, ok := m.Get(ctx, "kraken_api_key"); ok {
 		t.Fatal("unknown name resolved")
 	}
-	if _, err := m.Put(ctx, "binance_api_key", []byte("x"), "u"); !errors.Is(err, ErrUnknownSecret) {
+	if _, err := m.Put(ctx, "kraken_api_key", []byte("x"), "u"); !errors.Is(err, ErrUnknownSecret) {
 		t.Fatalf("unknown put = %v", err)
 	}
-	list, err := m.List(ctx)
-	if err != nil {
+	if _, err := m.List(ctx); err != nil {
 		t.Fatal(err)
 	}
+	list := providerEntries(t, m)
 	if len(list) != 2 || list[0].Name != "anthropic_api_key" || list[1].Name != "telegram_bot_token" {
 		t.Fatalf("list = %+v", list)
 	}
@@ -213,7 +213,7 @@ func TestClosedVaultStillServesEnv(t *testing.T) {
 	if _, err := m.Delete(ctx, "anthropic_api_key"); !errors.Is(err, ErrVaultUnavailable) {
 		t.Fatalf("delete on closed vault = %v", err)
 	}
-	list, _ := m.List(ctx)
+	list := providerEntries(t, m)
 	if len(list) != 2 || !list[0].Present || list[0].Source != "env" || list[1].Present {
 		t.Fatalf("list = %+v", list)
 	}
@@ -272,18 +272,64 @@ func TestManagerOnChangeFiresWithNameOnly(t *testing.T) {
 	}
 }
 
-// TestRegistryIsClosed pins the two-entry registry: any growth is a
-// reviewed code change, and nothing in it may look like an exchange key.
+// TestRegistryIsClosed pins the registry shape: exactly two provider
+// entries (the advisory/notification credentials), and every exchange
+// entry is unreadable by construction — no env fallback, never consumed,
+// refused by Manager.Get even when the vault holds a value.
 func TestRegistryIsClosed(t *testing.T) {
-	if len(Known) != 2 {
-		t.Fatalf("registry has %d entries, want exactly 2", len(Known))
-	}
-	for name := range Known {
+	venues := []string{"binance", "okx", "bybit", "bitget", "gate", "mexc"}
+	providers, exchanges := 0, 0
+	for name, spec := range Known {
 		lower := strings.ToLower(name)
-		for _, venue := range []string{"binance", "okx", "bybit", "bitget", "gate", "mexc", "exchange"} {
-			if strings.Contains(lower, venue) {
-				t.Fatalf("registry entry %q looks like an exchange credential", name)
+		switch spec.Group {
+		case GroupProvider:
+			providers++
+			for _, venue := range append(venues, "exchange") {
+				if strings.Contains(lower, venue) {
+					t.Fatalf("provider entry %q looks like an exchange credential", name)
+				}
 			}
+			if !IsConsumable(name) {
+				t.Fatalf("provider entry %q must be consumable", name)
+			}
+		case GroupExchange:
+			exchanges++
+			if spec.Env != "" || spec.Applies != AppliesNotConsumed || spec.Venue == "" || !strings.HasPrefix(name, spec.Venue+"_") {
+				t.Fatalf("exchange entry %q = %+v: must have no env fallback, be not_consumed and carry its venue", name, spec)
+			}
+			if IsConsumable(name) {
+				t.Fatalf("exchange entry %q must not be consumable", name)
+			}
+		default:
+			t.Fatalf("entry %q has unknown group %q", name, spec.Group)
+		}
+	}
+	if providers != 2 {
+		t.Fatalf("registry has %d provider entries, want exactly 2", providers)
+	}
+	if exchanges != 14 {
+		t.Fatalf("registry has %d exchange entries, want 14", exchanges)
+	}
+
+	// A stored exchange credential is listed as present but never resolved.
+	v, err := NewVault(NewMemoryStore(), testKey(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(v, "", Env{})
+	if _, err := m.Put(context.Background(), "binance_api_key", []byte("read-only-key-0123456789"), "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := m.Get(context.Background(), "binance_api_key"); ok {
+		t.Fatal("Manager.Get resolved an exchange credential")
+	}
+	list, err := m.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range list {
+		if in.Name == "binance_api_key" && (!in.Present || in.Group != GroupExchange || in.Venue != "binance") {
+			t.Fatalf("listed exchange credential = %+v", in)
 		}
 	}
 }
@@ -330,14 +376,31 @@ func TestManagerListUsesStoreList(t *testing.T) {
 	fv, _ := NewVault(failingStore{mem}, testKey(1))
 	fv.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	m := NewManager(fv, "", Env{"anthropic_api_key": "env-anthropic-key-value-000001"})
-	list, err := m.List(ctx)
-	if err != nil {
+	if _, err := m.List(ctx); err != nil {
 		t.Fatalf("List must not go through Get: %v", err)
 	}
+	list := providerEntries(t, m)
 	if len(list) != 2 || list[0].Name != "anthropic_api_key" || list[1].Name != "telegram_bot_token" {
 		t.Fatalf("list = %+v", list)
 	}
 	if list[0].Source != "env" || !list[0].Present || list[1].Source != "vault" || !list[1].Readable || list[1].UpdatedBy != "u_1" {
 		t.Fatalf("list = %+v", list)
 	}
+}
+
+// providerEntries lists the provider-group rows (the exchange group is
+// covered by TestRegistryIsClosed).
+func providerEntries(t *testing.T, m *Manager) []Info {
+	t.Helper()
+	all, err := m.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Info
+	for _, in := range all {
+		if in.Group == GroupProvider {
+			out = append(out, in)
+		}
+	}
+	return out
 }

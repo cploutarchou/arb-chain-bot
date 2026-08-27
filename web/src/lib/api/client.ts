@@ -45,7 +45,9 @@ export function isStaleVersion(err: unknown): boolean {
 export function staleVersion(err: unknown): number | null {
   if (!isStaleVersion(err)) return null;
   const data = (err as ApiError).data as { current_version?: number } | null;
-  return typeof data?.current_version === "number" ? data.current_version : null;
+  return typeof data?.current_version === "number"
+    ? data.current_version
+    : null;
 }
 
 // isNotReady flags the 503 a campaign/replay POST can return briefly
@@ -96,7 +98,11 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers["X-CSRF-Token"] = csrfToken;
     }
   }
-  const res = await fetch(path, { ...init, headers, credentials: "same-origin" });
+  const res = await fetch(path, {
+    ...init,
+    headers,
+    credentials: "same-origin",
+  });
   let env: Envelope<T> | null = null;
   try {
     env = (await res.json()) as Envelope<T>;
@@ -107,14 +113,20 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, env?.error ?? null, env?.data ?? null);
   }
   if (env === null || env.data === null) {
-    throw new ApiError(res.status, { code: "empty_response", message: "Empty response" });
+    throw new ApiError(res.status, {
+      code: "empty_response",
+      message: "Empty response",
+    });
   }
   return env.data;
 }
 
-const get = <T,>(path: string) => request<T>(path);
-const post = <T,>(path: string, body?: unknown) =>
-  request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+const get = <T>(path: string) => request<T>(path);
+const post = <T>(path: string, body?: unknown) =>
+  request<T>(path, {
+    method: "POST",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 
 // ---- shapes (mirroring the Go API; decimals stay strings) ----------------
 
@@ -292,7 +304,13 @@ export interface PortfolioView {
 }
 
 export interface PnLView {
-  assets: { asset: string; realized: string; fees: string; daily_loss: string; drawdown: string }[];
+  assets: {
+    asset: string;
+    realized: string;
+    fees: string;
+    daily_loss: string;
+    drawdown: string;
+  }[];
 }
 
 // ---- PnL & Analytics (BL-19) -----------------------------------------------
@@ -308,7 +326,8 @@ export interface PnLBreakdownRow {
   avg_latency_ms?: string;
 }
 
-export type PnLBreakdownBy = "exchange" | "triangle" | "asset" | "market" | "hour" | "config_version";
+export type PnLBreakdownBy =
+  "exchange" | "triangle" | "asset" | "market" | "hour" | "config_version";
 
 export interface PnLBreakdownResult {
   by: string;
@@ -1087,7 +1106,9 @@ export interface SecretInfo {
   reason?: string;
   updated_at?: string;
   updated_by?: string;
-  applies: string; // immediately | process_restart
+  applies: string; // immediately | process_restart | not_consumed
+  group: string; // provider | exchange
+  venue?: string; // exchange group: venue id
 }
 
 export interface SecretsListResponse {
@@ -1125,7 +1146,10 @@ export interface CampaignRun {
 export const api = {
   auth: {
     login: (email: string, password: string) =>
-      post<{ role: string; csrf_token: string }>("/api/v1/auth/login", { email, password }),
+      post<{ role: string; csrf_token: string }>("/api/v1/auth/login", {
+        email,
+        password,
+      }),
     logout: () => post<{ status: string }>("/api/v1/auth/logout"),
     me: () => get<Me>("/api/v1/auth/me"),
     // Self-service password change (any authenticated role).
@@ -1136,19 +1160,29 @@ export const api = {
       }),
   },
   users: {
-    list: async () => (await request<{ users: UserRow[] | null }>("/api/v1/users")).users ?? [],
+    list: async () =>
+      (await request<{ users: UserRow[] | null }>("/api/v1/users")).users ?? [],
     create: (email: string, role: string, password: string) =>
-      post<{ user: UserRow }>("/api/v1/users", { email, role, password }).then((r) => r.user),
-    setRole: (id: string, role: string) =>
-      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/role`, { role }).then((r) => r.user),
-    disable: (id: string) =>
-      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/disable`).then((r) => r.user),
-    enable: (id: string) =>
-      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/enable`).then((r) => r.user),
-    setPassword: (id: string, password: string) =>
-      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/password`, { password }).then(
+      post<{ user: UserRow }>("/api/v1/users", { email, role, password }).then(
         (r) => r.user,
       ),
+    setRole: (id: string, role: string) =>
+      post<{ user: UserRow }>(`/api/v1/users/${encodeURIComponent(id)}/role`, {
+        role,
+      }).then((r) => r.user),
+    disable: (id: string) =>
+      post<{ user: UserRow }>(
+        `/api/v1/users/${encodeURIComponent(id)}/disable`,
+      ).then((r) => r.user),
+    enable: (id: string) =>
+      post<{ user: UserRow }>(
+        `/api/v1/users/${encodeURIComponent(id)}/enable`,
+      ).then((r) => r.user),
+    setPassword: (id: string, password: string) =>
+      post<{ user: UserRow }>(
+        `/api/v1/users/${encodeURIComponent(id)}/password`,
+        { password },
+      ).then((r) => r.user),
   },
   system: {
     status: () => get<SystemStatus>("/api/v1/system/status"),
@@ -1172,24 +1206,31 @@ export const api = {
         `/api/v1/opportunities/history?status=${status}&limit=${limit}`,
       ),
     // BL-27: why detected/qualified/rejected, book versions, simulation.
-    get: (id: string) => get<OpportunityDetail>(`/api/v1/opportunities/${encodeURIComponent(id)}`),
+    get: (id: string) =>
+      get<OpportunityDetail>(`/api/v1/opportunities/${encodeURIComponent(id)}`),
   },
   paper: {
     pause: () => post<{ running: boolean }>("/api/v1/paper/pause"),
     resume: () => post<{ running: boolean }>("/api/v1/paper/resume"),
-    cycles: (limit = 100) => get<{ cycles: CycleRow[] | null }>(`/api/v1/paper/cycles?limit=${limit}`),
+    cycles: (limit = 100) =>
+      get<{ cycles: CycleRow[] | null }>(`/api/v1/paper/cycles?limit=${limit}`),
     orders: (cycleID: string) =>
-      get<{ orders: OrderRow[] | null }>(`/api/v1/paper/cycles/${encodeURIComponent(cycleID)}/orders`),
+      get<{ orders: OrderRow[] | null }>(
+        `/api/v1/paper/cycles/${encodeURIComponent(cycleID)}/orders`,
+      ),
     // Destructive; ADMIN-only, type-to-confirm RESET in the UI (BL-10).
-    reset: () => post<{ running: boolean }>("/api/v1/paper/reset", { confirm: "RESET" }),
+    reset: () =>
+      post<{ running: boolean }>("/api/v1/paper/reset", { confirm: "RESET" }),
   },
   // BL-20: global, filterable, cursor-paginated orders/fills — distinct
   // from paper.orders(cycleID) above, which is scoped to one cycle.
   orders: {
-    list: (f: ListFilter) => get<OrderPage>(`/api/v1/orders?${listFilterQuery(f)}`),
+    list: (f: ListFilter) =>
+      get<OrderPage>(`/api/v1/orders?${listFilterQuery(f)}`),
   },
   fills: {
-    list: (f: ListFilter) => get<FillPage>(`/api/v1/fills?${listFilterQuery(f)}`),
+    list: (f: ListFilter) =>
+      get<FillPage>(`/api/v1/fills?${listFilterQuery(f)}`),
   },
   portfolio: () => get<PortfolioView>("/api/v1/portfolio"),
   pnl: () => get<PnLView>("/api/v1/pnl"),
@@ -1198,11 +1239,14 @@ export const api = {
   pnlAnalytics: {
     breakdown: (by: PnLBreakdownBy, hours = 24) =>
       get<PnLBreakdownResult>(`/api/v1/pnl/breakdown?by=${by}&hours=${hours}`),
-    series: (hours = 24) => get<PnLSeriesResult>(`/api/v1/pnl/series?hours=${hours}`),
+    series: (hours = 24) =>
+      get<PnLSeriesResult>(`/api/v1/pnl/series?hours=${hours}`),
   },
   analytics: {
     distributions: (hours = 24) =>
-      get<DistributionsResult>(`/api/v1/analytics/distributions?hours=${hours}`),
+      get<DistributionsResult>(
+        `/api/v1/analytics/distributions?hours=${hours}`,
+      ),
   },
   risk: () => get<RiskView>("/api/v1/risk"),
   riskEvents: {
@@ -1215,8 +1259,10 @@ export const api = {
   },
   config: {
     current: () => get<ConfigSnapshot>("/api/v1/config"),
-    version: (version: number) => get<ConfigSnapshot>(`/api/v1/config/version/${version}`),
-    versions: (limit = 25) => get<ConfigVersion[]>(`/api/v1/config/versions?limit=${limit}`),
+    version: (version: number) =>
+      get<ConfigSnapshot>(`/api/v1/config/version/${version}`),
+    versions: (limit = 25) =>
+      get<ConfigVersion[]>(`/api/v1/config/versions?limit=${limit}`),
     // parent_version (T-058 optimistic concurrency) is required on every
     // web-console write: the backend 400s parent_version_required without
     // it, and 409 stale_versions when it no longer matches the active
@@ -1226,28 +1272,45 @@ export const api = {
     // over any stray "parent_version" key an operator typed into the
     // Advanced: JSON draft.
     apply: (params: StrategyParams, parentVersion: number) =>
-      post<ConfigSnapshot>("/api/v1/config", { ...params, parent_version: parentVersion }),
+      post<ConfigSnapshot>("/api/v1/config", {
+        ...params,
+        parent_version: parentVersion,
+      }),
     rollback: (version: number, parentVersion: number) =>
-      post<ConfigSnapshot>("/api/v1/config/rollback", { version, parent_version: parentVersion }),
+      post<ConfigSnapshot>("/api/v1/config/rollback", {
+        version,
+        parent_version: parentVersion,
+      }),
   },
   alerts: {
     list: (state = "", limit = 50) =>
-      get<{ alerts: Alert[] | null; active: number }>(`/api/v1/alerts?state=${state}&limit=${limit}`),
-    ack: (id: string) => post<Alert>(`/api/v1/alerts/${encodeURIComponent(id)}/ack`),
-    resolve: (id: string) => post<Alert>(`/api/v1/alerts/${encodeURIComponent(id)}/resolve`),
+      get<{ alerts: Alert[] | null; active: number }>(
+        `/api/v1/alerts?state=${state}&limit=${limit}`,
+      ),
+    ack: (id: string) =>
+      post<Alert>(`/api/v1/alerts/${encodeURIComponent(id)}/ack`),
+    resolve: (id: string) =>
+      post<Alert>(`/api/v1/alerts/${encodeURIComponent(id)}/resolve`),
   },
   ai: {
     // T-059 §4.1: configured vs actually-running, with the reason when
     // they differ and today's budget usage. Served even with no
     // ai.Service so the console can say "not configured" from data.
     status: () => get<AIRuntimeStatus>("/api/v1/ai/status"),
-    analyses: (limit = 10) => get<AIAnalysis[] | null>(`/api/v1/ai/analyses?limit=${limit}`),
+    analyses: (limit = 10) =>
+      get<AIAnalysis[] | null>(`/api/v1/ai/analyses?limit=${limit}`),
     recommendations: (status = "") =>
-      get<AIRecommendation[] | null>(`/api/v1/ai/recommendations?status=${status}`),
+      get<AIRecommendation[] | null>(
+        `/api/v1/ai/recommendations?status=${status}`,
+      ),
     approve: (id: string) =>
-      post<{ config_version: number }>(`/api/v1/ai/recommendations/${encodeURIComponent(id)}/approve`),
+      post<{ config_version: number }>(
+        `/api/v1/ai/recommendations/${encodeURIComponent(id)}/approve`,
+      ),
     reject: (id: string) =>
-      post<{ status: string }>(`/api/v1/ai/recommendations/${encodeURIComponent(id)}/reject`),
+      post<{ status: string }>(
+        `/api/v1/ai/recommendations/${encodeURIComponent(id)}/reject`,
+      ),
   },
   // T-060: write-only vault. PUT/DELETE never return a value — only
   // presence/source/provenance (SecretInfo).
@@ -1259,32 +1322,44 @@ export const api = {
         body: JSON.stringify({ value }),
       }),
     delete: (name: string) =>
-      request<SecretInfo>(`/api/v1/secrets/${encodeURIComponent(name)}`, { method: "DELETE" }),
+      request<SecretInfo>(`/api/v1/secrets/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      }),
   },
   reports: {
     list: (kind = "", limit = 20) =>
-      get<{ reports: Report[] | null }>(`/api/v1/reports?kind=${kind}&limit=${limit}`),
-    generate: (kind: "daily" | "weekly") => post<Report>("/api/v1/reports/generate", { kind }),
+      get<{ reports: Report[] | null }>(
+        `/api/v1/reports?kind=${kind}&limit=${limit}`,
+      ),
+    generate: (kind: "daily" | "weekly") =>
+      post<Report>("/api/v1/reports/generate", { kind }),
     // BL-32: formatted detail + CSV export. The CSV route is a cookie-
     // authenticated GET with Content-Disposition: attachment — a plain
     // anchor href downloads it, no fetch/Blob needed.
-    get: (id: string) => get<Report>(`/api/v1/reports/${encodeURIComponent(id)}`),
+    get: (id: string) =>
+      get<Report>(`/api/v1/reports/${encodeURIComponent(id)}`),
     csvUrl: (id: string) => `/api/v1/reports/${encodeURIComponent(id)}/csv`,
   },
   triangles: {
     quality: (hours = 24) =>
-      get<{ window_hours: number; scores: QualityScore[] | null; notes: string[] }>(
-        `/api/v1/triangles/quality?hours=${hours}`,
-      ),
+      get<{
+        window_hours: number;
+        scores: QualityScore[] | null;
+        notes: string[];
+      }>(`/api/v1/triangles/quality?hours=${hours}`),
     // BL-26: per-leg book/VWAP/fee, recent cycles, quality.
-    get: (id: string) => get<TriangleDetail>(`/api/v1/triangles/${encodeURIComponent(id)}`),
+    get: (id: string) =>
+      get<TriangleDetail>(`/api/v1/triangles/${encodeURIComponent(id)}`),
   },
   replays: {
     // BL-17: console-driven replay runs. 404 replays_absent when no
     // store is configured (the runner needs persisted recordings).
-    list: (limit = 25) => get<{ runs: ReplayRun[] | null }>(`/api/v1/replays?limit=${limit}`),
-    get: (id: string) => get<{ run: ReplayRun }>(`/api/v1/replays/${encodeURIComponent(id)}`),
-    start: (req: ReplayRequest) => post<{ run: ReplayRun }>("/api/v1/replays", req),
+    list: (limit = 25) =>
+      get<{ runs: ReplayRun[] | null }>(`/api/v1/replays?limit=${limit}`),
+    get: (id: string) =>
+      get<{ run: ReplayRun }>(`/api/v1/replays/${encodeURIComponent(id)}`),
+    start: (req: ReplayRequest) =>
+      post<{ run: ReplayRun }>("/api/v1/replays", req),
   },
   telegram: {
     // BL-21: never returns the token; 200 {enabled:false} when
@@ -1292,35 +1367,57 @@ export const api = {
     status: () => get<TelegramStatusView>("/api/v1/telegram/status"),
   },
   audit: (entity = "", limit = 100) =>
-    get<{ events: AuditEvent[] | null }>(`/api/v1/audit?entity=${entity}&limit=${limit}`),
+    get<{ events: AuditEvent[] | null }>(
+      `/api/v1/audit?entity=${entity}&limit=${limit}`,
+    ),
   recordings: {
     list: () =>
-      get<{ recordings: RecordingRow[] | null; persistence: boolean; recorder?: RecorderStatus }>(
-        "/api/v1/recordings",
+      get<{
+        recordings: RecordingRow[] | null;
+        persistence: boolean;
+        recorder?: RecorderStatus;
+      }>("/api/v1/recordings"),
+    start: () =>
+      post<{ session_id: string; recorder: RecorderStatus }>(
+        "/api/v1/recordings/start",
       ),
-    start: () => post<{ session_id: string; recorder: RecorderStatus }>("/api/v1/recordings/start"),
-    stop: () => post<{ session_id: string; recorder: RecorderStatus }>("/api/v1/recordings/stop"),
+    stop: () =>
+      post<{ session_id: string; recorder: RecorderStatus }>(
+        "/api/v1/recordings/stop",
+      ),
   },
   campaigns: {
-    list: (limit = 25) => get<{ runs: CampaignRun[] | null }>(`/api/v1/campaigns?limit=${limit}`),
-    get: (id: string) => get<{ run: CampaignRun }>(`/api/v1/campaigns/${encodeURIComponent(id)}`),
-    run: (req: CampaignRequest) => post<{ run: CampaignRun }>("/api/v1/campaigns", req),
+    list: (limit = 25) =>
+      get<{ runs: CampaignRun[] | null }>(`/api/v1/campaigns?limit=${limit}`),
+    get: (id: string) =>
+      get<{ run: CampaignRun }>(`/api/v1/campaigns/${encodeURIComponent(id)}`),
+    run: (req: CampaignRequest) =>
+      post<{ run: CampaignRun }>("/api/v1/campaigns", req),
   },
   platform: {
     // T-061: modes, venues, AI providers, log levels and vault status —
     // one shape, one source each. Static except the vault status; the
     // console renders availability/reasons from this, never hardcoded.
-    capabilities: () => get<CapabilitiesResponse>("/api/v1/platform/capabilities"),
+    capabilities: () =>
+      get<CapabilitiesResponse>("/api/v1/platform/capabilities"),
     current: () => get<PlatformSnapshotView>("/api/v1/platform/settings"),
     versions: (limit = 25) =>
-      get<PlatformVersionInfo[]>(`/api/v1/platform/settings/versions?limit=${limit}`),
-    version: (version: number) => get<PlatformSnapshot>(`/api/v1/platform/settings/version/${version}`),
+      get<PlatformVersionInfo[]>(
+        `/api/v1/platform/settings/versions?limit=${limit}`,
+      ),
+    version: (version: number) =>
+      get<PlatformSnapshot>(`/api/v1/platform/settings/version/${version}`),
     preview: (settings: PlatformSettingsDoc) =>
-      post<PlatformPreviewResponse>("/api/v1/platform/settings/preview", { settings }),
+      post<PlatformPreviewResponse>("/api/v1/platform/settings/preview", {
+        settings,
+      }),
     // parent_version required (T-058), same as api.config.apply above —
     // decodePlatformSettings reads it as a sibling of `settings`.
     apply: (settings: PlatformSettingsDoc, parentVersion: number) =>
-      post<PlatformSnapshotView>("/api/v1/platform/settings", { settings, parent_version: parentVersion }),
+      post<PlatformSnapshotView>("/api/v1/platform/settings", {
+        settings,
+        parent_version: parentVersion,
+      }),
     rollback: (version: number, parentVersion: number) =>
       post<PlatformSnapshotView>("/api/v1/platform/settings/rollback", {
         version,
@@ -1329,7 +1426,10 @@ export const api = {
   },
   engine: {
     status: () => get<EngineStatusResponse>("/api/v1/engine/status"),
-    restart: (body: { confirm: string; reason?: string; stop_recording?: boolean }) =>
-      post<EngineStatusResponse>("/api/v1/engine/restart", body),
+    restart: (body: {
+      confirm: string;
+      reason?: string;
+      stop_recording?: boolean;
+    }) => post<EngineStatusResponse>("/api/v1/engine/restart", body),
   },
 };
