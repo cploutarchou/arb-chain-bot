@@ -37,13 +37,12 @@ import (
 // 10 req/2 s) covers every path; a poll issues 1 (spot) + 2 (swap
 // tickers + mark) + N funding calls.
 type okxCollector struct {
-	base   string
-	gate   *gate
-	c      *client
-	inst   *instrumentCache
-	rr     *fundingRR
-	now    func() time.Time
-	nextRR map[string]struct{}
+	base string
+	gate *gate
+	c    *client
+	inst *instrumentCache
+	rr   *fundingRR
+	now  func() time.Time
 }
 
 const okxBase = "https://www.okx.com"

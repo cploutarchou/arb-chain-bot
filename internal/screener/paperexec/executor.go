@@ -323,6 +323,4 @@ func (x *Executor) resolvePendingSlip(ctx context.Context) {
 	}
 }
 
-func fmtDec(d decimal.Decimal) string { return d.StringFixed(8) }
-
 func errf(format string, a ...any) string { return fmt.Sprintf(format, a...) }

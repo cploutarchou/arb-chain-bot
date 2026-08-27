@@ -20,7 +20,6 @@ var (
 	decTenK = decimal.NewFromInt(10_000)
 	decTwo  = decimal.NewFromInt(2)
 	decFour = decimal.NewFromInt(4)
-	decOne  = decimal.NewFromInt(1)
 )
 
 // Lane identifies one evaluated pair of legs. For cross-venue spot

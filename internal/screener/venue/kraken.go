@@ -199,7 +199,7 @@ func (c *krakenCollector) fetchInstruments(ctx context.Context) ([]Instrument, e
 	for key, p := range pairs.Result {
 		out = append(out, Instrument{Venue: screener.VenueKraken, Kind: KindSpot, Symbol: key,
 			Base: p.Base, Quote: p.Quote, Tradable: p.Status == "online",
-			TickSize: p.TickSize, StepSize: decimal.New(1, int32(-p.LotDecimals)).String(), MinNotional: p.CostMin})
+			TickSize: p.TickSize, StepSize: decimal.New(1, int32(-p.LotDecimals)).String(), MinNotional: p.CostMin}) //nolint:gosec // venue decimals are small non-negative ints
 	}
 	for _, in := range ins.Instruments {
 		if in.Type != "flexible_futures" || !perpetual[in.Symbol] {
