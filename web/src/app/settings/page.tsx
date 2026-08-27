@@ -9,7 +9,16 @@ import { cloneParams, setPath, validateCooldown } from "@/lib/strategyFields";
 import { diffParams, effectFor, type DiffRow } from "@/lib/diff";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { NotificationsFields } from "@/components/NotificationsFields";
-import { MarketsSection, VenuesSection, PlatformVersionHistorySection, TelegramAllowlistSection } from "@/components/PlatformSections";
+import {
+  AIAdvisorSection,
+  LoggingAccessSection,
+  MarketsSection,
+  OperatingModeSection,
+  VenuesSection,
+  PlatformVersionHistorySection,
+  TelegramAllowlistSection,
+} from "@/components/PlatformSections";
+import { SecretsSection } from "@/components/SecretsSection";
 import {
   Await,
   Badge,
@@ -675,10 +684,19 @@ export default function SettingsPage() {
     <ConsoleShell active="Settings">
       <PageTitle>Settings</PageTitle>
       <SessionSection />
+      <div id="operating-mode">
+        <OperatingModeSection />
+      </div>
       <div id="markets">
         <MarketsSection />
       </div>
       <VenuesSection />
+      <div id="logging">
+        <LoggingAccessSection />
+      </div>
+      <div id="ai">
+        <AIAdvisorSection />
+      </div>
       <div id="platform-versions">
         <PlatformVersionHistorySection />
       </div>
@@ -688,6 +706,9 @@ export default function SettingsPage() {
       <StrategyRiskSection />
       <div id="notifications">
         <NotificationsSection />
+      </div>
+      <div id="security">
+        <SecretsSection />
       </div>
       <Section title="Security posture">
         <ul className="max-w-2xl list-inside list-disc space-y-1 text-[13px] text-[var(--text-dim)]">

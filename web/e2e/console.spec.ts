@@ -267,6 +267,108 @@ test("settings Markets & assets renders the real platform-settings document", as
   await expect(page.getByText(/v1 active/)).toBeVisible({ timeout: 10_000 });
 });
 
+test("settings Venues & fees lists every capability venue, not just the compiled one", async ({ page }) => {
+  await login(page);
+  await page.goto("/settings#markets");
+  await expect(page.getByRole("heading", { name: "Venues & fees" })).toBeVisible();
+  // binance is the only compiled connector in this build (T-061); the
+  // rest render read-only with the backend's own reason string, never a
+  // hardcoded paraphrase — assert against what the API actually returned.
+  const caps = await page.evaluate(async () => {
+    const r = await fetch("/api/v1/platform/capabilities", { credentials: "same-origin" });
+    return (await r.json()) as { data: { venues: { id: string; name: string; available: boolean; reason?: string }[] } };
+  });
+  const unavailable = caps.data.venues.find((v) => !v.available);
+  expect(unavailable).toBeTruthy();
+  await expect(page.getByText(unavailable!.name, { exact: true })).toBeVisible();
+  await expect(page.locator("main")).toContainText(unavailable!.reason!);
+  await expect(page.locator("main")).toContainText(/Public market data only — no API keys are used or accepted\./);
+  // The token-discount checkbox never offers to enable itself (T-061 D12
+  // / settings.go's unconditional rejection) — every instance is disabled.
+  const discountBoxes = page.getByRole("checkbox", { name: "Token fee discount" });
+  const n = await discountBoxes.count();
+  for (let i = 0; i < n; i++) {
+    await expect(discountBoxes.nth(i)).toBeDisabled();
+  }
+});
+
+test("settings Operating mode renders the mode table from capabilities with SHADOW disabled", async ({ page }) => {
+  await login(page);
+  await page.goto("/settings#operating-mode");
+  await expect(page.getByRole("heading", { name: "Operating mode" })).toBeVisible();
+  await expect(
+    page.getByText("LIVE is not an option: this platform never places real orders."),
+  ).toBeVisible();
+  // The e2e harness boots ARB_MODE=PAPER (scripts/e2e.sh).
+  await expect(page.getByRole("radio", { name: "PAPER" })).toBeChecked();
+  const shadow = page.getByRole("radio", { name: "SHADOW" });
+  await expect(shadow).toBeVisible();
+  await expect(shadow).toBeDisabled();
+  await expect(page.locator("main")).toContainText(/shadow execution is not wired into Engine\.Run/);
+  // Immediate for the section header's field_timing lookup would be
+  // wrong here — platform.mode is restart-scoped.
+  await expect(page.getByText("On restart").first()).toBeVisible();
+});
+
+test("settings AI advisor shows the fake provider running (ARB_AI_PROVIDER=fake in the harness)", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/settings#ai");
+  await expect(page.getByRole("heading", { name: "AI advisor" })).toBeVisible();
+  // Scoped to the AI section: "Enabled" also labels a per-venue checkbox
+  // in Venues & fees, further up the same page.
+  const aiSection = page.locator("#ai");
+  await expect(aiSection.getByText("Enabled", { exact: true })).toBeVisible();
+  await expect(aiSection.getByText("Running", { exact: true })).toBeVisible();
+  await expect(aiSection.getByText("fake", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+  // openai is enumerated but never selectable (D10).
+  await aiSection.getByRole("button", { name: "Edit AI advisor" }).click();
+  const providerSelect = page.getByLabel("Provider");
+  await expect(providerSelect).toBeVisible();
+  const openaiOption = providerSelect.locator('option[value="openai"]');
+  await expect(openaiOption).toBeDisabled();
+  await expect(openaiOption).toHaveText(/provider not built/);
+});
+
+test("settings Logging & access warns that debug logs every rejected opportunity", async ({ page }) => {
+  await login(page);
+  await page.goto("/settings#logging");
+  await expect(page.getByRole("heading", { name: "Logging & access" })).toBeVisible();
+  await expect(page.locator("main")).toContainText(/debug logs every rejected opportunity/);
+  await expect(page.getByLabel(/Log level/)).toBeVisible();
+  await expect(page.getByLabel(/Allowed origin/)).toBeVisible();
+});
+
+test("settings Security renders the vault status and never a secret value", async ({ page }) => {
+  await login(page);
+  // The harness (scripts/e2e.sh) does not set ARB_SECRET_KEY — assert
+  // against what the backend actually reports, not a guessed string.
+  const secrets = await page.evaluate(async () => {
+    const r = await fetch("/api/v1/secrets", { credentials: "same-origin" });
+    return { status: r.status, json: (await r.json()) as { data: { vault_configured: boolean; reason?: string; secrets: { name: string; label: string }[] } } };
+  });
+  expect(secrets.status).toBe(200);
+  await page.goto("/settings#security");
+  await expect(page.getByRole("heading", { name: "Security" }).first()).toBeVisible();
+  if (!secrets.json.data.vault_configured) {
+    expect(secrets.json.data.reason).toBeTruthy();
+    await expect(page.locator("main")).toContainText(secrets.json.data.reason!);
+    // Writes are refused with the vault unconfigured — Set value/Remove
+    // must render disabled, not just fail silently on click.
+    const securitySection = page.locator("#security");
+    const setButtons = securitySection.getByRole("button", { name: "Set value" });
+    for (let i = 0; i < (await setButtons.count()); i++) {
+      await expect(setButtons.nth(i)).toBeDisabled();
+    }
+  }
+  for (const s of secrets.json.data.secrets) {
+    await expect(page.getByText(s.label, { exact: true }).first()).toBeVisible();
+  }
+  // Never a token, a prefix, or a last-4 anywhere on the page.
+  await expect(page.locator("main")).not.toContainText(/ANTHROPIC_API_KEY|ARB_TELEGRAM_TOKEN/i);
+});
+
 test("engine status and the restart banner render the backend's real state, never a placeholder", async ({
   page,
 }) => {
