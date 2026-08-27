@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, ApiError, type StrategyParams } from "@/lib/api/client";
+import { api, ApiError, isStaleVersion, staleVersion, type StrategyParams } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { diffParams, effectFor, fmtDiffValue, type DiffRow } from "@/lib/diff";
@@ -19,7 +19,18 @@ import {
 } from "@/lib/strategyFields";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { NotificationsFields } from "@/components/NotificationsFields";
-import { Await, Badge, Button, ConfirmDialog, DiffTable, PageTitle, Section, Table, fmtTime } from "@/components/ui";
+import {
+  Await,
+  Badge,
+  Button,
+  ConfirmDialog,
+  DiffTable,
+  PageTitle,
+  Section,
+  StaleVersionNotice,
+  Table,
+  fmtTime,
+} from "@/components/ui";
 
 interface ApplyConfirm {
   params: StrategyParams;
@@ -102,6 +113,13 @@ export default function StrategiesPage() {
   const [cooldownRaw, setCooldownRaw] = useState("");
   const [routesDraft, setRoutesDraft] = useState<Record<string, string[]>>({});
   const [jsonText, setJsonText] = useState("");
+  // jsonBaseVersion (T-058): the version jsonText was actually seeded
+  // from (startEdit or the last switchToAdvanced) — NOT necessarily the
+  // live activeVersion, which usePoll can advance while the Advanced:
+  // JSON draft sits open and unrefreshed. The structured form doesn't
+  // need this: buildFromFields re-clones the live activeParams on every
+  // review, so activeVersion genuinely is that payload's parent.
+  const [jsonBaseVersion, setJsonBaseVersion] = useState<number | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -110,6 +128,11 @@ export default function StrategiesPage() {
   const [rollbackConfirm, setRollbackConfirm] = useState<RollbackConfirm | null>(null);
   const [rollbackLoading, setRollbackLoading] = useState<number | null>(null);
   const [rollbackErr, setRollbackErr] = useState("");
+  // stale is non-null once a 409 stale_version comes back from apply or
+  // rollback (T-058) — the draft is never silently re-sent against the
+  // new version; the operator must explicitly Reload. `current` is the
+  // version that won the race (null if the backend didn't send one).
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
   const activeParams = current.kind === "ready" ? current.data.params : null;
   const activeVersion = current.kind === "ready" ? current.data.version : null;
@@ -129,13 +152,27 @@ export default function StrategiesPage() {
   };
 
   const startEdit = () => {
-    if (!activeParams) return;
+    if (!activeParams || activeVersion === null) return;
     setMsg(null);
     setJsonError(null);
+    setStale(null);
     populateFromParams(activeParams);
     setJsonText(JSON.stringify(activeParams, null, 2));
+    setJsonBaseVersion(activeVersion);
     setAdvanced(false);
     setEditing(true);
+  };
+
+  // reloadAfterStale (T-058): the operator's only way forward after a 409
+  // — discard the stale draft and refetch the now-current version. Never
+  // triggered automatically; the banner's Reload button is the one path
+  // here that re-sends anything.
+  const reloadAfterStale = () => {
+    setStale(null);
+    discard();
+    setApplyConfirm(null);
+    setRollbackConfirm(null);
+    setRefresh((n) => n + 1);
   };
 
   const discard = () => {
@@ -143,6 +180,7 @@ export default function StrategiesPage() {
     setAdvanced(false);
     setFieldErrors({});
     setJsonError(null);
+    setJsonBaseVersion(null);
   };
 
   // buildFromFields folds the current per-field raw text into a full
@@ -175,7 +213,7 @@ export default function StrategiesPage() {
   };
 
   const switchToAdvanced = () => {
-    if (!activeParams) return;
+    if (!activeParams || activeVersion === null) return;
     const { params, errors } = buildFromFields(activeParams);
     // buildFromFields silently keeps the last-valid value for any field
     // that fails validation — refuse the switch rather than seed the JSON
@@ -187,6 +225,9 @@ export default function StrategiesPage() {
       return;
     }
     setJsonText(JSON.stringify(params, null, 2));
+    // The JSON draft is reseeded from the live activeParams right here —
+    // that's the version it's now based on, until the next reseed.
+    setJsonBaseVersion(activeVersion);
     setJsonError(null);
     setAdvanced(true);
   };
@@ -213,6 +254,14 @@ export default function StrategiesPage() {
 
   const reviewChanges = () => {
     if (!activeParams || activeVersion === null) return;
+    // parent_version (T-058): the structured form's payload is always
+    // built fresh off the live activeParams below, so activeVersion IS
+    // that payload's parent. The Advanced: JSON draft, by contrast, sits
+    // in a textarea the operator can leave open past the next poll tick
+    // — its parent is whatever version it was last seeded from
+    // (jsonBaseVersion), not necessarily today's activeVersion.
+    const fromVersion = advanced ? jsonBaseVersion : activeVersion;
+    if (fromVersion === null) return;
     setMsg(null);
     let params: StrategyParams;
     let errors: Record<string, string> = {};
@@ -242,19 +291,25 @@ export default function StrategiesPage() {
       setMsg({ ok: false, text: "No changes to apply." });
       return;
     }
-    setApplyConfirm({ params, rows, fromVersion: activeVersion });
+    setApplyConfirm({ params, rows, fromVersion });
   };
 
   const confirmApply = async () => {
     if (!applyConfirm) return;
     setMsg(null);
     try {
-      const snap = await api.config.apply(applyConfirm.params);
+      const snap = await api.config.apply(applyConfirm.params, applyConfirm.fromVersion);
       setMsg({ ok: true, text: `Version ${snap.version} active.` });
+      setStale(null);
       setApplyConfirm(null);
       discard();
       setRefresh((n) => n + 1);
     } catch (err: unknown) {
+      if (isStaleVersion(err)) {
+        setStale({ current: staleVersion(err) });
+        setApplyConfirm(null);
+        return;
+      }
       const text = err instanceof ApiError ? err.message : "Apply failed.";
       const path = err instanceof ApiError ? fieldPathFromError(text) : null;
       if (path && !advanced) {
@@ -289,10 +344,15 @@ export default function StrategiesPage() {
     if (!rollbackConfirm) return;
     setMsg(null);
     try {
-      const snap = await api.config.rollback(rollbackConfirm.version);
+      const snap = await api.config.rollback(rollbackConfirm.version, rollbackConfirm.fromVersion);
       setMsg({ ok: true, text: `Rolled back as new version ${snap.version}.` });
+      setStale(null);
       setRefresh((n) => n + 1);
     } catch (err: unknown) {
+      if (isStaleVersion(err)) {
+        setStale({ current: staleVersion(err) });
+        return;
+      }
       setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Rollback failed." });
     } finally {
       setRollbackConfirm(null);
@@ -307,6 +367,7 @@ export default function StrategiesPage() {
         into the running scanner — except <strong>scanner.workers</strong>, which only applies the next
         time the engine process starts. Risk-section changes require ADMIN; the backend validates bounds.
       </p>
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && (
         <p className={`mb-3 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>
       )}
