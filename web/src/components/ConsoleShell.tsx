@@ -1,13 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
-import { api, ApiError, type RecorderStatus, type SystemStatus } from "@/lib/api/client";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  api,
+  ApiError,
+  type RecorderStatus,
+  type SystemStatus,
+} from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
 import { connectHub, type HubMessage } from "@/lib/ws";
 import { useAuth, can } from "@/lib/auth";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { MoonIcon, NavIcon, SunIcon } from "@/components/icons";
+import { IconRail, NavGroupHeader } from "@/components/IconRail";
+import { GatedControl } from "@/components/GatedControl";
+import {
+  NotificationBell,
+  useNotificationItems,
+} from "@/components/NotificationBell";
 
 // Full navigation per SKILL.md §31, grouped per the UX audit's five-group
 // IA (console-ux-audit.md §2). Sections without a page yet render as
@@ -98,7 +109,9 @@ function loadCollapsedGroups(): Set<string> {
     const raw = localStorage.getItem(GROUP_STORAGE_KEY);
     if (!raw) return new Set();
     const arr = JSON.parse(raw) as unknown;
-    return Array.isArray(arr) ? new Set(arr.filter((v): v is string => typeof v === "string")) : new Set();
+    return Array.isArray(arr)
+      ? new Set(arr.filter((v): v is string => typeof v === "string"))
+      : new Set();
   } catch {
     return new Set();
   }
@@ -132,8 +145,27 @@ function useCollapsedGroups(activeGroupTitle: string | undefined) {
       return next;
     });
   };
-  const isCollapsed = (title: string) => collapsed.has(title) && title !== activeGroupTitle;
-  return { isCollapsed, toggle };
+  // expand: used by the icon rail (UX §2.1 — a rail click expands/scrolls
+  // to its group, it does not collapse the others; there is no forced
+  // one-group-open accordion here, since that would hide every other
+  // group's links on first load, which e2e/console.spec.ts's "nav group
+  // renders and every Scanner Suite page loads" relies on staying true).
+  const expand = (title: string) => {
+    setCollapsed((prev) => {
+      if (!prev.has(title)) return prev;
+      const next = new Set(prev);
+      next.delete(title);
+      saveCollapsedGroups(next);
+      return next;
+    });
+  };
+  const isCollapsed = (title: string) =>
+    collapsed.has(title) && title !== activeGroupTitle;
+  return { isCollapsed, toggle, expand };
+}
+
+function groupDomId(title: string): string {
+  return `nav-group-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
 // useThemeToggle: light/dark persisted in localStorage as data-theme on
@@ -185,8 +217,12 @@ function ThemeToggle() {
     <button
       type="button"
       onClick={toggle}
-      aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-      title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      aria-label={
+        theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+      }
+      title={
+        theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+      }
       className="rounded border border-[var(--border)] p-1.5 text-[var(--text-dim)] hover:text-[var(--text)]"
     >
       {theme === "dark" ? <SunIcon /> : <MoonIcon />}
@@ -206,10 +242,22 @@ const MODE_COPY: Record<string, { color: string; text: string }> = {
     color: "var(--accent)",
     text: "RECORD — capturing public market data only, no orders placed",
   },
-  REPLAY: { color: "var(--warn)", text: "REPLAY — replaying recorded data, not live" },
-  BACKTEST: { color: "var(--warn)", text: "BACKTEST — historical simulation, not live" },
-  MARKET_DATA: { color: "var(--text-dim)", text: "MARKET_DATA — market data only, no trading" },
-  SHADOW: { color: "var(--text-dim)", text: "SHADOW — shadow evaluation, no orders placed" },
+  REPLAY: {
+    color: "var(--warn)",
+    text: "REPLAY — replaying recorded data, not live",
+  },
+  BACKTEST: {
+    color: "var(--warn)",
+    text: "BACKTEST — historical simulation, not live",
+  },
+  MARKET_DATA: {
+    color: "var(--text-dim)",
+    text: "MARKET_DATA — market data only, no trading",
+  },
+  SHADOW: {
+    color: "var(--text-dim)",
+    text: "SHADOW — shadow evaluation, no orders placed",
+  },
 };
 
 // useModeState hoists the RUNNING mode (REST, already polled once for
@@ -218,14 +266,18 @@ const MODE_COPY: Record<string, { color: string; text: string }> = {
 // {running, configured}), so the annotation degrades to nothing on a
 // profile with no supervisor/engine rather than going permanently blank.
 // One connectHub subscription for the whole shell, not one per mount.
-function useModeState(): { status: PollState<SystemStatus>; configured: string | null } {
+function useModeState(): {
+  status: PollState<SystemStatus>;
+  configured: string | null;
+} {
   const status = usePoll<SystemStatus>(() => api.system.status(), 10000);
   const [configured, setConfigured] = useState<string | null>(null);
   useEffect(() => {
     return connectHub(["health"], {
       onMessage: (msg: HubMessage) => {
         if (msg.topic !== "health") return;
-        const data = msg.data as { mode?: { running?: string; configured?: string } } | undefined;
+        const data = msg.data as
+          { mode?: { running?: string; configured?: string } } | undefined;
         if (data?.mode?.configured) setConfigured(data.mode.configured);
       },
     });
@@ -233,7 +285,13 @@ function useModeState(): { status: PollState<SystemStatus>; configured: string |
   return { status, configured };
 }
 
-function ModeBanner({ status, configured }: { status: PollState<SystemStatus>; configured: string | null }) {
+function ModeBanner({
+  status,
+  configured,
+}: {
+  status: PollState<SystemStatus>;
+  configured: string | null;
+}) {
   if (status.kind === "loading") {
     return (
       <div className="mb-3 rounded border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-dim)]">
@@ -323,7 +381,11 @@ function RestartBanner() {
     setBusy(true);
     setErr("");
     try {
-      await api.engine.restart({ confirm: typed, reason: reason || undefined, stop_recording: stopRecording });
+      await api.engine.restart({
+        confirm: typed,
+        reason: reason || undefined,
+        stop_recording: stopRecording,
+      });
       setDialogOpen(false);
       setRefresh((n) => n + 1);
     } catch (e: unknown) {
@@ -338,20 +400,29 @@ function RestartBanner() {
   // case, where there is honestly no restart surface to show).
   if (status.kind !== "ready") return null;
   const restart = status.data.restart;
-  if (restart.state === "ready" && (restart.pending_reasons?.length ?? 0) === 0) return null;
+  if (restart.state === "ready" && (restart.pending_reasons?.length ?? 0) === 0)
+    return null;
 
   const reasons = restart.pending_reasons?.join("; ") ?? "";
   const tone =
-    restart.state === "failed" ? "var(--critical)" : restart.state === "restarting" ? "var(--warn)" : "var(--warn)";
+    restart.state === "failed"
+      ? "var(--critical)"
+      : restart.state === "restarting"
+        ? "var(--warn)"
+        : "var(--warn)";
 
   return (
-    <div className="mb-3 rounded border px-3 py-2 text-[12px]" style={{ borderColor: tone, color: tone }}>
+    <div
+      className="mb-3 rounded border px-3 py-2 text-[12px]"
+      style={{ borderColor: tone, color: tone }}
+    >
       {restart.state === "pending" && (
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            <strong>Saved but not running:</strong> {reasons}. Restarting reconnects the market-data
-            feed, rebuilds the triangles, and starts a new paper session — persisted history is kept; a
-            paused paper engine stays paused.
+            <strong>Saved but not running:</strong> {reasons}. Restarting
+            reconnects the market-data feed, rebuilds the triangles, and starts
+            a new paper session — persisted history is kept; a paused paper
+            engine stays paused.
           </span>
           {mayRestart && (
             <Button onClick={openDialog} danger>
@@ -361,7 +432,10 @@ function RestartBanner() {
         </div>
       )}
       {restart.state === "restarting" && (
-        <span>Restarting — waiting for the last recording segment to close and the feed to drain…</span>
+        <span>
+          Restarting — waiting for the last recording segment to close and the
+          feed to drain…
+        </span>
       )}
       {restart.state === "failed" && (
         <div className="flex flex-wrap items-center gap-2">
@@ -373,7 +447,10 @@ function RestartBanner() {
               <Button onClick={openDialog} danger>
                 Restart engine…
               </Button>
-              <Link href="/settings#platform-versions" className="text-[var(--accent)] underline">
+              <Link
+                href="/settings#platform-versions"
+                className="text-[var(--accent)] underline"
+              >
                 Roll back to v{restart.settings_version} in Settings
               </Link>
             </>
@@ -392,9 +469,11 @@ function RestartBanner() {
           body={
             <div>
               <p className="mb-3">
-                This cancels the running engine, waits for it to stop, and re-enters it with the current
-                settings. In-memory paper balances reset to the configured starting balances; persisted
-                opportunities, cycles and reports are kept. A paused paper engine stays paused.
+                This cancels the running engine, waits for it to stop, and
+                re-enters it with the current settings. In-memory paper balances
+                reset to the configured starting balances; persisted
+                opportunities, cycles and reports are kept. A paused paper
+                engine stays paused.
               </p>
               {recorder?.running && (
                 <label className="mb-3 flex items-center gap-2">
@@ -403,10 +482,14 @@ function RestartBanner() {
                     checked={stopRecording}
                     onChange={(e) => setStopRecording(e.target.checked)}
                   />
-                  Stop the active recording ({recorder.session_id ?? "unknown session"}) and restart
+                  Stop the active recording (
+                  {recorder.session_id ?? "unknown session"}) and restart
                 </label>
               )}
-              <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="restart-reason">
+              <label
+                className="mb-1 block text-[12px] text-[var(--text-dim)]"
+                htmlFor="restart-reason"
+              >
                 Reason (optional)
               </label>
               <input
@@ -415,7 +498,10 @@ function RestartBanner() {
                 onChange={(e) => setReason(e.target.value)}
                 className="mb-3 w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--accent)]"
               />
-              <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor="restart-confirm">
+              <label
+                className="mb-1 block text-[12px] text-[var(--text-dim)]"
+                htmlFor="restart-confirm"
+              >
                 Type <strong>RESTART</strong> to confirm:
               </label>
               <input
@@ -439,34 +525,62 @@ function RestartBanner() {
 // visible desktop sidebar and the mobile overlay (§4.7/BL-24: below md
 // the sidebar collapses to a top bar with a hamburger revealing this
 // same nav as a full-height overlay, closing on nav or outside-tap).
-function NavContent({ active, role, onNavigate }: { active: string; role?: string; onNavigate?: () => void }) {
-  const activeGroupTitle = GROUPS.find((g) => g.items.some((i) => i.label === active))?.title;
-  const { isCollapsed, toggle } = useCollapsedGroups(activeGroupTitle);
-  return (
+// `rail`: desktop-only (UX §8 — below md the overlay always shows full
+// labels, never icon-only) — renders the IconRail (design-system.md
+// §4.1) beside the label column, sharing one collapsed-groups state.
+// Groups stay default-expanded (no forced one-open accordion — UX §2.1's
+// "an operator can pin more than one open" reads as *not* mandating a
+// single-group accordion by default, and a default accordion would hide
+// every Scanner Suite link e2e/console.spec.ts expects visible from a
+// fresh session); a rail click expands/scrolls to its group without
+// collapsing the others.
+function NavContent({
+  active,
+  role,
+  onNavigate,
+  rail,
+}: {
+  active: string;
+  role?: string;
+  onNavigate?: () => void;
+  rail?: boolean;
+}) {
+  const activeGroupTitle = GROUPS.find((g) =>
+    g.items.some((i) => i.label === active),
+  )?.title;
+  const { isCollapsed, toggle, expand } = useCollapsedGroups(activeGroupTitle);
+  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const labelColumn = (
     <>
-      <nav className="flex-1 space-y-3 overflow-y-auto text-[13px]">
+      <nav
+        className="flex-1 space-y-3 overflow-y-auto text-[13px]"
+        aria-label="Primary"
+      >
         {GROUPS.map((group) => {
           const collapsedNow = isCollapsed(group.title);
+          const domId = groupDomId(group.title);
           return (
-            <div key={group.title}>
-              <button
-                type="button"
-                onClick={() => toggle(group.title)}
-                aria-expanded={!collapsedNow}
-                className="mb-1 flex w-full items-center justify-between rounded px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)] hover:text-[var(--text)]"
-              >
-                <span>{group.title}</span>
-                <span aria-hidden className={`transition-transform ${collapsedNow ? "-rotate-90" : ""}`}>
-                  ▾
-                </span>
-              </button>
+            <div
+              key={group.title}
+              ref={(el) => {
+                groupRefs.current[group.title] = el;
+              }}
+            >
+              <NavGroupHeader
+                title={group.title}
+                collapsed={collapsedNow}
+                onToggle={() => toggle(group.title)}
+                controlsId={domId}
+              />
               {!collapsedNow && (
-                <div className="space-y-0.5">
+                <div id={domId} className="space-y-0.5">
                   {group.items.map((item) => {
                     // Audit Log is visible to OPERATOR/ADMIN only (backend
                     // PermViewAudit); annotate rather than silently 403 a
                     // VIEWER who clicks through.
-                    const restrictedForViewer = item.label === "Audit Log" && role === "VIEWER";
+                    const restrictedForViewer =
+                      item.label === "Audit Log" && role === "VIEWER";
                     if (item.href && !restrictedForViewer) {
                       return (
                         <Link
@@ -485,14 +599,19 @@ function NavContent({ active, role, onNavigate }: { active: string; role?: strin
                       );
                     }
                     return (
-                      <span
+                      <GatedControl
                         key={item.label}
-                        title={restrictedForViewer ? "Requires OPERATOR or ADMIN" : item.note ?? "Not implemented yet"}
-                        className="flex cursor-not-allowed items-center gap-2 rounded px-2 py-1 text-[var(--text-dim)] opacity-40"
+                        as="nav"
+                        state={restrictedForViewer ? "role" : "unbuilt"}
+                        reason={
+                          restrictedForViewer
+                            ? "Requires OPERATOR or ADMIN"
+                            : (item.note ?? "Not implemented yet")
+                        }
+                        icon={<NavIcon label={item.label} />}
                       >
-                        <NavIcon label={item.label} />
                         {item.label}
-                      </span>
+                      </GatedControl>
                     );
                   })}
                 </div>
@@ -515,21 +634,53 @@ function NavContent({ active, role, onNavigate }: { active: string; role?: strin
       </Link>
     </>
   );
+
+  if (!rail) return labelColumn;
+
+  return (
+    <div className="flex min-h-0 flex-1 gap-2">
+      <IconRail
+        groups={GROUPS.map((g) => g.title)}
+        activeGroupTitle={activeGroupTitle}
+        onSelect={(title) => {
+          expand(title);
+          groupRefs.current[title]?.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+          });
+        }}
+      />
+      <div className="flex min-w-0 flex-1 flex-col">{labelColumn}</div>
+    </div>
+  );
 }
 
-export function ConsoleShell({ children, active }: { children: ReactNode; active: string }) {
+export function ConsoleShell({
+  children,
+  active,
+}: {
+  children: ReactNode;
+  active: string;
+}) {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
   const modeState = useModeState();
+  // One alerts+rule-events poll for the whole shell (see
+  // useNotificationItems' own comment) — shared by both bell mounts
+  // below, same pattern as modeState feeding both ModeBanner mounts.
+  const notificationItems = useNotificationItems();
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       {/* Mobile top bar (< md): hamburger reveals the full nav as an
           overlay; the desktop sidebar below is hidden at this width. */}
       <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 md:hidden">
-        <span className="text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</span>
+        <span className="text-sm font-semibold tracking-wide text-[var(--text)]">
+          ARB CONSOLE
+        </span>
         <div className="flex items-center gap-2">
+          <NotificationBell items={notificationItems} />
           <ThemeToggle />
           <button
             type="button"
@@ -544,26 +695,47 @@ export function ConsoleShell({ children, active }: { children: ReactNode; active
       </div>
       {mobileOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setMobileOpen(false)} aria-hidden />
+          <div
+            className="absolute inset-0 bg-[var(--overlay)]"
+            onClick={() => setMobileOpen(false)}
+            aria-hidden
+          />
           <aside className="relative z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4">
-            <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</div>
-            <div className="px-2">
-              <ModeBanner status={modeState.status} configured={modeState.configured} />
+            <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">
+              ARB CONSOLE
             </div>
-            <NavContent active={active} role={role} onNavigate={() => setMobileOpen(false)} />
+            <div className="px-2">
+              <ModeBanner
+                status={modeState.status}
+                configured={modeState.configured}
+              />
+            </div>
+            <NavContent
+              active={active}
+              role={role}
+              onNavigate={() => setMobileOpen(false)}
+            />
           </aside>
         </div>
       )}
 
       <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 md:flex">
         <div className="mb-2 flex items-center justify-between px-2">
-          <span className="text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</span>
-          <ThemeToggle />
+          <span className="text-sm font-semibold tracking-wide text-[var(--text)]">
+            ARB CONSOLE
+          </span>
+          <div className="flex items-center gap-1">
+            <NotificationBell items={notificationItems} />
+            <ThemeToggle />
+          </div>
         </div>
         <div className="px-2">
-          <ModeBanner status={modeState.status} configured={modeState.configured} />
+          <ModeBanner
+            status={modeState.status}
+            configured={modeState.configured}
+          />
         </div>
-        <NavContent active={active} role={role} />
+        <NavContent active={active} role={role} rail />
       </aside>
       <main className="min-w-0 flex-1 p-4 md:p-6">
         <RestartBanner />

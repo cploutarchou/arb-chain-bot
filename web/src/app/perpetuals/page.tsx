@@ -13,38 +13,63 @@ import {
   NO_TRANSFER_NOTE,
   Countdown,
   ScreenerAwait,
-  fmtAge,
+  VenueChips,
+  ageCellText,
+  ageTone,
   isStaleAge,
   pollIntervalSFromStatus,
   pollMsFromStatus,
   signTone,
+  signedText,
+  staleCellClass,
   useScreenerStatus,
 } from "@/components/screener/ScreenerShared";
 import { PageTitle, Section, VirtualTable } from "@/components/ui";
+import {
+  FilterCard,
+  FilterRow,
+  NumericFilterField,
+  TextFilterField,
+} from "@/components/FilterCard";
+
+function toggleIn(list: string[], v: string): string[] {
+  return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+}
 
 export default function PerpetualsPage() {
   const status = useScreenerStatus();
   const pollMs = pollMsFromStatus(status);
   const pollIntervalS = pollIntervalSFromStatus(status);
 
-  const [venue, setVenue] = useState("");
+  const [venues, setVenues] = useState<string[]>([]);
   const [base, setBase] = useState("");
   const [minCarryApr, setMinCarryApr] = useState("");
+
+  const activeFilterCount = [
+    venues.length > 0,
+    base.trim() !== "",
+    minCarryApr.trim() !== "",
+  ].filter(Boolean).length;
 
   const perps = usePoll(
     () =>
       api.screener.perpetuals({
-        venue: venue.trim() || undefined,
         base: base.trim().toUpperCase() || undefined,
         min_carry_apr: minCarryApr.trim() ? Number(minCarryApr) : undefined,
         limit: 200,
       }),
     pollMs,
-    [pollMs, venue, base, minCarryApr],
+    [pollMs, base, minCarryApr],
   );
 
-  const rows: ScreenerPerpRow[] =
+  const allRows: ScreenerPerpRow[] =
     perps.kind === "ready" ? (perps.data.rows ?? []) : [];
+  // Venue is a client-side display filter (the wire contract's `venue`
+  // param is a single value, §7) — same "not a new backend param"
+  // convention as Screener's bases_deny.
+  const rows = venues.length
+    ? allRows.filter((r) => venues.includes(r.venue))
+    : allRows;
   const anyHoldDays = rows.find(
     (r) => r.hold_days_assumed !== undefined,
   )?.hold_days_assumed;
@@ -53,39 +78,30 @@ export default function PerpetualsPage() {
     <ConsoleShell active="Perpetuals">
       <PageTitle>Perpetuals & funding</PageTitle>
 
-      <Section title="Filters">
-        <div className="flex flex-wrap items-end gap-3 text-[13px]">
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] text-[var(--text-dim)]">Venue</span>
-            <input
-              value={venue}
-              onChange={(e) => setVenue(e.target.value)}
-              placeholder="binance"
-              className="w-32 rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] text-[var(--text-dim)]">Base</span>
-            <input
-              value={base}
-              onChange={(e) => setBase(e.target.value)}
-              placeholder="BTC"
-              className="w-28 rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] text-[var(--text-dim)]">
-              Min carry APR (%)
-            </span>
-            <input
-              value={minCarryApr}
-              onChange={(e) => setMinCarryApr(e.target.value)}
-              inputMode="decimal"
-              className="w-32 rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
-            />
-          </label>
+      <FilterCard activeCount={activeFilterCount}>
+        <FilterRow label="Venues">
+          <VenueChips
+            selected={venues}
+            onToggle={(v) => setVenues((prev) => toggleIn(prev, v))}
+          />
+        </FilterRow>
+        <div className="flex flex-wrap items-end gap-3">
+          <TextFilterField
+            label="Base"
+            value={base}
+            onChange={setBase}
+            placeholder="BTC"
+            width="w-28"
+          />
+          <NumericFilterField
+            label="Min carry APR"
+            value={minCarryApr}
+            onChange={setMinCarryApr}
+            unit="% APR"
+            width="w-32"
+          />
         </div>
-      </Section>
+      </FilterCard>
 
       <Section title="Basis / funding / carry">
         <ScreenerAwait state={perps} what="perpetuals">
@@ -106,34 +122,77 @@ export default function PerpetualsPage() {
                 "Carry APR net",
                 "Age",
               ]}
-              empty="perpetuals matching these filters"
+              align={[
+                "text",
+                "text",
+                "num",
+                "num",
+                "num",
+                "num",
+                "num",
+                "num",
+                "num",
+                "text",
+                "num",
+                "num",
+                "text",
+              ]}
+              empty={`perpetuals matching these filters — 0 of ${allRows.length} contracts qualify`}
               rows={rows.map((r) => {
                 const stale = isStaleAge(r.age_ms, pollIntervalS);
+                const dim = staleCellClass(stale);
                 const tone = signTone(r.carry_apr_net);
+                const at = ageTone(r.age_ms, pollIntervalS);
                 return [
-                  r.venue,
-                  <span
-                    key="b"
-                    className={stale ? "text-[var(--text-dim)]" : undefined}
-                  >
+                  <span key="v" className={dim}>
+                    {r.venue}
+                  </span>,
+                  <span key="b" className={dim}>
                     {r.base}
                   </span>,
-                  r.spot_mid,
-                  r.perp_mark,
-                  r.perp_index,
-                  r.basis_bps,
-                  r.funding_rate,
-                  r.predicted_funding_rate,
-                  r.funding_interval_h,
+                  <span key="sm" className={dim}>
+                    {r.spot_mid}
+                  </span>,
+                  <span key="pm" className={dim}>
+                    {r.perp_mark}
+                  </span>,
+                  <span key="pi" className={dim}>
+                    {r.perp_index}
+                  </span>,
+                  <span key="ba" className={dim}>
+                    {r.basis_bps}
+                  </span>,
+                  <span key="fr" className={dim}>
+                    {r.funding_rate}
+                  </span>,
+                  <span key="pf" className={dim}>
+                    {r.predicted_funding_rate}
+                  </span>,
+                  <span key="in" className={dim}>
+                    {r.funding_interval_h}
+                  </span>,
                   <Countdown key="c" target={r.next_funding_at} />,
-                  r.carry_apr_gross,
+                  <span key="cg" className={dim}>
+                    {r.carry_apr_gross}
+                  </span>,
                   <span
                     key="n"
-                    className={`font-semibold ${tone === "ok" ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}
+                    className={`font-semibold ${dim} ${tone === "ok" ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}
                   >
-                    {r.carry_apr_net}
+                    {signedText(r.carry_apr_net)}
                   </span>,
-                  fmtAge(r.age_ms),
+                  <span
+                    key="age"
+                    className={
+                      at === "bad"
+                        ? "text-[var(--critical)]"
+                        : at === "warn"
+                          ? "text-[var(--warn)]"
+                          : "text-[var(--text-dim)]"
+                    }
+                  >
+                    {ageCellText(r.age_ms, pollIntervalS)}
+                  </span>,
                 ];
               })}
             />
