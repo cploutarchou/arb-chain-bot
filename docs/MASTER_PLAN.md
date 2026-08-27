@@ -1328,11 +1328,11 @@ PAPER only; the vault's exchange credential group stays unread.
 - T-080 Evidence dashboard: per-strategy net PnL after fees, hit rate, drawdown, sample size vs production-gate thresholds. TODO.
 
 ### Phase 25 SaaS
-- T-081 Tenancy: organisations, memberships, roles; console per tenant. TODO.
+- T-081 Tenancy: organisations, memberships, roles; console per tenant. TODO. Compliance blocks (docs/compliance/review-2026-08-27.md #1, #9, #10): exchange-credential vault operator-only with a 403 test for tenant roles; Art. 30 data map + erasure by pseudonymised audit before prod; Telegram chat IDs encrypted, never logged.
 - T-082 Packages + entitlements (docs/design/packages.md, product-manager) enforced server-side. TODO.
 - T-083 Paddle billing lifecycle + webhooks + customer portal (sandbox-tested). TODO.
 - T-084 Affiliate programme ledger + payouts report. TODO.
-- T-085 Marketing site (site/) with evidence-based copy and legal pages; compliance review. TODO.
+- T-085 Marketing site (site/) with evidence-based copy and legal pages; compliance review. TODO. Blocks (#3, #4, #5, #6): legal-page drafts, sign-up risk acknowledgement, hypothetical-performance disclaimer on every paper surface, copy lint (no %/currency figure without a docs/campaigns citation; banned words).
 - T-086 Client onboarding, e-mail/web alert channels, API keys for client API access (our API, not exchange keys). TODO.
 - T-087 Client console re-skin (ux-designer → ui-designer → frontend). TODO.
 - T-088 White-label option (later). TODO.
@@ -1346,7 +1346,7 @@ PAPER only; the vault's exchange credential group stays unread.
 - T-094 Load/soak tests at target scale (venues × pairs × tenants). TODO.
 
 ### Phase 27 Production execution gate
-- T-095 BLOCKED by design: live execution requires (a) ≥ 30 days positive auto-paper evidence across regimes, (b) security review, (c) the operator's recorded legal decision, (d) a human-reviewed code change replacing ErrLiveTradingDisabled. No work starts before (a)–(c) exist.
+- T-095 BLOCKED by design (record in docs/decisions/; see compliance review #2, #16 for what client-funds execution would additionally require): live execution requires (a) ≥ 30 days positive auto-paper evidence across regimes, (b) security review, (c) the operator's recorded legal decision, (d) a human-reviewed code change replacing ErrLiveTradingDisabled. No work starts before (a)–(c) exist.
 
 ## Status log
 
