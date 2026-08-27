@@ -21,6 +21,8 @@ import (
 // document (internal/platform's own test fixture is unexported to that
 // package).
 func supervisorTestSettings() platform.Settings {
+	// T-059: the fixture predates the platform/ai sections; WithDefaults
+	// fills them from a PAPER seed exactly as Service.Load would.
 	return platform.Settings{
 		Venues: map[string]platform.VenueSettings{
 			"binance": {
@@ -34,7 +36,7 @@ func supervisorTestSettings() platform.Settings {
 			},
 		},
 		Paper: platform.PaperSettings{Balances: map[string]string{"USDT": "10000"}},
-	}
+	}.WithDefaults(config.Bootstrap{Mode: config.ModePaper, AIModel: "claude-sonnet-5"})
 }
 
 // fakeEngine is the design's §5 fake EngineRunner: it records

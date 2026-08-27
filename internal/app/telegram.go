@@ -32,7 +32,7 @@ type telegramServices struct {
 func (t telegramServices) Status() telegram.StatusView {
 	st := t.e.Status()
 	view := telegram.StatusView{
-		Mode:        string(t.e.cfg.Mode),
+		Mode:        string(t.e.Mode()),
 		Ready:       st.Ready,
 		Triangles:   st.Triangles,
 		Markets:     len(st.Markets),

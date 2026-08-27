@@ -94,6 +94,9 @@ type Engine struct {
 	// falls back to platform.Seed(e.cfg), preserving today's behavior.
 	settings        platform.Settings
 	settingsVersion int64
+	// runMode is the operating mode THIS run snapshotted at entry (T-059
+	// §2.3): a mode never changes mid-run; Mode() reports it.
+	runMode config.Mode
 
 	scn       *scanner.Scanner
 	topo      *graph.Topology
@@ -382,10 +385,27 @@ func (e *Engine) ApplySettings(s platform.Settings, version int64) {
 func (e *Engine) currentSettings() platform.Settings {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	return e.settingsLocked()
+}
+
+func (e *Engine) settingsLocked() platform.Settings {
 	if e.settingsVersion == 0 {
 		return platform.Seed(e.cfg)
 	}
 	return e.settings.Clone()
+}
+
+// Mode returns the operating mode the engine is RUNNING (the value Run
+// snapshotted at entry), falling back to the configured document's mode
+// before the first Run (T-059 §2.3). It never reads cfg.Mode directly:
+// ARB_MODE is a first-boot seed only.
+func (e *Engine) Mode() config.Mode {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.runMode != "" {
+		return e.runMode
+	}
+	return e.settingsLocked().Platform.Mode
 }
 
 // --- e.mu-guarded accessors -------------------------------------------
@@ -537,7 +557,7 @@ func (e *Engine) ResetPaper(ctx context.Context) error {
 		for a, v := range initial {
 			balances[string(a)] = v.String()
 		}
-		if err := e.Store.EnsurePaperSession(ctx, newSession, string(e.cfg.Mode), balances, 1, e.cfg.Seed); err != nil {
+		if err := e.Store.EnsurePaperSession(ctx, newSession, string(e.Mode()), balances, 1, e.cfg.Seed); err != nil {
 			return fmt.Errorf("engine: register new paper session: %w", err)
 		}
 	}
@@ -571,6 +591,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	// two overlapping runs would trigger.
 	e.runToken++
 	myToken := e.runToken
+	// T-059: the mode is a per-run snapshot of the applied document.
+	mode := e.settingsLocked().Platform.Mode
+	e.runMode = mode
 	e.mu.Unlock()
 	e.oppMu.Lock()
 	e.recentOpps, e.rejectCounts, e.rejectPersistedAt = nil, nil, nil
@@ -826,13 +849,13 @@ func (e *Engine) Run(ctx context.Context) error {
 	var paperEng *paper.Engine
 	var paperIn chan scanner.Event
 	port := portfolio.New(resv, initial)
-	if e.cfg.Mode == config.ModePaper {
+	if mode == config.ModePaper {
 		if e.Store != nil {
 			balances := map[string]string{}
 			for a, v := range initial {
 				balances[string(a)] = v.String()
 			}
-			if err := e.Store.EnsurePaperSession(runCtx, sessionID, string(e.cfg.Mode), balances, 1, e.cfg.Seed); err != nil {
+			if err := e.Store.EnsurePaperSession(runCtx, sessionID, string(mode), balances, 1, e.cfg.Seed); err != nil {
 				e.log.Warn("paper session registration failed", "error", err)
 			}
 		}
@@ -943,7 +966,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.mu.Unlock()
 	}()
 	e.notify(notification.SeverityInfo, "engine:ready", "Engine ready",
-		fmt.Sprintf("%d triangles over %d markets in %s mode", len(topo.Triangles), len(scoped), e.cfg.Mode))
+		fmt.Sprintf("%d triangles over %d markets in %s mode", len(topo.Triangles), len(scoped), mode))
 	defer e.notify(notification.SeverityInfo, "engine:stopped", "Engine stopped", "shutdown or fatal component exit")
 
 	// E4: register the pull-metrics sources once, with accessor-based
@@ -970,7 +993,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		// here: it needs to fold in supervisor restart state, which the
 		// engine cannot see (design §2.6).
 	}
-	if e.cfg.Mode == config.ModeRecord {
+	if mode == config.ModeRecord {
 		if _, err := rctl.Start(runCtx); err != nil {
 			return fmt.Errorf("engine: start recording: %w", err)
 		}
