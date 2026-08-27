@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { api, ApiError, type StrategyParams, type UserRow } from "@/lib/api/client";
+import { api, ApiError, isStaleVersion, staleVersion, type StrategyParams, type UserRow } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { cloneParams, setPath, validateCooldown } from "@/lib/strategyFields";
@@ -27,6 +27,7 @@ import {
   DiffTable,
   PageTitle,
   Section,
+  StaleVersionNotice,
   Stat,
   Table,
   fmtTime,
@@ -563,13 +564,24 @@ function NotificationsSection() {
   const [cooldownErr, setCooldownErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmState, setConfirmState] = useState<NotifApplyConfirm | null>(null);
+  // stale mirrors /strategies' handling of a 409 stale_version (T-058):
+  // never silently re-send the draft, only Reload does.
+  const [stale, setStale] = useState<{ current: number | null } | null>(null);
 
   const startEdit = (params: StrategyParams) => {
     setCooldownRaw(notifCooldown(params));
     setRoutesDraft(notifRoutes(params));
     setCooldownErr(null);
     setMsg(null);
+    setStale(null);
     setEditing(true);
+  };
+
+  const reloadAfterStale = () => {
+    setStale(null);
+    setEditing(false);
+    setConfirmState(null);
+    setRefresh((n) => n + 1);
   };
 
   const toggleChannel = (severity: string, channel: string, enabled: boolean) => {
@@ -603,12 +615,18 @@ function NotificationsSection() {
     if (!confirmState) return;
     setMsg(null);
     try {
-      const snap = await api.config.apply(confirmState.params);
+      const snap = await api.config.apply(confirmState.params, confirmState.fromVersion);
       setMsg({ ok: true, text: `Version ${snap.version} active.` });
+      setStale(null);
       setEditing(false);
       setConfirmState(null);
       setRefresh((n) => n + 1);
     } catch (err: unknown) {
+      if (isStaleVersion(err)) {
+        setStale({ current: staleVersion(err) });
+        setConfirmState(null);
+        return;
+      }
       setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Apply failed." });
       setConfirmState(null);
     }
@@ -616,6 +634,7 @@ function NotificationsSection() {
 
   return (
     <Section title="Notifications">
+      {stale && <StaleVersionNotice currentVersion={stale.current} onReload={reloadAfterStale} />}
       {msg && (
         <p className={`mb-2 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>{msg.text}</p>
       )}

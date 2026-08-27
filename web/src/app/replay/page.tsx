@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, ApiError, request, type ReplayRun } from "@/lib/api/client";
+import { api, ApiError, isNotReady, request, type ReplayRun } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { connectHub, type HubMessage } from "@/lib/ws";
@@ -92,7 +92,9 @@ export default function ReplayPage() {
   const [selConfigVersion, setSelConfigVersion] = useState<number | "">("");
   const [speed, setSpeed] = useState("1");
   const [submitting, setSubmitting] = useState(false);
-  const [runMsg, setRunMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // retryable mirrors campaigns' handling of a 503 not_ready right after
+  // boot (the replay runner's background context isn't wired yet).
+  const [runMsg, setRunMsg] = useState<{ ok: boolean; text: string; retryable?: boolean } | null>(null);
   const [detail, setDetail] = useState<ReplayRun | null>(null);
 
   const submitRun = async () => {
@@ -111,7 +113,11 @@ export default function ReplayPage() {
       setRunMsg({ ok: true, text: `Replay ${res.run.id} queued.` });
       setRefresh((n) => n + 1);
     } catch (err: unknown) {
-      setRunMsg({ ok: false, text: err instanceof ApiError ? err.message : "Replay launch failed." });
+      setRunMsg({
+        ok: false,
+        text: err instanceof ApiError ? err.message : "Replay launch failed.",
+        retryable: isNotReady(err),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -251,8 +257,13 @@ export default function ReplayPage() {
                   {!mayRun && <span className="text-[12px] text-[var(--text-dim)]">requires OPERATOR</span>}
                 </div>
                 {runMsg && (
-                  <p className={`text-[13px] ${runMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
-                    {runMsg.text}
+                  <p className={`flex items-center gap-2 text-[13px] ${runMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
+                    <span>{runMsg.text}</span>
+                    {runMsg.retryable && (
+                      <Button onClick={() => void submitRun()} disabled={submitting}>
+                        Retry
+                      </Button>
+                    )}
                   </p>
                 )}
               </div>
