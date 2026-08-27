@@ -168,6 +168,27 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 	VenueHTX:      {spotBps: "20", perpBps: "6"},
 	VenueKraken:   {spotBps: "80", perpBps: "5"},
 	VenueCoinbase: {spotBps: "120", perpBps: "5"},
+	// T-078 Tier-3 (docs/research/venues/<venue>.md §6): BingX perp taker
+	// is VERIFIED (5 bps); every other number below is an UNVERIFIED
+	// placeholder — each venue's Registry entry stays Verified=false.
+	VenueCryptoCom: {spotBps: "50", perpBps: "7"},
+	VenueBitfinex:  {spotBps: "20", perpBps: "6.5"},
+	VenueBingX:     {spotBps: "10", perpBps: "5"},
+	VenueWhiteBIT:  {spotBps: "10", perpBps: "5.5"},
+	VenueBitMart:   {spotBps: "25", perpBps: "6"},
+}
+
+// tier3Venues (T-078: Crypto.com Exchange, Bitfinex, BingX, WhiteBIT,
+// BitMart) start DISABLED: they are opt-in until each venue's 30-minute
+// live soak shows zero rate-limit hits and zero errors (SKILL.md step 5),
+// exactly as Tier-2 was before the 2026-08-27 soak. An operator enables
+// them per venue from the console; Defaults() must not.
+var tier3Venues = map[Venue]bool{
+	VenueCryptoCom: true,
+	VenueBitfinex:  true,
+	VenueBingX:     true,
+	VenueWhiteBIT:  true,
+	VenueBitMart:   true,
 }
 
 // Tier-2 venues (T-075: KuCoin, HTX, Kraken, Coinbase) were opt-in until
@@ -180,7 +201,8 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 // (docs/research/venues/coinbase.md §3) so PerpsEnabled stays false.
 
 // Defaults returns the first-boot document: every known venue (Tier-1
-// and, since the 2026-08-27 soak, Tier-2) enabled with regular-tier
+// and, since the 2026-08-27 soak, Tier-2 — Tier-3 stays opt-in, see
+// tier3Venues) enabled with regular-tier
 // taker fees (spot/perp) "to be
 // confirmed by T-065" (docs/research/screener-endpoints.md verifies each
 // against the venue's current official fee schedule).
@@ -189,7 +211,7 @@ func Defaults() Settings {
 	for _, id := range OrderedVenues {
 		f := defaultVenueFees[id]
 		venues[id] = VenueSettings{
-			Enabled: true, PerpsEnabled: id != VenueCoinbase,
+			Enabled: !tier3Venues[id], PerpsEnabled: id != VenueCoinbase,
 			SpotTakerBps: decimal.RequireFromString(f.spotBps),
 			PerpTakerBps: decimal.RequireFromString(f.perpBps),
 		}

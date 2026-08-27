@@ -11,8 +11,9 @@ Two report systems exist; do not confuse them.
   for the Scanner Suite's automatic paper execution:
   `GET /api/v1/screener/reports`, `GET /api/v1/screener/reports/{id}`
   (`screener:view`), `POST /api/v1/screener/reports/run` (`screener:config`,
-  CSRF, audited). A console page for them is **planned**; today they are
-  read through the API, the files on disk and the Telegram summary.
+  CSRF, audited). The console lists them under Scanner Suite → Screener
+  Reports (detail view renders the stored markdown; "Run now" is
+  ADMIN-only); the same content is on disk and in the Telegram summary.
 
 ## When and what
 

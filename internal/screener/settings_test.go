@@ -16,7 +16,9 @@ func TestDefaultsValidates(t *testing.T) {
 	}
 	for id := range KnownVenues {
 		v, ok := def.Venues[id]
-		if !ok || !v.Enabled { // Tier-1 and Tier-2 both on since the 2026-08-27 soak (T-075)
+		// Tier-1 and Tier-2 on since the 2026-08-27 soak (T-075); Tier-3
+		// (T-078) opt-in until its own soak — see TestDefaultsTier3OptIn.
+		if !ok || v.Enabled == tier3Venues[id] {
 			t.Fatalf("Defaults() venue %s enabled=%v", id, v.Enabled)
 		}
 		if v.PerpsEnabled == (id == VenueCoinbase) { // Coinbase: no retail perps
@@ -25,6 +27,30 @@ func TestDefaultsValidates(t *testing.T) {
 	}
 	if !def.Venues[VenueBybit].PerpTakerBps.Equal(d("5.5")) {
 		t.Fatalf("bybit perp_taker_bps = %s, want 5.5", def.Venues[VenueBybit].PerpTakerBps)
+	}
+}
+
+// TestDefaultsTier3OptIn pins the T-078 opt-in set: the five Tier-3
+// venues start DISABLED (they enable per venue after their own 30-min
+// soak, SKILL.md step 5) and every other known venue starts enabled.
+func TestDefaultsTier3OptIn(t *testing.T) {
+	wantOff := map[Venue]bool{
+		VenueCryptoCom: true, VenueBitfinex: true, VenueBingX: true,
+		VenueWhiteBIT: true, VenueBitMart: true,
+	}
+	if len(wantOff) != len(tier3Venues) {
+		t.Fatalf("tier3Venues has %d entries, want %d", len(tier3Venues), len(wantOff))
+	}
+	for id := range wantOff {
+		if !tier3Venues[id] {
+			t.Fatalf("tier3Venues missing %s", id)
+		}
+	}
+	def := Defaults()
+	for _, id := range OrderedVenues {
+		if def.Venues[id].Enabled != !wantOff[id] {
+			t.Fatalf("Defaults() venue %s enabled=%v, want %v", id, def.Venues[id].Enabled, !wantOff[id])
+		}
 	}
 }
 

@@ -162,11 +162,11 @@ func TestChainPrecedenceAndSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := providerEntries(t, m)
-	if len(list) != 4 || list[0].Name != "anthropic_api_key" || list[3].Name != "telegram_bot_token" {
+	if len(list) != 5 || list[0].Name != "anthropic_api_key" || list[4].Name != "telegram_bot_token" {
 		t.Fatalf("list = %+v", list)
 	}
-	if list[0].Applies != AppliesImmediately || list[3].Applies != AppliesProcessRestart {
-		t.Fatalf("applies = %q / %q", list[0].Applies, list[3].Applies)
+	if list[0].Applies != AppliesImmediately || list[4].Applies != AppliesProcessRestart {
+		t.Fatalf("applies = %q / %q", list[0].Applies, list[4].Applies)
 	}
 }
 
@@ -214,7 +214,7 @@ func TestClosedVaultStillServesEnv(t *testing.T) {
 		t.Fatalf("delete on closed vault = %v", err)
 	}
 	list := providerEntries(t, m)
-	if len(list) != 4 || !list[0].Present || list[0].Source != "env" || list[3].Present {
+	if len(list) != 5 || !list[0].Present || list[0].Source != "env" || list[4].Present {
 		t.Fatalf("list = %+v", list)
 	}
 }
@@ -272,9 +272,10 @@ func TestManagerOnChangeFiresWithNameOnly(t *testing.T) {
 	}
 }
 
-// TestRegistryIsClosed pins the registry shape: exactly four provider
-// entries (the advisory/notification credentials plus the two Paddle
-// billing secrets, T-083), and every exchange
+// TestRegistryIsClosed pins the registry shape: exactly five provider
+// entries (the advisory/notification credentials, the two Paddle
+// billing secrets from T-083, and the alert e-mail SMTP URL from
+// T-086), and every exchange
 // entry is unreadable by construction — no env fallback, never consumed,
 // refused by Manager.Get even when the vault holds a value.
 func TestRegistryIsClosed(t *testing.T) {
@@ -305,8 +306,8 @@ func TestRegistryIsClosed(t *testing.T) {
 			t.Fatalf("entry %q has unknown group %q", name, spec.Group)
 		}
 	}
-	if providers != 4 {
-		t.Fatalf("registry has %d provider entries, want exactly 4", providers)
+	if providers != 5 {
+		t.Fatalf("registry has %d provider entries, want exactly 5", providers)
 	}
 	if exchanges != 14 {
 		t.Fatalf("registry has %d exchange entries, want 14", exchanges)
@@ -382,15 +383,18 @@ func TestManagerListUsesStoreList(t *testing.T) {
 	}
 	list := providerEntries(t, m)
 	// Sorted by name: anthropic, paddle_api_key, paddle_webhook_secret,
-	// telegram (the two Paddle entries are absent in this fixture).
-	if len(list) != 4 || list[0].Name != "anthropic_api_key" || list[3].Name != "telegram_bot_token" {
+	// smtp_url, telegram (paddle/smtp entries are absent in this fixture).
+	if len(list) != 5 || list[0].Name != "anthropic_api_key" || list[4].Name != "telegram_bot_token" {
 		t.Fatalf("list = %+v", list)
 	}
-	if list[0].Source != "env" || !list[0].Present || list[3].Source != "vault" || !list[3].Readable || list[3].UpdatedBy != "u_1" {
+	if list[0].Source != "env" || !list[0].Present || list[4].Source != "vault" || !list[4].Readable || list[4].UpdatedBy != "u_1" {
 		t.Fatalf("list = %+v", list)
 	}
 	if list[1].Name != "paddle_api_key" || list[1].Present || list[2].Name != "paddle_webhook_secret" || list[2].Present {
 		t.Fatalf("paddle entries = %+v %+v", list[1], list[2])
+	}
+	if list[3].Name != "smtp_url" || list[3].Present {
+		t.Fatalf("smtp entry = %+v", list[3])
 	}
 }
 
