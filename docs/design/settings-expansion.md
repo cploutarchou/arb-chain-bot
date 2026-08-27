@@ -166,7 +166,14 @@ and the `WithDefaults` fallback; its doc comment says so.
 
 `Seed`/`WithDefaults` map **every non-settable `ARB_MODE`** — `REPLAY`,
 `BACKTEST` **and `SHADOW`** — to `MARKET_DATA` in the document, with a log
-line naming the substitution. `config.go:25` makes `SHADOW` a legal
+line naming the substitution. `WithDefaults` goes one step further: the
+env mode cannot see the stored `venues`/`paper` sections' cross-field
+rules, so when the seeded mode makes the upgraded document invalid but
+`MARKET_DATA` does not (a pre-expansion row with `paper_enabled=false`
+under `ARB_MODE=PAPER`), it falls back to `MARKET_DATA` with the same
+named WARN; a stored (non-empty) mode is never rewritten. Invalid
+`ARB_LOG_LEVEL`/`ARB_ALLOWED_ORIGIN` seeds are substituted with the same
+kind of named WARN (`SeedNotes`), never silently. `config.go:25` makes `SHADOW` a legal
 `ARB_MODE` today and `.env.example:4` documents it, so a deployment running
 `ARB_MODE=SHADOW` (or `cmd/replay`, which shares `buildPlatform`) would
 otherwise seed a document its own validator rejects and refuse to boot —

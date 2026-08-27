@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
@@ -20,7 +22,7 @@ type SecretsAdmin interface {
 	Reason() string
 	KeyID() string
 	List(ctx context.Context) ([]secrets.Info, error)
-	Put(ctx context.Context, name, value, actor string) (secrets.Info, error)
+	Put(ctx context.Context, name string, value []byte, actor string) (secrets.Info, error)
 	Delete(ctx context.Context, name string) (secrets.Info, error)
 }
 
@@ -95,8 +97,11 @@ func (s *Server) handleSecretPut(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_payload", "body too large", correlationID(r))
 		return
 	}
+	// The value is decoded straight into a []byte (secretValue) — never
+	// into a Go string, which could not be scrubbed — and zeroed with
+	// the buffer before the handler returns.
 	var body struct {
-		Value string `json:"value"`
+		Value secretValue `json:"value"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(buf))
 	dec.DisallowUnknownFields()
@@ -104,16 +109,117 @@ func (s *Server) handleSecretPut(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_payload", `body must be {"value": "..."}`, correlationID(r))
 		return
 	}
+	defer zero(body.Value)
 	principal, _ := PrincipalFrom(r.Context())
 	info, err := s.Secrets.Put(r.Context(), name, body.Value, principal.UserID)
-	body.Value = ""
 	if err != nil {
 		s.writeSecretsError(w, r, err)
 		return
 	}
-	s.audit(r, principal.UserID, "secret.write", "secret:"+name)
+	s.auditWith(r, principal.UserID, "secret.write", "secret:"+name, secretAudit{Name: name, Present: true, KeyID: s.Secrets.KeyID()})
 	s.log.Info("secret written", "name", name, "actor", principal.UserID, "key_id", s.Secrets.KeyID())
 	WriteData(w, http.StatusOK, info)
+}
+
+// secretAudit is the design §3.4 audit "after" payload: name, presence
+// and the key fingerprint — nothing about the value.
+type secretAudit struct {
+	Name    string `json:"name"`
+	Present bool   `json:"present"`
+	KeyID   string `json:"key_id,omitempty"`
+}
+
+// secretValue decodes a JSON string into bytes without materialising a
+// Go string (encoding/json would decode []byte as base64, and a string
+// field would leave an unscrubbable copy). Escapes follow RFC 8259.
+type secretValue []byte
+
+func (v *secretValue) UnmarshalJSON(raw []byte) error {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return errors.New("value must be a JSON string")
+	}
+	out := make([]byte, 0, len(raw)-2)
+	body := raw[1 : len(raw)-1]
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c != '\\' {
+			out = append(out, c)
+			continue
+		}
+		i++
+		if i >= len(body) {
+			zero(out)
+			return errors.New("truncated escape")
+		}
+		switch body[i] {
+		case '"', '\\', '/':
+			out = append(out, body[i])
+		case 'b':
+			out = append(out, '\b')
+		case 'f':
+			out = append(out, '\f')
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case 't':
+			out = append(out, '\t')
+		case 'u':
+			r, n, err := decodeUnicodeEscape(body[i-1:])
+			if err != nil {
+				zero(out)
+				return err
+			}
+			out = utf8.AppendRune(out, r)
+			i += n - 2 // n counts the leading backslash and 'u' already consumed
+		default:
+			zero(out)
+			return errors.New("invalid escape")
+		}
+	}
+	*v = out
+	return nil
+}
+
+// decodeUnicodeEscape parses "\uXXXX" (and a following low surrogate
+// when the first is a high surrogate) at the start of b; n is the
+// number of bytes consumed.
+func decodeUnicodeEscape(b []byte) (r rune, n int, err error) {
+	hex4 := func(p []byte) (rune, bool) {
+		if len(p) < 6 || p[0] != '\\' || p[1] != 'u' {
+			return 0, false
+		}
+		var x rune
+		for _, c := range p[2:6] {
+			x <<= 4
+			switch {
+			case c >= '0' && c <= '9':
+				x |= rune(c - '0')
+			case c >= 'a' && c <= 'f':
+				x |= rune(c-'a') + 10
+			case c >= 'A' && c <= 'F':
+				x |= rune(c-'A') + 10
+			default:
+				return 0, false
+			}
+		}
+		return x, true
+	}
+	r, ok := hex4(b)
+	if !ok {
+		return 0, 0, errors.New("invalid \\u escape")
+	}
+	if utf16.IsSurrogate(r) {
+		lo, ok := hex4(b[6:])
+		if !ok {
+			return 0, 0, errors.New("invalid surrogate pair")
+		}
+		if dec := utf16.DecodeRune(r, lo); dec != utf8.RuneError {
+			return dec, 12, nil
+		}
+		return 0, 0, errors.New("invalid surrogate pair")
+	}
+	return r, 6, nil
 }
 
 func (s *Server) handleSecretDelete(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +238,7 @@ func (s *Server) handleSecretDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeSecretsError(w, r, err)
 		return
 	}
-	s.audit(r, principal.UserID, "secret.delete", "secret:"+name)
+	s.auditWith(r, principal.UserID, "secret.delete", "secret:"+name, secretAudit{Name: name, Present: info.Present})
 	s.log.Info("secret deleted", "name", name, "actor", principal.UserID)
 	WriteData(w, http.StatusOK, info)
 }

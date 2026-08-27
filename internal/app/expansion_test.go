@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/ai"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 )
@@ -260,4 +261,98 @@ type fakeSecretSource map[string]string
 func (f fakeSecretSource) Get(_ context.Context, name string) (string, string, bool) {
 	v, ok := f[name]
 	return v, "vault", ok && v != ""
+}
+
+// slowSecretSource blocks Get until released, standing in for the vault
+// round trip that must happen outside the platform writer lock.
+type slowSecretSource struct {
+	gate  chan struct{}
+	value string
+}
+
+func (s slowSecretSource) Get(context.Context, string) (string, string, bool) {
+	<-s.gate
+	return s.value, "vault", s.value != ""
+}
+
+// TestAIApplierDedupesAndKeepsSwitchAndStatusPaired (review P3-1/P3-3):
+// an unchanged ai section triggers no rebuild, a forced request does,
+// and a stale (older-generation) result never overwrites a newer one,
+// so aiSwitch and aiState always describe the same advisor.
+func TestAIApplierDedupesAndKeepsSwitchAndStatusPaired(t *testing.T) {
+	sw := &ai.Switch{}
+	state := &aiRuntime{}
+	src := fakeSecretSource{"anthropic_api_key": "vault-key-value-1234567890"}
+	a := &aiApplier{log: testLogger(), sw: sw, state: state, src: src}
+	settings := platform.AISettings{Enabled: true, Provider: "anthropic", Model: "claude-sonnet-5",
+		Schedule: platform.AISchedule{HourlyMinutes: 60}, Budget: platform.AIBudget{MaxAnalysesPerDay: 48, MaxOutputTokens: 2048}}
+
+	a.apply(settings, a.next(settings))
+	if !sw.Enabled() || !state.get().Running || state.get().KeySource != "vault" {
+		t.Fatalf("boot apply: enabled=%v state=%+v", sw.Enabled(), state.get())
+	}
+	a.mu.Lock()
+	gen := a.gen
+	a.mu.Unlock()
+	a.request(settings, false)
+	a.mu.Lock()
+	same := a.gen == gen
+	a.mu.Unlock()
+	if !same {
+		t.Fatal("unchanged ai section must not schedule a rebuild")
+	}
+
+	// Stale-result drop: an older generation that completes after a
+	// newer one is discarded, and the switch/state stay paired.
+	off := settings
+	off.Enabled = false
+	g1 := a.next(settings) // older: would enable
+	g2 := a.next(off)      // newer: disables
+	a.apply(off, g2)
+	a.apply(settings, g1)
+	if sw.Enabled() || state.get().Running || state.get().Reason != "disabled in settings" {
+		t.Fatalf("stale generation overwrote the newer one: enabled=%v state=%+v", sw.Enabled(), state.get())
+	}
+
+	// A forced request (key changed) rebuilds even with an equal section.
+	a.request(settings, true)
+	deadline := time.Now().Add(2 * time.Second)
+	for !sw.Enabled() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !sw.Enabled() || !state.get().Running {
+		t.Fatalf("forced request did not rebuild: enabled=%v state=%+v", sw.Enabled(), state.get())
+	}
+}
+
+// TestAIApplierResolvesOutsideSubscriberCall: request returns before the
+// secret source answers, i.e. the swap's subscriber callback never waits
+// on the vault.
+func TestAIApplierResolvesOutsideSubscriberCall(t *testing.T) {
+	src := slowSecretSource{gate: make(chan struct{}), value: "vault-key-value-1234567890"}
+	sw := &ai.Switch{}
+	state := &aiRuntime{}
+	a := &aiApplier{log: testLogger(), sw: sw, state: state, src: src}
+	settings := platform.AISettings{Enabled: true, Provider: "anthropic", Model: "claude-sonnet-5"}
+	done := make(chan struct{})
+	go func() {
+		a.request(settings, false)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request blocked on the secret source")
+	}
+	if sw.Enabled() {
+		t.Fatal("advisor built before the source answered")
+	}
+	close(src.gate)
+	deadline := time.Now().Add(2 * time.Second)
+	for !sw.Enabled() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !sw.Enabled() || !state.get().Running {
+		t.Fatalf("advisor not built after the source answered: %+v", state.get())
+	}
 }

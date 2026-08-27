@@ -233,3 +233,44 @@ func TestMaxOutputTokensReachesRequestBody(t *testing.T) {
 		t.Fatalf("fallback max_tokens = %d, want 2048", got.Load())
 	}
 }
+
+// offMidCall reports Enabled until Analyze, which answers as a switch
+// flipped off between the entry check and the provider call.
+type offMidCall struct{}
+
+func (offMidCall) Name() string  { return "off" }
+func (offMidCall) Model() string { return "off-model" }
+func (offMidCall) Analyze(context.Context, string) (string, error) {
+	return "", ErrAdvisorDisabled
+}
+
+// TestBudgetReleasedOnDisabledMidCall (review P3-7): a switch-off
+// between the entry check and the provider call hands its budget slot
+// back, so a cap of 1 still allows the next real analysis. (The other
+// half of the fix — reserving only after the prompt builds — has no
+// reachable failure input: buildPrompt marshals a typed struct with no
+// float/any fields, so it is covered by ordering, not by a test.)
+func TestBudgetReleasedOnDisabledMidCall(t *testing.T) {
+	sw := &Switch{}
+	sw.Set(offMidCall{})
+	svc, _, _ := newTestService(t, sw)
+	svc.Limits = func() Budget { return Budget{MaxAnalysesPerDay: 1} }
+	ctx := context.Background()
+
+	if _, err := svc.RunAnalysis(ctx, testInput(KindHourlyHealth)); !errors.Is(err, ErrAdvisorDisabled) {
+		t.Fatalf("mid-call disable = %v", err)
+	}
+	if u := svc.Usage(); u.AnalysesToday != 0 {
+		t.Fatalf("disabled call kept its slot: %+v", u)
+	}
+	if svc.Failures() != 0 {
+		t.Fatalf("failures = %d", svc.Failures())
+	}
+	sw.Set(Fake{})
+	if _, err := svc.RunAnalysis(ctx, testInput(KindHourlyHealth)); err != nil {
+		t.Fatalf("released slot must be usable: %v", err)
+	}
+	if _, err := svc.RunAnalysis(ctx, testInput(KindHourlyHealth)); !errors.Is(err, ErrBudgetExhausted) {
+		t.Fatalf("cap of 1 not enforced afterwards: %v", err)
+	}
+}

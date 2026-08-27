@@ -55,7 +55,7 @@ func TestSecretsStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Put(ctx, "telegram_bot_token", "telegram-token-value-12345678", "u_1", t0); err != nil {
+	if err := v.Put(ctx, "telegram_bot_token", []byte("telegram-token-value-12345678"), "u_1", t0); err != nil {
 		t.Fatal(err)
 	}
 	val, src, ok := v.Get(ctx, "telegram_bot_token")
@@ -69,5 +69,32 @@ func TestSecretsStoreRoundTrip(t *testing.T) {
 	}
 	if deleted, _ := st.Delete(ctx, "anthropic_api_key"); deleted {
 		t.Fatal("second delete must report no row")
+	}
+}
+
+func TestSecretsStoreList(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	st := s.Secrets()
+	if rows, err := st.List(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("empty list = %v %v", rows, err)
+	}
+	for _, name := range []string{"telegram_bot_token", "anthropic_api_key"} {
+		if err := st.Put(ctx, secrets.Row{Name: name, Ciphertext: []byte{9}, Nonce: []byte("twelve-bytes"), KeyID: "k", UpdatedAt: t0, UpdatedBy: "nobody"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := st.List(ctx)
+	if err != nil || len(rows) != 2 || rows[0].Name != "anthropic_api_key" || rows[1].Name != "telegram_bot_token" {
+		t.Fatalf("list = %+v %v", rows, err)
+	}
+	if rows[0].UpdatedBy != "" || !rows[0].UpdatedAt.Equal(t0) {
+		t.Fatalf("row = %+v", rows[0])
+	}
+	// The manager's status view runs over this one call.
+	v, _ := secrets.NewVault(st, make([]byte, 32))
+	list, err := secrets.NewManager(v, "", nil).List(ctx)
+	if err != nil || len(list) != 2 || !list[0].Present || list[0].Source != "vault" || list[0].Readable {
+		t.Fatalf("manager list = %+v %v", list, err)
 	}
 }
