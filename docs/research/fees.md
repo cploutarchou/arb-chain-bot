@@ -38,10 +38,17 @@ hardcode them.
   KGST/USDT zero maker+taker for all verified users 2026-06-01 → 2026-08-31
   (article 8313e84b…); BTC/U zero fees 2026-04-17 → 2026-07-16 (expired,
   fe2b0d28…); BTC/JPY & BNB/JPY zero fees VIP2–9 + liquidity providers
-  2026-04-01 → 2026-06-30 (expired, 599c19e3…). The earlier FDUSD-pair
-  program cited in round 1 was **not found as a live announcement** in the
-  catalog sweep and must be treated as expired unless `account/commission`
-  says otherwise. A BNB/ADA/TRX/XRP–USDC zero-fee promo for **VIP2–9 and
+  2026-04-01 → 2026-06-30 (expired, 599c19e3…). **The FDUSD program is
+  live but is a zero-MAKER promotion** [browser-verified 2026-08-27 on
+  binance.com/en/fee/tradingPromote, "Zero Fee" tab, public view]: every
+  listed X/FDUSD pair shows maker 0 % and taker "Standard VIP Rates";
+  only FDUSD/USDT is 0 %/0 %. The page footnote states that pairs under
+  zero-fee promotions are excluded from VIP volume and liquidity
+  programs and that BNB discounts and rebates do not apply on them,
+  while zero-maker pairs still count. For a taker-only bot the FDUSD
+  legs therefore cost the standard taker rate; the "U Promo" and "USDC
+  Promo" tabs exist on the same page but were not read (the browser
+  session was signed in, so interaction stopped). A BNB/ADA/TRX/XRP–USDC zero-fee promo for **VIP2–9 and
   Spot Liquidity Providers** (2026-08-12 → 2026-10-11) was seen only on
   Binance's official X account, not on a retrievable announcement page —
   secondary evidence; and being VIP2+ it does not apply to a Regular-tier
@@ -128,11 +135,12 @@ hardcode them.
 
 ### Coinbase Advanced Trade
 - Base tier (Intro, <$1K 30d): maker 0.60% / taker 1.20% (60/120 bps);
-  $1K–$10K ≈ 0.35%/0.75%. [re-verification 2026-08-26: the tier table is
-  behind a login — help.coinbase.com/…/advanced-trade-fees says "sign in …
-  and see the Coinbase Advanced fees page"; coinbase.com/advanced-fees
-  returns an empty shell to non-browser clients. Figures stay
-  secondary-sourced and unchanged; confirm via `transaction_summary`.] Institutional Coinbase Exchange
+  $1K–$10K ≈ 0.35%/0.75%. [re-verification 2026-08-26/27: the tier table
+  is behind a login — help.coinbase.com/…/advanced-trade-fees says "sign
+  in … and see the Coinbase Advanced fees page", and in a browser
+  coinbase.com/advanced-fees redirects straight to the sign-in page
+  (verified 2026-08-27). Figures stay secondary-sourced and unchanged;
+  confirm via `transaction_summary`.] Institutional Coinbase Exchange
   (0.40%/0.60%) is a different product; comparison sites conflate them.
 - No token discount. Stable-pair schedule: maker 0%, taker ~0.001–0.0045%
   (exact current retail value UNVERIFIED).
