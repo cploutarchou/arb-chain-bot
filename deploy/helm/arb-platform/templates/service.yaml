@@ -1,0 +1,40 @@
+{{- if .Values.arbd.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "arb.arbdName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: arbd
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.arbd.httpPort }}
+      targetPort: http
+    - name: metrics
+      port: {{ .Values.arbd.metricsPort }}
+      targetPort: metrics
+  selector:
+    {{- include "arb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: arbd
+{{- end }}
+{{- if .Values.web.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "arb.webName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    {{- include "arb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+{{- end }}

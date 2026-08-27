@@ -1,0 +1,14 @@
+apiVersion: v2
+name: arb-platform
+description: >-
+  arbd (API + engine + collectors), the web console and the migrate hook
+  for the triangular-arbitrage platform. LIVE execution is disabled in
+  every environment by code (ErrLiveTradingDisabled); nothing in this
+  chart can enable it.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords: [arbitrage, paper-trading, go, nextjs]
+maintainers:
+  - name: platform-sre

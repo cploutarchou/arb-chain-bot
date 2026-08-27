@@ -1,0 +1,26 @@
+{{- if and .Values.arbd.enabled .Values.arbd.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "arb.arbdName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: arbd
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace | quote }}]
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.arbd.serviceMonitor.interval }}
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_arb_io_mode]
+          targetLabel: mode
+        - targetLabel: environment
+          replacement: {{ .Values.global.environment }}
+{{- end }}

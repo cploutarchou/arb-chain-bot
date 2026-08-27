@@ -1,0 +1,43 @@
+# Reference ServiceMonitor (the chart renders the same object when
+# arbd.serviceMonitor.enabled=true). Scrapes the private metrics port
+# (ARB_METRICS_ADDR=:9109); the public API port is never scraped.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: arbd
+  namespace: monitoring
+  labels: {release: kube-prometheus-stack}
+spec:
+  namespaceSelector:
+    matchNames: [arb]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: arb-platform
+      app.kubernetes.io/component: arbd
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_arb_io_mode]
+          targetLabel: mode
+        - sourceLabels: [__meta_kubernetes_pod_label_arb_io_environment]
+          targetLabel: environment
+---
+# Postgres exporter for replication lag / connections (managed service:
+# run prometheus-community/postgres-exporter against the primary).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+  labels: {release: kube-prometheus-stack}
+spec:
+  namespaceSelector:
+    matchNames: [arb]
+  selector:
+    matchLabels: {app.kubernetes.io/name: prometheus-postgres-exporter}
+  endpoints:
+    - port: http
+      interval: 30s
