@@ -52,6 +52,14 @@ const (
 var Known = map[string]Spec{
 	"anthropic_api_key":  {Env: "ANTHROPIC_API_KEY", Label: "Anthropic API key", MinLen: 20, Applies: AppliesImmediately, Group: GroupProvider},
 	"telegram_bot_token": {Env: "ARB_TELEGRAM_TOKEN", Label: "Telegram bot token", MinLen: 20, Applies: AppliesProcessRestart, Group: GroupProvider},
+	// Paddle Billing (T-083, docs/design/billing.md): the server-side API
+	// key (checkout transactions, subscription updates, portal sessions)
+	// and the notification-destination secret that signs every webhook.
+	// Both are read on each use, so a rotation applies immediately. The
+	// client-side token Paddle.js needs is public and lives in config,
+	// not here. No card data ever reaches this process.
+	"paddle_api_key":        {Env: "PADDLE_API_KEY", Label: "Paddle API key", MinLen: 20, Applies: AppliesImmediately, Group: GroupProvider},
+	"paddle_webhook_secret": {Env: "PADDLE_WEBHOOK_SECRET", Label: "Paddle webhook secret", MinLen: 20, Applies: AppliesImmediately, Group: GroupProvider},
 
 	"binance_api_key":       exchangeCred("binance", "Binance API key"),
 	"binance_api_secret":    exchangeCred("binance", "Binance API secret"),

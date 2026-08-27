@@ -1,0 +1,19 @@
+{{- if and .Values.arbd.enabled .Values.arbd.recordings.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "arb.arbdName" . }}-recordings
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+  annotations:
+    # Keep recordings across helm uninstall; they are campaign evidence.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.arbd.recordings.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.arbd.recordings.size }}
+{{- end }}

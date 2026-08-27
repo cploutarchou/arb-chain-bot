@@ -100,7 +100,9 @@ func TestSecretsStoreList(t *testing.T) {
 			list = append(list, in)
 		}
 	}
-	if err != nil || len(list) != 2 || !list[0].Present || list[0].Source != "vault" || list[0].Readable {
+	// Four provider entries since T-083 (the two Paddle secrets are
+	// absent here); the stored anthropic row is first by name.
+	if err != nil || len(list) != 4 || !list[0].Present || list[0].Source != "vault" || list[0].Readable {
 		t.Fatalf("manager list = %+v %v", list, err)
 	}
 }

@@ -1,0 +1,110 @@
+{{- if .Values.arbd.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arb.arbdName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: arbd
+spec:
+  replicas: {{ .Values.arbd.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    {{- toYaml .Values.arbd.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: arbd
+  template:
+    metadata:
+      labels:
+        {{- include "arb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: arbd
+        arb.io/mode: {{ include "arb.mode" . }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-arbd.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.arbd.metricsPort | quote }}
+        {{- with .Values.arbd.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "arb.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: arbd
+          image: {{ include "arb.image" (dict "root" . "img" .Values.image.arbd) }}
+          imagePullPolicy: {{ .Values.image.arbd.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.arbd.httpPort }}
+            - name: metrics
+              containerPort: {{ .Values.arbd.metricsPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "arb.arbdName" . }}-config
+            - secretRef:
+                name: {{ include "arb.secretName" . }}
+          {{- with .Values.arbd.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet: {path: {{ .Values.arbd.probes.liveness.path }}, port: http}
+            initialDelaySeconds: {{ .Values.arbd.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.arbd.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.arbd.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.arbd.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet: {path: {{ .Values.arbd.probes.readiness.path }}, port: http}
+            initialDelaySeconds: {{ .Values.arbd.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.arbd.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.arbd.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.arbd.probes.readiness.failureThreshold }}
+          startupProbe:
+            httpGet: {path: {{ .Values.arbd.probes.startup.path }}, port: http}
+            periodSeconds: {{ .Values.arbd.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.arbd.probes.startup.failureThreshold }}
+          resources:
+            {{- toYaml .Values.arbd.resources | nindent 12 }}
+          volumeMounts:
+            - name: recordings
+              mountPath: /recordings
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
+        - name: recordings
+          {{- if .Values.arbd.recordings.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "arb.arbdName" . }}-recordings
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.arbd.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.arbd.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.arbd.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.arbd.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

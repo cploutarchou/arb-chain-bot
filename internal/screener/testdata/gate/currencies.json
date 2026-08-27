@@ -1,0 +1,1276 @@
+[
+ {
+  "currency": "BTC",
+  "name": "Bitcoin",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BTC",
+  "chains": [
+   {
+    "name": "BTC",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BSC",
+    "addr": "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "21000000",
+  "market_cap": "1594386987732.0"
+ },
+ {
+  "currency": "0G",
+  "name": "Zero Gravity",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "0G",
+  "chains": [
+   {
+    "name": "0G",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "34517080.0"
+ },
+ {
+  "currency": "2Z",
+  "name": "DoubleZero",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "SOL",
+  "chains": [
+   {
+    "name": "SOL",
+    "addr": "J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "10000000000",
+  "market_cap": "197245942.35"
+ },
+ {
+  "currency": "A8",
+  "name": "Ancient8",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x3e5a19c91266ad8ce2477b91585d1856b84062df",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "3372328.35048774"
+ },
+ {
+  "currency": "AI",
+  "name": "Sleepless AI",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0xBDA011D7F8EC00F66C1923B049B94c67d148d8b2",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "2408900.0"
+ },
+ {
+  "currency": "AARK",
+  "name": "Aark",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ARBEVM",
+  "chains": [
+   {
+    "name": "ARBEVM",
+    "addr": "0xCa4e51F6AD4AFd9d1068E5899De9dd7d73F3463D",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "214102.04799046827"
+ },
+ {
+  "currency": "AART",
+  "name": "ALL.ART",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "SOL",
+  "chains": [
+   {
+    "name": "SOL",
+    "addr": "F3nefJBcejYbtdREjui1T9DPh5dBgpkKq7u2GAAMXs5B",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "5000000000",
+  "market_cap": "529573.6455433527"
+ },
+ {
+  "currency": "AAVE",
+  "name": "AAVE",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "16000000",
+  "market_cap": "1945782170.981385"
+ },
+ {
+  "currency": "AAPL3L",
+  "name": "AAPL3xLong",
+  "delisted": false,
+  "withdraw_disabled": true,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "invalid-AAPL3L-8700211-380",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": []
+ },
+ {
+  "currency": "AAPL3S",
+  "name": "AAPL3xShort",
+  "delisted": false,
+  "withdraw_disabled": true,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "invalid-AAPL3S-8700208-380",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": []
+ },
+ {
+  "currency": "ETH",
+  "name": "Ethereum",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "ABS",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "ARBEVM",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "ARBNOVA",
+    "addr": "",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   },
+   {
+    "name": "BASEEVM",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BSC",
+    "addr": "0x2170ed0880ac9a755fd29b2688956bd959f933f8",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "LINEAETH",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "MANTAETH",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "OPETH",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "ZKSERA",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "∞",
+  "market_cap": "301738115630.74695"
+ },
+ {
+  "currency": "AAPLON",
+  "name": "Apple Ondo Tokenized",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x14c3abf95cb9c93a8b82c1cdcb76d72cb87b2d4c",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [
+   "stocks",
+   "ondo-stocks"
+  ],
+  "market_cap": "8326207.799567209"
+ },
+ {
+  "currency": "10SET",
+  "name": "Tenset",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0x1AE369A6AB222aFF166325B7b87Eb9aF06C86E57",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "210000000",
+  "market_cap": "1436509.3006976168"
+ },
+ {
+  "currency": "AEON",
+  "name": "AEON",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0x277add739c6e0477616948357af9e79fe1ec9b80",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "13590848.0"
+ },
+ {
+  "currency": "AIGENSYN",
+  "name": "Gensyn",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x4d7078ddd6ccfed2f85db5b7d3ff16828d378d48",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "GENSYN",
+    "addr": "0x4e742319f6b0fec4afa504fc8ed3ceab0fb751a2",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "10000000000",
+  "market_cap": "26367488.07573"
+ },
+ {
+  "currency": "AERO",
+  "name": "Aerodrome",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BASEEVM",
+  "chains": [
+   {
+    "name": "BASEEVM",
+    "addr": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "∞",
+  "market_cap": "507013759.8635657"
+ },
+ {
+  "currency": "AEVO",
+  "name": "Aevo",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0xB528edBef013aff855ac3c50b381f253aF13b997",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "21442724.142449856"
+ },
+ {
+  "currency": "AGLD",
+  "name": "Adventure Gold",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x32353a6c91143bfd6c7d363b546e62a9a2489a20",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "96000000",
+  "market_cap": "15697553.1691"
+ },
+ {
+  "currency": "AIOT",
+  "name": "OKZOO",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0x55ad16bd573b3365f43a9daeb0cc66a73821b4a5",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "4243392.0"
+ },
+ {
+  "currency": "AAPLX",
+  "name": "Apple xStock",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "SOL",
+  "chains": [
+   {
+    "name": "SOL",
+    "addr": "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [
+   "stocks",
+   "xstocks"
+  ],
+  "market_cap": "13025342.90517118"
+ },
+ {
+  "currency": "AAPLG",
+  "name": "Apple",
+  "delisted": false,
+  "withdraw_disabled": true,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "invalid-AAPLG-8700696-380",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": [
+   "gstocks",
+   "stocks"
+  ]
+ },
+ {
+  "currency": "1CAT",
+  "name": "Bitcoin Cats",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BTCBRC",
+  "chains": [
+   {
+    "name": "BTCBRC",
+    "addr": "1cat",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   },
+   {
+    "name": "ETH",
+    "addr": "0x508e00d5cef397b02d260d035e5ee80775e4c821",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": [],
+  "total_supply": "10000000000",
+  "market_cap": "295000.0"
+ },
+ {
+  "currency": "3KDS",
+  "name": "3KDS",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0x490153b338c2469e21c55e4ff88bdcfadac68141",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "132726.4"
+ },
+ {
+  "currency": "XAR",
+  "name": "Arcana Network",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": true,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x5027fc44a7ba114b8f494b1e4970900c6652fedf",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "311262.64051932003"
+ },
+ {
+  "currency": "1INCH",
+  "name": "1inch",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x111111111117dc0aa78b770fa6a738034120c302",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BSC",
+    "addr": "0x111111111117dc0aa78b770fa6a738034120c302",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1500000000",
+  "market_cap": "126768715.96896353"
+ },
+ {
+  "currency": "USDT",
+  "name": "Tether",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "0G",
+    "addr": "0x1217bfe6c773eec6cc4a38b5dc45b92292b6e189",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   },
+   {
+    "name": "ALGO",
+    "addr": "312769",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   },
+   {
+    "name": "APT",
+    "addr": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "ARBEVM",
+    "addr": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BSC",
+    "addr": "0x55d398326f99059fF775485246999027B3197955",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BTC",
+    "addr": "aaaaa000000111111xxx00000xxx000111",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   },
+   {
+    "name": "AVAX_C",
+    "addr": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "CELO",
+    "addr": "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "DOTSM",
+    "addr": "1984",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "EOS",
+    "addr": "USDT@tethertether",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   },
+   {
+    "name": "GTEVM",
+    "addr": "0x4151ab5072198d0843cd2999590ef292f49d6c66",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "KAIA",
+    "addr": "0xd077a400968890eacc75cdc901f0356c943e4fdb",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "KAVAEVM",
+    "addr": "0x919C1c267BC06a7039e03fcc2eF738525769109c",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "KSMSM",
+    "addr": "1984",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   },
+   {
+    "name": "MATIC",
+    "addr": "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "MON",
+    "addr": "0xe7cd86e13ac4309349f30b3435a9d337750fc82d",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "NEAR",
+    "addr": "usdt.tether-token.near",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "OPETH",
+    "addr": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "SOL",
+    "addr": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "TON",
+    "addr": "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "TRX",
+    "addr": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "XPL",
+    "addr": "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "XTZ",
+    "addr": "KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "∞",
+  "market_cap": "183363017256.59857"
+ },
+ {
+  "currency": "AAVE3S",
+  "name": "AAVE3xShort",
+  "delisted": false,
+  "withdraw_disabled": true,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ITSNOTACHAIN",
+  "chains": [
+   {
+    "name": "ITSNOTACHAIN",
+    "addr": "",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": []
+ },
+ {
+  "currency": "AAVE3L",
+  "name": "AAVE3xLong",
+  "delisted": false,
+  "withdraw_disabled": true,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ITSNOTACHAIN",
+  "chains": [
+   {
+    "name": "ITSNOTACHAIN",
+    "addr": "",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": []
+ },
+ {
+  "currency": "4EVER",
+  "name": "4EVERLAND",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0xe355de6a6043b0580ff5a26b46051a4809b12793",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "10000000000",
+  "market_cap": "198984.0"
+ },
+ {
+  "currency": "3ULL",
+  "name": "PLAYA3ULL GAMES",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "3ULL",
+  "chains": [
+   {
+    "name": "3ULL",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "50000000000",
+  "market_cap": "3031200.0"
+ },
+ {
+  "currency": "ABBVG",
+  "name": "AbbVie",
+  "delisted": false,
+  "withdraw_disabled": true,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "invalid-ABBVG-8700716-380",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": [
+   "gstocks",
+   "stocks"
+  ]
+ },
+ {
+  "currency": "AIXBT",
+  "name": "aixbt by Virtuals",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BASEEVM",
+  "chains": [
+   {
+    "name": "BASEEVM",
+    "addr": "0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "17976423.49932"
+ },
+ {
+  "currency": "A2Z",
+  "name": "Arena-Z",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0x08dcb9b5989fb09ef80e85567ec1f49577a70d29",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "10000000000",
+  "market_cap": "305898.1752106315"
+ },
+ {
+  "currency": "A47",
+  "name": "Agenda 47 News Network",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "SOL",
+  "chains": [
+   {
+    "name": "SOL",
+    "addr": "CN162nCPpq3DxPCyKLbAvEJeB1aCxsnVTEG4ZU8vpump",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "999999999",
+  "market_cap": "1783999.998216"
+ },
+ {
+  "currency": "ACE",
+  "name": "Fusionist",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0xc27A719105A987b4c34116223CAE8bd8F4B5def4",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "147000000",
+  "market_cap": "22513884.56247"
+ },
+ {
+  "currency": "ACH",
+  "name": "Alchemy Pay",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ETH",
+  "chains": [
+   {
+    "name": "ETH",
+    "addr": "0xed04915c23f00a313a544955524eb7dbd823143d",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BSC",
+    "addr": "0xBc7d6B50616989655AfD682fb42743507003056D",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "15346246087",
+  "market_cap": "50809999.99999994"
+ },
+ {
+  "currency": "ACT",
+  "name": "Act I: The AI Prophecy",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "SOL",
+  "chains": [
+   {
+    "name": "SOL",
+    "addr": "GJAFwWjJ3vnTsrQVabjBVK2TYB1YtRCQXRDfDgUnpump",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "10729324.029978028"
+ },
+ {
+  "currency": "ACU",
+  "name": "Acurast",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ACU",
+  "chains": [
+   {
+    "name": "ACU",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BSC",
+    "addr": "0x6ef2ffb38d64afe18ce782da280b300e358cfeaf",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "ETH",
+    "addr": "0x216b3643ff8b7bb30d8a48e9f1bd550126202add",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "51659931.16652"
+ },
+ {
+  "currency": "ADA",
+  "name": "Cardano",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "ADA",
+  "chains": [
+   {
+    "name": "ADA",
+    "addr": "",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "45000000000",
+  "market_cap": "7940880049.196892"
+ },
+ {
+  "currency": "AIA",
+  "name": "DeAgentAI",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "SUI",
+  "chains": [
+   {
+    "name": "SUI",
+    "addr": "0x99cc0e7834326ec6ac571421e9b8e042e9eb63062771c77ac592bd194180b5da::deagent_token::DEAGENT_TOKEN",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "BSC",
+    "addr": "0x53ec33cd4fa46b9eced9ca3f6db626c5ffcd55cc",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   },
+   {
+    "name": "SUINEW",
+    "addr": "0x99cc0e7834326ec6ac571421e9b8e042e9eb63062771c77ac592bd194180b5da::deagent_token::DEAGENT_TOKEN",
+    "withdraw_disabled": true,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "7908259.999999999"
+ },
+ {
+  "currency": "AIN",
+  "name": "Infinity Ground",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0x9558a9254890b2a8b057a789f413631b9084f4a3",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "3035760.0"
+ },
+ {
+  "currency": "AIO",
+  "name": "OLAXBT",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": true,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0x81a7da4074b8e0ed51bea40f9dcbdf4d9d4832b4",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": true
+   }
+  ],
+  "category": [],
+  "total_supply": "1000000000",
+  "market_cap": "9960615.0"
+ },
+ {
+  "currency": "AKE",
+  "name": "Akedo",
+  "delisted": false,
+  "withdraw_disabled": false,
+  "withdraw_delayed": false,
+  "deposit_disabled": false,
+  "trade_disabled": false,
+  "fixed_rate": "",
+  "chain": "BSC",
+  "chains": [
+   {
+    "name": "BSC",
+    "addr": "0x2c3a8ee94ddd97244a93bc48298f97d2c412f7db",
+    "withdraw_disabled": false,
+    "withdraw_delayed": false,
+    "deposit_disabled": false
+   }
+  ],
+  "category": [],
+  "total_supply": "100000000000",
+  "market_cap": "170373000.0"
+ }
+]

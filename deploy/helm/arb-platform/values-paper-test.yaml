@@ -1,0 +1,36 @@
+# paper-test: staging. Identical image digests to prod, managed Postgres,
+# ingress with TLS, external secrets from the KMS-backed store. This is
+# where every release is smoke-tested before the manual prod approval.
+global:
+  environment: paper-test
+arbd:
+  mode: PAPER
+  replicas: 1
+  logLevel: info
+  recordings:
+    size: 100Gi
+  serviceMonitor:
+    enabled: true
+web:
+  hpa:
+    minReplicas: 2
+    maxReplicas: 4
+ingress:
+  enabled: true
+  host: paper.console.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+    nginx.ingress.kubernetes.io/enable-owasp-core-rules: "true"
+externalSecrets:
+  enabled: true
+  remotePrefix: "arb/paper-test/"
+networkPolicy:
+  enabled: true
+  egressDatabaseCIDRs: ["10.20.0.0/16"]   # managed Postgres subnet (terraform output)
+  egressRedisCIDRs: ["10.21.0.0/16"]
