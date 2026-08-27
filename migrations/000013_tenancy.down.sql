@@ -1,0 +1,18 @@
+BEGIN;
+DROP INDEX IF EXISTS screener_paper_executions_org_idx;
+DROP INDEX IF EXISTS screener_paper_positions_org_idx;
+DROP INDEX IF EXISTS screener_events_org_idx;
+DROP INDEX IF EXISTS screener_templates_org_idx;
+DROP INDEX IF EXISTS screener_rules_org_idx;
+ALTER TABLE screener_paper_balances DROP CONSTRAINT screener_paper_balances_pkey;
+ALTER TABLE screener_paper_balances ADD PRIMARY KEY (venue, asset);
+ALTER TABLE screener_paper_balances   DROP COLUMN org_id;
+ALTER TABLE screener_paper_executions DROP COLUMN org_id;
+ALTER TABLE screener_paper_positions  DROP COLUMN org_id;
+ALTER TABLE screener_events           DROP COLUMN org_id;
+ALTER TABLE screener_templates        DROP COLUMN org_id;
+ALTER TABLE screener_rules            DROP COLUMN org_id;
+ALTER TABLE users DROP COLUMN platform_admin;
+DROP TABLE memberships;
+DROP TABLE organisations;
+COMMIT;

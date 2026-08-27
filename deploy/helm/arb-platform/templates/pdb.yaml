@@ -1,0 +1,29 @@
+{{- if and .Values.arbd.enabled .Values.arbd.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "arb.arbdName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.arbd.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: arbd
+{{- end }}
+{{- if and .Values.web.enabled .Values.web.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "arb.webName" . }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.web.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "arb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+{{- end }}

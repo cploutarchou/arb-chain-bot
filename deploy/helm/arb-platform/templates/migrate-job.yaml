@@ -1,0 +1,61 @@
+{{- if .Values.migrate.enabled }}
+# Schema migrations run before every install/upgrade. Failure aborts the
+# release (helm --atomic then restores the previous revision). Down
+# migrations are never automatic: see docs/runbooks/restore-drill.md.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "arb.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "arb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "arb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "arb.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: migrate
+          image: {{ include "arb.image" (dict "root" . "img" .Values.image.migrate) }}
+          imagePullPolicy: {{ .Values.image.migrate.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          args: ["-path", "/migrations", "-database", "$(ARB_DATABASE_URL)", "up"]
+          env:
+            - name: ARB_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arb.secretName" . }}
+                  key: ARB_DATABASE_URL
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: {{ include "arb.fullname" . }}-migrations
+{{- end }}

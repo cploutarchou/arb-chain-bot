@@ -24,6 +24,11 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/alerts"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/report"
+	"github.com/cploutarchou/arb-chain-bot/internal/screener/venue"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
@@ -77,6 +82,19 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		store = s
 		log.Info("persistence enabled")
+		// db_migrations_pending: compared once at boot against the
+		// version this binary was built for (storage.LatestMigrationVersion).
+		bctx, bcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if pending, err := s.MigrationsPending(bctx); err != nil {
+			log.Error("schema_migrations check failed; reporting migrations as pending", "error", err)
+			migrationsPending.Store(1)
+		} else {
+			migrationsPending.Store(pending)
+			if pending > 0 {
+				log.Warn("schema migrations pending: run `make migrate`", "built_for", storage.LatestMigrationVersion)
+			}
+		}
+		bcancel()
 	} else {
 		log.Warn("ARB_DATABASE_URL unset; running without persistence (sessions and history are memory-only)")
 	}
@@ -96,6 +114,35 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		platformSvc.Catalog = storage.Catalog{S: store}
 	}
 
+	// screener.Service (T-067/T-068, docs/design/scanner-suite.md §2):
+	// the Scanner Suite backend core. Built unconditionally (like
+	// platformSvc above) so every profile can serve the read routes;
+	// only the API profile actually attaches it to a Server below and
+	// runs the T-066 venue collectors (next block).
+	screenerSvc, err := buildScreener(log, store)
+	if err != nil {
+		log.Error("screener settings load failed; refusing to start without a validated settings document", "error", err)
+		return []Component{ComponentFunc{ComponentName: "screener-settings", Fn: func(context.Context) error { return err }}}
+	}
+	// T-066: venue collectors (public REST only) run as one component in
+	// the profiles that serve the screener API; they start with the
+	// process and stop when its context ends. Other profiles keep the
+	// honest "not_started" (no runner wired).
+	if p == ProfileFull || p == ProfileAPI {
+		screenerSvc.Collectors = &venue.Poller{
+			Book: screenerSvc.Book, Log: log, Funding: screenerSvc.Funding,
+			Current: func() screener.Settings { return screenerSvc.Current().Settings },
+		}
+		others = append(others, ComponentFunc{ComponentName: "screener-collectors", Fn: func(ctx context.Context) error {
+			if err := screenerSvc.StartCollectors(ctx); err != nil {
+				return err
+			}
+			<-ctx.Done()
+			screenerSvc.StopCollectors()
+			return nil
+		}})
+	}
+
 	// platform.log_level is hot (T-059 D6): the process-wide LevelVar
 	// follows the document from here on; ARB_LOG_LEVEL seeded v1 only.
 	platformSvc.Subscribe(func(snap platform.Snapshot) {
@@ -108,6 +155,10 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	// two registry entries. A missing/invalid ARB_SECRET_KEY closes the
 	// vault; the platform keeps running on env-provided secrets.
 	secretsMgr := buildSecrets(log, store, cfg)
+	// Tenancy + entitlements + billing (T-081..T-083): pgx-backed when
+	// persistence is on; without a database every account acts in the
+	// platform organisation and billing is unconfigured.
+	tenant := buildTenancy(log, store, secretsMgr, cfg)
 
 	// Metrics are always built (near-zero idle cost); a registration
 	// failure logs and the platform runs unobserved rather than not at all.
@@ -119,6 +170,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	if mtr != nil && cfg.MetricsAddr != "" {
 		others = append(others, &metrics.Server{Addr: cfg.MetricsAddr, Handler: mtr.Handler, Log: log})
 	}
+	if mtr != nil && store != nil {
+		if err := mtr.RegisterMigrations(migrationsPending.Load); err != nil {
+			log.Error("migrations metric registration failed", "error", err)
+		}
+	}
 
 	// One notification router for every channel; routing config follows
 	// the versioned strategy config (hot swap included).
@@ -126,6 +182,50 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 	stratSvc.Subscribe(func(snap strategy.Snapshot) {
 		notify.Reconfigure(notificationConfig(snap))
 	})
+
+	// T-070/T-071: the alert evaluator and the automatic PAPER executor
+	// run on the screener poll interval in the same profiles as the
+	// collectors. Executor first (funding accrual, exits, realised-slip
+	// measurement of the previous poll), then the evaluator, whose
+	// opened events call the executor synchronously. The executor's
+	// ledger is migration 000011 (screener_paper_*) when persistence is
+	// on, in-memory otherwise; it never touches paper_cycles nor places
+	// a real order (execution.LiveExecutor stays disabled).
+	var screenerReports *report.Generator
+	// feedRateLimited feeds exchange_rate_limited_total{venue="binance"}
+	// from the engine's Binance feed once the engine exists (below).
+	var feedRateLimited func() int64
+	if p == ProfileFull || p == ProfileAPI {
+		var ledger paperexec.Ledger = paperexec.NewMemoryLedger()
+		if store != nil {
+			ledger = store.ScreenerPaper()
+		}
+		evaluator := alerts.New(screenerSvc, notify.Notify, log)
+		// T-082: alerts.per_day + alerts.channels are enforced at open
+		// time per the rule's organisation (nil without tenancy).
+		evaluator.SetEntitle(tenant.alertEntitle())
+		executor := paperexec.New(screenerSvc, ledger, log, paperexec.Options{Seed: 1, IDGen: newULID, Entitle: tenant.paperEntitle(ledger)})
+		evaluator.OnOpen(executor.OnOpen)
+		screenerSvc.SetAutoPaper(executor)
+		others = append(others, screener.NewAutomation(screenerSvc, executor, evaluator))
+		if mtr != nil {
+			if err := mtr.RegisterScreener(screenerMetricSources(screenerSvc, evaluator, executor, &feedRateLimited)); err != nil {
+				log.Error("screener metrics registration failed", "error", err)
+			}
+		}
+
+		// T-078: nightly (00:05 UTC) and on-demand paper reports per
+		// strategy / rule over the same ledger; files under
+		// <ARB_RECORDING_DIR>/screener-reports/<date>/, rows in
+		// screener_reports (migration 000012), one Telegram summary.
+		var reportStore report.Store = report.NewMemoryStore()
+		if store != nil {
+			reportStore = store.ScreenerReports()
+		}
+		screenerReports = &report.Generator{Svc: screenerSvc, Ledger: ledger, Store: reportStore, Notify: notify.Notify,
+			Dir: cfg.RecordingDir, Log: log, IDGen: newULID, Seed: 1}
+		others = append(others, &report.Scheduler{Gen: screenerReports})
+	}
 
 	// The alert center records every delivery (routing controls channels,
 	// never whether an alert exists) and owns the shared lifecycle.
@@ -198,6 +298,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		engine.Store = store
 		engine.Strategy = stratSvc
 		engine.Metrics = mtr
+		feedRateLimited = engine.FeedRateLimited
 		engine.Notifier = notify
 		engine.Center = center
 		// The engine is no longer an app.Component in its own right: the
@@ -241,6 +342,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
 			}
 			others = append(others, campaigns)
+			if mtr != nil {
+				if err := mtr.RegisterCampaign(campaigns.RunCounts); err != nil {
+					log.Error("campaign metrics registration failed", "error", err)
+				}
+			}
 
 			// Console-driven replays (BL-17): one baseline backtest.Run
 			// against a recording, optionally pinned to a persisted
@@ -398,6 +504,12 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			return r
 		})
 		apiServer.Secrets = secretsMgr
+		apiServer.Tenancy = tenant.store
+		apiServer.Entitlements = tenant.resolver
+		apiServer.Billing = tenant.billing
+		apiServer.RiskAckVersion = RiskDisclosureVersion
+		apiServer.Screener = screenerSvc
+		apiServer.ScreenerReports = screenerReports
 		apiServer.AIStatus = func() api.AIRuntimeStatus {
 			st := aiState.get()
 			u := aiSvc.Usage()
@@ -673,8 +785,10 @@ func buildAdvisor(settings platform.AISettings, log *slog.Logger, src secrets.Se
 // next process restart.
 func buildSecrets(log *slog.Logger, store *storage.Store, cfg config.Bootstrap) *secrets.Manager {
 	env := secrets.Env{
-		"anthropic_api_key":  cfg.AnthropicAPIKey,
-		"telegram_bot_token": cfg.TelegramToken,
+		"anthropic_api_key":     cfg.AnthropicAPIKey,
+		"telegram_bot_token":    cfg.TelegramToken,
+		"paddle_api_key":        cfg.PaddleAPIKey,
+		"paddle_webhook_secret": cfg.PaddleWebhookSecret,
 	}
 	key, err := secrets.KeyFromEnv()
 	switch {
@@ -1005,6 +1119,58 @@ func newPlatformService(log *slog.Logger, st platform.Store, audit func(context.
 	defer cancel()
 	if _, err := svc.Load(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("app: platform settings load failed: %w", err)
+	}
+	return svc, nil
+}
+
+// buildScreener wires the Scanner Suite backend core (T-067/T-068):
+// DB-backed settings/rules/events/templates/funding rows when
+// persistence is enabled, in-memory otherwise (mirrors buildPlatform
+// exactly, down to the P2-4 hard-failure-on-load-error policy — a
+// settings document that failed to load must not silently become a
+// re-seeded MemoryStore, discarding whatever was persisted). Unlike
+// platform.Seed, screener.Defaults() takes no bootstrap env — the
+// document's v1 seed is fixed, so this takes no cfg.
+func buildScreener(log *slog.Logger, store *storage.Store) (*screener.Service, error) {
+	var (
+		st        screener.SettingsStore
+		rules     screener.RuleStore
+		events    screener.EventStore
+		templates screener.TemplateStore
+		funding   screener.FundingStore
+		audit     func(context.Context, screener.AuditEvent)
+	)
+	if store != nil {
+		st = store.ScreenerSettings()
+		rules = store.ScreenerRules()
+		events = store.ScreenerEvents()
+		templates = store.ScreenerTemplates()
+		funding = store.ScreenerFunding()
+		audit = func(ctx context.Context, ev screener.AuditEvent) {
+			row := storage.AuditRow{
+				ID: newULID(), Actor: ev.Actor, Source: ev.Source,
+				Action: ev.Action, Entity: ev.Entity, EntityID: ev.EntityID,
+				Before: ev.Before, After: ev.After,
+			}
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := store.InsertAuditEvent(ctx, row); err != nil {
+				log.Error("screener settings audit insert failed", "action", ev.Action, "error", err)
+			}
+		}
+	} else {
+		st = screener.NewMemoryStore()
+		rules = screener.NewMemoryRuleStore()
+		events = screener.NewMemoryEventStore()
+		templates = screener.NewMemoryTemplateStore()
+		funding = screener.NewMemoryFundingStore()
+	}
+	svc := screener.NewService(screener.NewBook(), st, log, audit)
+	svc.Rules, svc.Events, svc.Templates, svc.Funding = rules, events, templates, funding
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := svc.Load(ctx); err != nil {
+		return nil, fmt.Errorf("app: screener settings load failed: %w", err)
 	}
 	return svc, nil
 }

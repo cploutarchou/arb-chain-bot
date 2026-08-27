@@ -72,15 +72,19 @@ func (s *Server) writeUserAdminError(w http.ResponseWriter, r *http.Request, err
 // of role. Every mutation needs PermUserManage (ADMIN only) except
 // changing your own password, and every mutation is CSRF-protected and
 // audited.
+//
+// Since T-081 the roster is the platform operator's console accounts,
+// so every route here also requires users.platform_admin (tenant
+// members are managed through /api/v1/org/members instead).
 func (s *Server) usersRoutes(mux *http.ServeMux) {
 	needUsers := func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
+		return s.requireOnlyPlatformAdmin(func(w http.ResponseWriter, r *http.Request) {
 			if s.Users == nil {
 				WriteError(w, http.StatusNotFound, "users_absent", "user management not available in this profile", correlationID(r))
 				return
 			}
 			next(w, r)
-		}
+		})
 	}
 
 	mux.HandleFunc("GET /api/v1/users", s.requirePerm(auth.PermUserManage, needUsers(func(w http.ResponseWriter, r *http.Request) {

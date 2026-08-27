@@ -1,0 +1,22 @@
+# grafana/promtail values: scrape arb namespace pods, parse arbd JSON
+# logs, route audit lines to their own stream, drop nothing else.
+config:
+  clients:
+    - url: http://loki-gateway.monitoring/loki/api/v1/push
+      tenant_id: arb
+  snippets:
+    pipelineStages:
+      - cri: {}
+      - json:
+          expressions: {level: level, component: component, stream: stream}
+      - labels: [level, component]
+      - match:
+          selector: '{component="audit"}'
+          stages:
+            - static_labels: {stream: audit}
+    extraRelabelConfigs:
+      - sourceLabels: [__meta_kubernetes_namespace]
+        regex: arb
+        action: keep
+      - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        targetLabel: app

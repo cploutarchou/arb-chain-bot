@@ -1,0 +1,190 @@
+# Platform / SRE alert rules for the Kubernetes environments. Complements
+# prometheus-rules.yml (engine-level rules). Load both as PrometheusRule
+# objects (kube-prometheus-stack) — see prometheusrule.yaml.
+#
+# Series marked "PENDING EXPORTER" are not yet emitted by internal/metrics
+# and are tracked as follow-up work; the rules are kept here so the
+# dashboards/alerts land together with the exporter change:
+#   - exchange_rate_limited_total{venue}  (HTTP 429 / WS -1003 responses)
+#   - db_migrations_pending                  (count of unapplied files)
+#   - campaign_runs_total{status}            (from internal/campaign)
+groups:
+  - name: arb-feed
+    rules:
+      - alert: FeedStale
+        # Newest book older than 30s = feed stale (design threshold).
+        expr: max by (exchange) (orderbook_age_ms) > 30000
+        for: 30s
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "Feed stale > 30s on {{ $labels.exchange }}"
+          description: "No book updates for 30s; qualification is suppressed. Runbook: docs/runbooks/feed-stale.md"
+          runbook_url: https://github.com/cploutarchou/arb-chain-bot/blob/master/docs/runbooks/feed-stale.md
+      - alert: CollectorRateLimited
+        # PENDING EXPORTER: exchange_rate_limited_total
+        expr: increase(exchange_rate_limited_total[10m]) > 0
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Collector received 429s from {{ $labels.venue }}"
+          description: "{{ $value }} rate-limit responses in 10m. Back off REST resyncs; check for a reconnect loop."
+      - alert: CollectorRateLimitedSustained
+        expr: rate(exchange_rate_limited_total[15m]) > 0.05
+        for: 15m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "Sustained rate limiting on {{ $labels.venue }}; ban risk"
+
+  - name: arb-recorder
+    rules:
+      - alert: RecorderDroppedFrames
+        expr: increase(recorder_frames_dropped_total[5m]) > 0
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Recorder dropped {{ $value }} frames in 5m"
+          description: "Recording has gaps; the session will be flagged in the campaign report. Check disk pressure and CPU throttling."
+      - alert: RecorderNotWriting
+        expr: >
+          (label_replace(kube_pod_labels{label_arb_io_mode="RECORD"}, "pod", "$1", "pod", "(.*)") > 0)
+          unless on (pod) (rate(recorder_frames_written_total[5m]) > 0)
+        for: 5m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "RECORD-mode pod {{ $labels.pod }} wrote no frames for 5m"
+
+  - name: arb-campaign
+    rules:
+      - alert: CampaignRunFailed
+        # PENDING EXPORTER: campaign_runs_total{status}
+        expr: increase(campaign_runs_total{status="failed"}[1h]) > 0
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "A campaign run failed in the last hour"
+          description: "Nightly evidence pipeline (docs/campaigns/) is incomplete; inspect campaign_runs rows."
+
+  - name: arb-database
+    rules:
+      - alert: MigrationsPending
+        # PENDING EXPORTER: db_migrations_pending. Until then the migrate
+        # hook failing aborts the release, which is the same signal.
+        expr: db_migrations_pending > 0
+        for: 10m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "{{ $value }} schema migrations pending on {{ $labels.instance }}"
+      - alert: MigrateJobFailed
+        expr: kube_job_status_failed{namespace="arb", job_name=~".*-migrate-.*"} > 0
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "Migrate hook {{ $labels.job_name }} failed; release was rolled back"
+      - alert: PostgresReplicationLag
+        expr: pg_replication_lag_seconds > 30
+        for: 5m
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Replica lag {{ $value }}s on {{ $labels.instance }}"
+      - alert: PostgresReplicationLagCritical
+        expr: pg_replication_lag_seconds > 300
+        for: 5m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "Replica lag > 5m; failover would lose data"
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "Postgres exporter cannot reach {{ $labels.instance }}"
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 10m
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Postgres connections above 80% of max"
+
+  - name: arb-backups
+    rules:
+      - alert: BackupTooOld
+        expr: time() - pg_backup_last_success_timestamp > 26 * 3600
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "No successful pgBackRest backup for 26h"
+      - alert: BackupCheckStale
+        expr: time() - pg_backup_check_timestamp > 1800
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "pg-backup-check CronJob has not reported for 30m"
+      - alert: RestoreDrillFailed
+        expr: pg_restore_drill_success == 0
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "Weekly restore drill failed"
+          runbook_url: https://github.com/cploutarchou/arb-chain-bot/blob/master/docs/runbooks/restore-drill.md
+      - alert: RestoreDrillOverdue
+        expr: time() - pg_restore_drill_timestamp > 8 * 86400
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "No restore drill in 8 days; backups are unverified"
+
+  - name: arb-kubernetes
+    rules:
+      - alert: PodRestarting
+        expr: increase(kube_pod_container_status_restarts_total{namespace="arb"}[30m]) > 2
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "{{ $labels.pod }}/{{ $labels.container }} restarted {{ $value }} times in 30m"
+      - alert: PodCrashLooping
+        expr: max_over_time(kube_pod_container_status_waiting_reason{namespace="arb", reason="CrashLoopBackOff"}[5m]) >= 1
+        for: 5m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "{{ $labels.pod }} is in CrashLoopBackOff"
+      - alert: ArbdNotReady
+        expr: kube_deployment_status_replicas_available{namespace="arb", deployment=~".*-arbd"} < kube_deployment_spec_replicas{namespace="arb", deployment=~".*-arbd"}
+        for: 5m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "arbd has fewer ready replicas than desired for 5m"
+      - alert: RecordingsVolumeFilling
+        expr: kubelet_volume_stats_available_bytes{namespace="arb", persistentvolumeclaim=~".*-recordings"} / kubelet_volume_stats_capacity_bytes < 0.15
+        for: 10m
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Recordings PVC below 15% free; recorder will start dropping"
+      - alert: ContainerCPUThrottled
+        expr: sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace="arb", container="arbd"}[5m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace="arb", container="arbd"}[5m])) > 0.25
+        for: 10m
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "arbd CPU-throttled > 25%; raise limits or reduce symbols"
+
+  - name: arb-slo
+    rules:
+      # SLOs (docs/deployment.md §6): API availability 99.9%/30d,
+      # API p99 < 500ms, feed freshness 99.5% of minutes with age < 5s.
+      - record: slo:api_error_ratio:rate5m
+        expr: sum(rate(api_request_duration_count{status=~"5.."}[5m])) / clamp_min(sum(rate(api_request_duration_count[5m])), 1e-9)
+      - record: slo:api_error_ratio:rate1h
+        expr: sum(rate(api_request_duration_count{status=~"5.."}[1h])) / clamp_min(sum(rate(api_request_duration_count[1h])), 1e-9)
+      - record: slo:api_error_ratio:rate6h
+        expr: sum(rate(api_request_duration_count{status=~"5.."}[6h])) / clamp_min(sum(rate(api_request_duration_count[6h])), 1e-9)
+      - alert: APIAvailabilityBurnFast
+        # 14.4x burn over 1h AND 5m (Google SRE multi-window) on a 0.1% budget
+        expr: slo:api_error_ratio:rate1h > 14.4 * 0.001 and slo:api_error_ratio:rate5m > 14.4 * 0.001
+        for: 2m
+        labels: {severity: critical, team: platform, slo: api-availability}
+        annotations:
+          summary: "API availability SLO fast burn; canary should roll back"
+      - alert: APIAvailabilityBurnSlow
+        expr: slo:api_error_ratio:rate6h > 6 * 0.001 and slo:api_error_ratio:rate1h > 6 * 0.001
+        for: 15m
+        labels: {severity: warning, team: platform, slo: api-availability}
+        annotations:
+          summary: "API availability SLO slow burn"
+      - record: slo:feed_fresh_ratio:rate1h
+        expr: avg_over_time((max(orderbook_age_ms) < bool 5000)[1h:15s])
+      - alert: FeedFreshnessBurn
+        expr: slo:feed_fresh_ratio:rate1h < 0.95
+        for: 10m
+        labels: {severity: warning, team: platform, slo: feed-freshness}
+        annotations:
+          summary: "Feed freshness SLO burning (< 95% fresh minutes over 1h)"

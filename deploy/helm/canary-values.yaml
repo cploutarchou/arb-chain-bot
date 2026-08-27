@@ -1,0 +1,30 @@
+# Canary overlay for prod: a second release "<release>-canary" that
+# runs the stateless console at ~10% of traffic via nginx canary
+# annotations and a shadow arbd in REPLAY mode (no live feeds, no
+# writes of new sessions). The primary arbd is untouched until
+# prod-full. Recordings PVC is not shared.
+arbd:
+  mode: REPLAY
+  replicas: 1
+  recordings:
+    enabled: false
+  pdb:
+    enabled: false
+  extraEnv:
+    - name: ARB_REPLAY_SESSION
+      value: ""            # pipeline sets the latest closed session id
+web:
+  replicas: 1
+  hpa:
+    enabled: false
+  pdb:
+    enabled: false
+ingress:
+  enabled: true
+  host: console.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"

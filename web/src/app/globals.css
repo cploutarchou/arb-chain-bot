@@ -1,42 +1,121 @@
 @import "tailwindcss";
 
-/* Dark-first operations-console theme tokens (resources/client-area.md).
-   Dark is the default (BL-24); a light-mode token set follows under
-   prefers-color-scheme so light mode is usable, not merely "not broken". */
+/* Operations-console theme tokens (resources/client-area.md), Scanner
+   Suite light-theme pass (docs/design/scanner-suite.md §5), console v2
+   token set (docs/design/ui/design-system.md §1). :root carries the
+   light set as the CSS fallback (no JS / no stored preference / OS
+   light); an explicit toggle persists data-theme in localStorage
+   (ConsoleShell's useThemeToggle) and an OS dark preference applies the
+   dark set automatically unless the operator explicitly picked light —
+   the :not([data-theme="light"]) guard is what makes that override work.
+   All three blocks below carry the FULL token set so no theme is ever
+   missing a variable another defines. Contrast ratios for every "must"
+   pair are fixed in design-system.md §1.3 and reproduced by
+   scripts/check-contrast.mjs (npm run check:contrast). */
 :root {
+  --bg: #f5f6f8;
+  --bg-panel: #ffffff;
+  --bg-raised: #eceef2;
+  --border: #d7dbe3;
+  --border-strong: #7f8797;
+  --text: #171a21;
+  --text-dim: #4a505e;
+  --text-gated: #6b6e78;
+  --accent: #2f66d0;
+  --on-accent: #ffffff;
+  --ok: #177a45;
+  --warn: #8a5208;
+  --high: #a2451a;
+  --critical: #c8323a;
+  --on-critical: #ffffff;
+  --pos: var(--ok);
+  --neg: var(--critical);
+  --neu: var(--text-dim);
+  --heat-n4: #2f66d0;
+  --heat-n3: #5a8ee8;
+  --heat-n2: #a9c4f5;
+  --heat-n1: #dbe7fb;
+  --heat-0: var(--bg-raised);
+  --heat-p1: #fbe9d2;
+  --heat-p2: #f3c98d;
+  --heat-p3: #d9932c;
+  --heat-p4: #a86414;
+  --heat-ink: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --opacity-disabled: 0.4;
+  --opacity-stale: 0.8;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
   --bg: #0b0e14;
   --bg-panel: #11151f;
   --bg-raised: #171c29;
   --border: #232a3b;
+  --border-strong: #616a7e;
   --text: #d7dce7;
-  --text-dim: #8b93a7;
+  --text-dim: #959db0;
+  --text-gated: #888c97;
   --accent: #4f8cff;
+  --on-accent: #0b0e14;
   --ok: #2fbf71;
   --warn: #e6a23c;
   --high: #f0713a;
-  --critical: #e5484d;
+  --critical: #ef5a5e;
+  --on-critical: #0b0e14;
+  --pos: var(--ok);
+  --neg: var(--critical);
+  --neu: var(--text-dim);
+  --heat-n4: #8ab4ff;
+  --heat-n3: #3d7be6;
+  --heat-n2: #1f3f7f;
+  --heat-n1: #16294f;
+  --heat-0: var(--bg-raised);
+  --heat-p1: #4a2a0c;
+  --heat-p2: #7a4610;
+  --heat-p3: #b8741c;
+  --heat-p4: #f0b04e;
+  --heat-ink: #0b0e14;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --opacity-disabled: 0.4;
+  --opacity-stale: 0.8;
+  color-scheme: dark;
 }
 
-/* color-scheme: dark light (not just "dark") — otherwise the browser
-   forces dark-themed native form controls (checkboxes, date pickers)
-   even once the light token block below takes effect. */
-html {
-  color-scheme: dark light;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f5f6f8;
-    --bg-panel: #ffffff;
-    --bg-raised: #eceef2;
-    --border: #d7dbe3;
-    --text: #171a21;
-    --text-dim: #5b6270;
-    --accent: #2f66d0;
-    --ok: #1f8f52;
-    --warn: #a8650f;
-    --high: #b8541f;
-    --critical: #c8323a;
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b0e14;
+    --bg-panel: #11151f;
+    --bg-raised: #171c29;
+    --border: #232a3b;
+    --border-strong: #616a7e;
+    --text: #d7dce7;
+    --text-dim: #959db0;
+    --text-gated: #888c97;
+    --accent: #4f8cff;
+    --on-accent: #0b0e14;
+    --ok: #2fbf71;
+    --warn: #e6a23c;
+    --high: #f0713a;
+    --critical: #ef5a5e;
+    --on-critical: #0b0e14;
+    --pos: var(--ok);
+    --neg: var(--critical);
+    --neu: var(--text-dim);
+    --heat-n4: #8ab4ff;
+    --heat-n3: #3d7be6;
+    --heat-n2: #1f3f7f;
+    --heat-n1: #16294f;
+    --heat-0: var(--bg-raised);
+    --heat-p1: #4a2a0c;
+    --heat-p2: #7a4610;
+    --heat-p3: #b8741c;
+    --heat-p4: #f0b04e;
+    --heat-ink: #0b0e14;
+    --overlay: rgba(0, 0, 0, 0.6);
+    --opacity-disabled: 0.4;
+    --opacity-stale: 0.8;
+    color-scheme: dark;
   }
 }
 

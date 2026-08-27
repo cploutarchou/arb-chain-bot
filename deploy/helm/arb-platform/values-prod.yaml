@@ -1,0 +1,75 @@
+# prod. ARB_MODE stays PAPER: there is no LIVE mode in this chart or in
+# the binary. Live order execution returns ErrLiveTradingDisabled until
+# the production gate (docs/design/crypto-arb-platform-command.md,
+# PRODUCTION EXECUTION GATE) is passed by a reviewed code change. No
+# value in this file, no secret, and no flag can change that.
+global:
+  environment: prod
+arbd:
+  mode: PAPER
+  # One engine writer per instance. Horizontal scale of the engine needs
+  # run-ownership sharding (migration 000009) and is a separate change.
+  replicas: 1
+  logLevel: info
+  recordings:
+    size: 500Gi
+    storageClass: ssd-retain
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {cpu: "4", memory: 4Gi}
+  serviceMonitor:
+    enabled: true
+  pdb:
+    maxUnavailable: 0
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: web
+          topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: arbd
+web:
+  replicas: 3
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 60
+  pdb:
+    minAvailable: 2
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: web
+          topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: web
+ingress:
+  enabled: true
+  host: console.example.com
+externalSecrets:
+  enabled: true
+  remotePrefix: "arb/prod/"
+networkPolicy:
+  enabled: true
+  egressDatabaseCIDRs: ["10.30.0.0/16"]
+  egressRedisCIDRs: ["10.31.0.0/16"]
+serviceAccount:
+  annotations:
+    # workload identity for recordings bucket writes (terraform output)
+    # eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/arb-prod-recordings
+    {}

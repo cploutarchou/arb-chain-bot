@@ -1,0 +1,28 @@
+# dev: single-node cluster (kind/k3d) or compose parity. In-cluster
+# Postgres is acceptable here only; external secrets can be replaced by a
+# manually created Secret named <release>-arb-platform-secrets.
+global:
+  environment: dev
+arbd:
+  mode: PAPER
+  replicas: 1
+  logLevel: debug
+  recordings:
+    size: 10Gi
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  serviceMonitor:
+    enabled: false
+web:
+  replicas: 1
+  hpa:
+    enabled: false
+  pdb:
+    enabled: false
+ingress:
+  enabled: false
+externalSecrets:
+  enabled: false
+networkPolicy:
+  enabled: false
