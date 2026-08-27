@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type RecorderStatus, type SystemStatus } from "@/lib/api/client";
-import { usePoll } from "@/lib/usePoll";
+import { usePoll, type PollState } from "@/lib/usePoll";
+import { connectHub, type HubMessage } from "@/lib/ws";
 import { useAuth, can } from "@/lib/auth";
 import { Button, ConfirmDialog } from "@/components/ui";
 
@@ -88,8 +89,28 @@ const MODE_COPY: Record<string, { color: string; text: string }> = {
   SHADOW: { color: "var(--text-dim)", text: "SHADOW — shadow evaluation, no orders placed" },
 };
 
-function ModeBanner() {
+// useModeState hoists the RUNNING mode (REST, already polled once for
+// both sidebar mounts — mobile overlay + desktop, T-057) and layers the
+// hub "health" topic on top purely for the CONFIGURED mode (T-059 §2.3:
+// {running, configured}), so the annotation degrades to nothing on a
+// profile with no supervisor/engine rather than going permanently blank.
+// One connectHub subscription for the whole shell, not one per mount.
+function useModeState(): { status: PollState<SystemStatus>; configured: string | null } {
   const status = usePoll<SystemStatus>(() => api.system.status(), 10000);
+  const [configured, setConfigured] = useState<string | null>(null);
+  useEffect(() => {
+    return connectHub(["health"], {
+      onMessage: (msg: HubMessage) => {
+        if (msg.topic !== "health") return;
+        const data = msg.data as { mode?: { running?: string; configured?: string } } | undefined;
+        if (data?.mode?.configured) setConfigured(data.mode.configured);
+      },
+    });
+  }, []);
+  return { status, configured };
+}
+
+function ModeBanner({ status, configured }: { status: PollState<SystemStatus>; configured: string | null }) {
   if (status.kind === "loading") {
     return (
       <div className="mb-3 rounded border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-dim)]">
@@ -111,6 +132,10 @@ function ModeBanner() {
     color: "var(--text-dim)",
     text: `${mode} — live execution permanently disabled`,
   };
+  // T-059 §2.3: the banner shows the RUNNING mode and, when the platform-
+  // settings document has been changed but not yet applied (restart
+  // pending), annotates it with the CONFIGURED one.
+  const showsPending = configured && configured !== mode;
   return (
     <div
       className="mb-3 flex items-start gap-2 rounded border px-2 py-1.5 text-[11px] font-medium leading-snug"
@@ -121,7 +146,14 @@ function ModeBanner() {
         style={{ background: copy.color }}
         aria-hidden
       />
-      <span>{copy.text}</span>
+      <span>
+        {copy.text}
+        {showsPending && (
+          <span className="ml-1 block font-normal text-[var(--warn)]">
+            configured: {configured} — restart pending
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -348,6 +380,7 @@ export function ConsoleShell({ children, active }: { children: ReactNode; active
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
+  const modeState = useModeState();
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
@@ -371,7 +404,7 @@ export function ConsoleShell({ children, active }: { children: ReactNode; active
           <aside className="relative z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4">
             <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</div>
             <div className="px-2">
-              <ModeBanner />
+              <ModeBanner status={modeState.status} configured={modeState.configured} />
             </div>
             <NavContent active={active} role={role} onNavigate={() => setMobileOpen(false)} />
           </aside>
@@ -381,7 +414,7 @@ export function ConsoleShell({ children, active }: { children: ReactNode; active
       <aside className="hidden w-56 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 md:flex">
         <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">ARB CONSOLE</div>
         <div className="px-2">
-          <ModeBanner />
+          <ModeBanner status={modeState.status} configured={modeState.configured} />
         </div>
         <NavContent active={active} role={role} />
       </aside>

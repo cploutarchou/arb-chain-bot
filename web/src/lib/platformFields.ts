@@ -7,8 +7,11 @@
 // symbols) before the backend gets to validate the substance.
 
 import type {
+  PlatformAISettings,
   PlatformFeeOverride,
+  PlatformPlatformSettings,
   PlatformSettingsDoc,
+  PlatformTelegramSettings,
   PlatformVenueSettings,
 } from "@/lib/api/client";
 
@@ -17,6 +20,15 @@ import type {
 // clone hygiene already used on /strategies). Also normalizes
 // telegram.allowlist: Go's []int64(nil) — the boot default before any
 // allowlist entry is ever added — marshals as JSON `null`, not `[]`.
+// Every other section (platform/ai/telegram.disabled/venues/paper) is
+// carried through as-is: the source is always a served GET/apply
+// snapshot, and Settings.WithDefaults runs on every path that serves one
+// (Load/Get/rollback), so the fields a draft needs are always present.
+// Editors must still go through updatePlatform/updateAI/updateTelegram
+// below (never `{ ...doc, <section>: { <one field> } }`) — a fresh
+// object literal for a whole section silently drops every other field
+// already on it, which is exactly D3's quiet-failure hazard reproduced
+// client-side (this bit TelegramAllowlistSection once already).
 export function clonePlatformSettings(doc: PlatformSettingsDoc): PlatformSettingsDoc {
   const cloned = JSON.parse(JSON.stringify(doc)) as PlatformSettingsDoc;
   cloned.telegram.allowlist = cloned.telegram.allowlist ?? [];
@@ -120,4 +132,35 @@ export function updateVenue(
 // round-trip through a preview rejection for casing alone.
 export function normalizeToken(raw: string): string {
   return raw.trim().toUpperCase();
+}
+
+// updatePlatform/updateAI/updateTelegram are the one mutation point each
+// section's editor goes through for its own top-level section — always
+// spreading the EXISTING section object, never replacing it with a fresh
+// literal. This matters: platform.mode / telegram.disabled / ai.* live
+// beside fields other editors change (e.g. TelegramAllowlistSection edits
+// telegram.allowlist), and a `{ ...doc, telegram: { allowlist } }`-style
+// update would silently drop telegram.disabled from the draft — the
+// preview diff then shows a change to it nobody made, and applying it
+// mutes (or unmutes) the channel by accident (design D3's quiet-failure
+// hazard, reproduced client-side).
+export function updatePlatform(
+  doc: PlatformSettingsDoc,
+  fn: (p: PlatformPlatformSettings) => PlatformPlatformSettings,
+): PlatformSettingsDoc {
+  return { ...doc, platform: fn(doc.platform) };
+}
+
+export function updateAI(
+  doc: PlatformSettingsDoc,
+  fn: (a: PlatformAISettings) => PlatformAISettings,
+): PlatformSettingsDoc {
+  return { ...doc, ai: fn(doc.ai) };
+}
+
+export function updateTelegram(
+  doc: PlatformSettingsDoc,
+  fn: (t: PlatformTelegramSettings) => PlatformTelegramSettings,
+): PlatformSettingsDoc {
+  return { ...doc, telegram: fn(doc.telegram) };
 }
