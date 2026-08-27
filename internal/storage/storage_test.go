@@ -51,6 +51,9 @@ func testStore(t *testing.T) *Store {
 		"screener_templates", "funding_history", "screener_events", "screener_rules", "screener_settings",
 		"audit_events", "ai_recommendations", "ai_analyses",
 		"affiliate_ledger", "affiliate_accounts", "paddle_events", "subscriptions", "billing_prices",
+		// api_keys FK-references users(id) with no cascade (T-086): deleted
+		// before "users" below, same reasoning as screener_settings above.
+		"api_keys",
 		"memberships", "alerts", "secrets", "users", "exchanges", "campaign_runs", "replay_runs", "risk_events", "reports"} {
 		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("clean %s: %v", table, err)

@@ -1401,6 +1401,11 @@ export interface ScreenerSpreadsResponse {
   total: number;
   generated_at: string;
   model: string;
+  // excluded is always reported (handleScreenerSpreads) so the operator
+  // knows how many lanes the safe defaults hid, even when both toggles
+  // below are off; optional here only so a build against an older
+  // backend that predates this field doesn't crash.
+  excluded?: { suspect: number; liquidity_unknown: number };
 }
 
 // ScreenerSpreadsQuery mirrors the §7 query params exactly (wire names).
@@ -1417,6 +1422,11 @@ export interface ScreenerSpreadsQuery {
   quote?: string;
   base?: string;
   limit?: number;
+  // Both default OFF server-side (handleScreenerSpreads): suspect
+  // (asset-identity guard) and unknown-liquidity lanes are excluded
+  // unless explicitly opted back in.
+  include_suspect?: boolean;
+  include_unknown_liquidity?: boolean;
 }
 
 function screenerSpreadsQuery(q: ScreenerSpreadsQuery): string {
@@ -1432,6 +1442,10 @@ function screenerSpreadsQuery(q: ScreenerSpreadsQuery): string {
   if (q.quote) p.set("quote", q.quote);
   if (q.base) p.set("base", q.base);
   if (q.limit !== undefined) p.set("limit", String(q.limit));
+  // queryFlag (backend) only recognizes "1"/"true"/"yes"; omit the key
+  // entirely when off rather than sending "0"/"false".
+  if (q.include_suspect) p.set("include_suspect", "1");
+  if (q.include_unknown_liquidity) p.set("include_unknown_liquidity", "1");
   return p.toString();
 }
 
@@ -1564,6 +1578,58 @@ export interface ScreenerSettingsSnapshot {
 
 export type ScreenerRuleKind = "spread" | "carry" | "basis";
 
+// ScreenerRuleParams mirrors internal/screener/rule_params.go RuleParams
+// exactly. Every field is optional on the wire; an absent field means
+// "use the documented default" — the defaults themselves live only in
+// rule_params.go's Default* vars/comments (there is no GET endpoint that
+// serves them), so the console states them in its own copy rather than
+// guessing. Decimal fields are strings (shopspring/decimal quoted
+// marshaling); exit_k/max_hold_h/max_breakeven_intervals are plain ints
+// where the backend's own Rule.MaxHoldH()/ExitK()/MaxBreakevenIntervals()
+// treat 0 as "unset, use the default" — never send 0 for those.
+export interface ScreenerRuleParams {
+  strategy?: "cross_venue_spot" | "carry" | "funding_harvest" | "";
+  // §1.3 default 2.
+  slip_bps?: string;
+  // §1.3 default 1 (fraction of top-of-book qty deemed fillable).
+  depth_haircut?: string;
+  partial_allowed?: boolean;
+  // §2.1 default 5.
+  buffer_bps?: string;
+  // §2.1 default 0.00001.
+  step_size?: string;
+  min_notional_quote?: string;
+  // §2.4 default 3 × paper_size_quote (computed, not a flat number).
+  max_drift_quote?: string;
+  // §3.1 default 10.
+  min_edge_bps?: string;
+  // §3.2 default 0.
+  close_bps?: string;
+  // §3.2 default 0.
+  exit_funding?: string;
+  // §3.2 default 2.
+  exit_k?: number;
+  // §3.2 default 720 (30 days).
+  max_hold_h?: number;
+  // §3.4 default 0.50.
+  margin_stop_frac?: string;
+  // §3.4 default 100 bps (BTC/ETH) / 300 bps (other bases).
+  basis_stop_bps?: string;
+  // §3.4 maintenance margin rate, fraction (0,1]. NO default: nil/absent
+  // means "unknown" and every carry/basis rule with auto-paper on skips
+  // entry with MMR_UNKNOWN until this is set explicitly — the screener
+  // never infers it from another venue or pre-fills a guess.
+  mmr?: string;
+  // §5.1 default 3.
+  min_funding_bps?: string;
+  // §5.1 default 12.
+  max_breakeven_intervals?: number;
+  // §5.1 default 10.
+  max_negative_basis_bps?: string;
+  // §5.2 default 1.
+  exit_funding_bps?: string;
+}
+
 export interface ScreenerRule {
   id: string;
   name: string;
@@ -1584,6 +1650,9 @@ export interface ScreenerRule {
   // design regardless of this flag; it only ever books to the paper ledger.
   auto_paper: boolean;
   paper_size_quote: string;
+  // Optional strategy-model inputs (strategy-models.md §1–§5); absent
+  // keeps every documented default. See ScreenerRuleParams above.
+  params?: ScreenerRuleParams;
 }
 
 export type ScreenerRuleInput = Omit<ScreenerRule, "id">;
@@ -1636,6 +1705,165 @@ export interface ScreenerAutoPaperPosition {
 export interface ScreenerAutoPaperResponse {
   positions: ScreenerAutoPaperPosition[] | null;
   summary: { per_rule: ScreenerAutoPaperRuleSummary[] | null };
+}
+
+// ---- Screener paper reports (T-078, internal/screener/report,
+// docs/user-guide/reports.md "Screener paper reports") -------------------
+// Nightly (00:05 UTC) and on-demand evidence reports for automatic PAPER
+// execution: per strategy and per rule, a "day" (previous UTC day) and a
+// "cumulative" (since the first ledger row) report, each with the §7
+// statistics table and the §8 gate checklist. Every money/rate/bps field
+// is a decimal string, rendered verbatim — no report figure is derived
+// client-side. rule_id is "" on the per-strategy aggregate.
+
+export interface ScreenerReportWindow {
+  label: "day" | "cumulative";
+  start: string;
+  end: string;
+}
+
+export interface ScreenerReportGateItem {
+  item: number;
+  name: string;
+  status: string; // "pass" | "fail" — never a third state (reports.md)
+  reason: string;
+}
+
+export interface ScreenerDriftRow {
+  base: string;
+  venue_a: string;
+  venue_b: string;
+  drift_base: string;
+  drift_notional: string;
+  mark_age_ms?: number;
+  unmatched: number;
+}
+
+export interface ScreenerWilcoxonResult {
+  n: number;
+  w_plus: string;
+  mean: string;
+  var_w: string;
+  z_squared: string;
+  rejects_h0: boolean;
+}
+
+export interface ScreenerBootstrapResult {
+  resamples: number;
+  days: number;
+  mean_net_bps: string;
+  ci95_low: string;
+  ci95_high: string;
+}
+
+// ScreenerReportStats mirrors internal/screener/report/stats.go Stats
+// exactly. Optional (pointer-backed) fields are absent, not zero, when
+// the report could not compute them — render "not computed" / "—", never
+// a fabricated 0.
+export interface ScreenerReportStats {
+  n: number;
+  wins: number;
+  matched_pairs: number;
+  net_pnl_quote: string;
+  fees_quote: string;
+  funding_quote: string;
+  funding_rows: number;
+  pnl_after_rebalance: string;
+  matched_pair_net: string;
+  unwind_cost_quote: string;
+  partial_leg_pnl_quote: string;
+  conservative_net_quote: string;
+  net_bps_mean?: string;
+  net_bps_median?: string;
+  hit_rate?: string;
+  hit_rate_wilson95_low?: string;
+  hit_rate_wilson95_high?: string;
+  lifetime_s_mean?: string;
+  lifetime_s_median?: string;
+  lifetime_n: number;
+  max_drawdown_quote: string;
+  max_drawdown_frac?: string;
+  allocated_capital_quote: string;
+  inventory_drift: ScreenerDriftRow[] | null;
+  skipped: Record<string, number> | null;
+  realised_slip_bps_mean?: string;
+  realised_slip_bps_p95?: string;
+  realised_slip_n: number;
+  slip_allowance_bps: string;
+  concentration?: string;
+  largest_loss_quote: string;
+  median_win_quote?: string;
+  days: number;
+  weekend_days: number;
+  first_sample_at?: string;
+  last_sample_at?: string;
+  wilcoxon?: ScreenerWilcoxonResult;
+  bootstrap?: ScreenerBootstrapResult;
+}
+
+export interface ScreenerReportPayload {
+  window: ScreenerReportWindow;
+  strategy: string;
+  rule_id?: string;
+  rule_name?: string;
+  stats: ScreenerReportStats;
+  gate: ScreenerReportGateItem[] | null;
+  gate_passed: number;
+  gate_total: number;
+  generated_at: string;
+  data_age_ms: number | null;
+  model: string;
+  notes: string[] | null;
+  files: { markdown?: string; json?: string };
+}
+
+export interface ScreenerReport {
+  id: string;
+  period_start: string;
+  period_end: string;
+  strategy: string;
+  rule_id: string;
+  payload: ScreenerReportPayload;
+  // Field name is "md" on the wire (report.Report.Markdown json:"md").
+  md?: string;
+  created_at: string;
+}
+
+// ScreenerReportSummary is the list-view row (report.Report.Summary()) —
+// payload and markdown are NOT included here; hit_rate/CI, the gate
+// checklist and the model/notes text live only in GET /reports/{id}.
+export interface ScreenerReportSummary {
+  id: string;
+  period_start: string;
+  period_end: string;
+  period_label: string;
+  strategy: string;
+  rule_id: string;
+  n: number;
+  net_pnl_quote: string;
+  gate_passed: number;
+  gate_total: number;
+  created_at: string;
+}
+
+export interface ScreenerReportsRunResult {
+  day: string;
+  started_at: string;
+  duration_ms: number;
+  // Go's []Summary(nil) — the "no strategy has rules or ledger rows yet"
+  // outcome reports.md documents — has no omitempty (generator.go
+  // RunResult.Reports) and marshals as JSON null; never assume a run
+  // always produced at least one report.
+  reports: ScreenerReportSummary[] | null;
+  errors?: string[];
+  dir?: string;
+}
+
+export interface ScreenerReportsListResponse {
+  reports: ScreenerReportSummary[] | null;
+  last_run: ScreenerReportsRunResult | null;
+  next_run_utc: string;
+  generated_at: string;
 }
 
 // ---- endpoint groups -----------------------------------------------------
@@ -1834,6 +2062,21 @@ export const api = {
         del<{ status: string }>(
           `/api/v1/screener/templates/${encodeURIComponent(id)}`,
         ),
+    },
+    // T-078 nightly evidence reports. Reads are screener:view (VIEWER+);
+    // run() is screener:config (ADMIN) + CSRF + audit, same as
+    // screener.rules mutations above.
+    reports: {
+      list: (limit = 50) =>
+        get<ScreenerReportsListResponse>(
+          `/api/v1/screener/reports?limit=${limit}`,
+        ),
+      get: (id: string) =>
+        get<{ report: ScreenerReport }>(
+          `/api/v1/screener/reports/${encodeURIComponent(id)}`,
+        ),
+      run: () =>
+        post<{ run: ScreenerReportsRunResult }>("/api/v1/screener/reports/run"),
     },
   },
   opportunities: {

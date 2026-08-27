@@ -205,6 +205,14 @@ const GLYPHS: Record<string, ReactNode> = {
     </>
   ),
   "Alert Rules": <path d="M2 2 H14 L9.5 8 V13 L6.5 14.5 V8 Z" />,
+  "Screener Reports": (
+    <>
+      <path d="M4 1.5 H10 L13 4.5 V14.5 H4 Z" />
+      <path d="M10 1.5 V4.5 H13" />
+      <circle cx="7" cy="10" r="2.2" />
+      <line x1="8.6" y1="11.6" x2="10.2" y2="13.2" />
+    </>
+  ),
   "Auto-Paper": (
     <>
       <circle cx="8" cy="8" r="6.5" />

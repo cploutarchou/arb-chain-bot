@@ -60,6 +60,12 @@ var Known = map[string]Spec{
 	// not here. No card data ever reaches this process.
 	"paddle_api_key":        {Env: "PADDLE_API_KEY", Label: "Paddle API key", MinLen: 20, Applies: AppliesImmediately, Group: GroupProvider},
 	"paddle_webhook_secret": {Env: "PADDLE_WEBHOOK_SECRET", Label: "Paddle webhook secret", MinLen: 20, Applies: AppliesImmediately, Group: GroupProvider},
+	// Alert-channel e-mail sink (T-086, docs/design/billing.md §4): an
+	// SMTP URL of the form smtp://user:pass@host:port (STARTTLS), read
+	// on each send so a rotation applies immediately. It carries a
+	// password, so it is never logged and Manager.Get is its only path
+	// out of the vault.
+	"smtp_url": {Env: "SMTP_URL", Label: "SMTP URL for alert e-mails", MinLen: 10, Applies: AppliesImmediately, Group: GroupProvider},
 
 	"binance_api_key":       exchangeCred("binance", "Binance API key"),
 	"binance_api_secret":    exchangeCred("binance", "Binance API secret"),

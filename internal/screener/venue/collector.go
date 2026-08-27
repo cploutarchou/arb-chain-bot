@@ -171,6 +171,16 @@ func New(id screener.Venue, opts Options) (Collector, error) {
 		return newKraken(opts), nil
 	case screener.VenueCoinbase:
 		return newCoinbase(opts), nil
+	case screener.VenueCryptoCom:
+		return newCryptoCom(opts), nil
+	case screener.VenueBitfinex:
+		return newBitfinex(opts), nil
+	case screener.VenueBingX:
+		return newBingX(opts), nil
+	case screener.VenueWhiteBIT:
+		return newWhiteBIT(opts), nil
+	case screener.VenueBitMart:
+		return newBitMart(opts), nil
 	}
 	return nil, fmt.Errorf("venue: unknown venue %q", id)
 }
