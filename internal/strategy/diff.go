@@ -16,11 +16,18 @@ type Change struct {
 // Diff flattens both payloads to dotted JSON paths and reports every leaf
 // that differs. An empty result means the payloads are identical.
 func Diff(oldP, newP Params) (map[string]Change, error) {
-	oldFlat, err := flatten(oldP)
+	return DiffAny(oldP, newP)
+}
+
+// DiffAny is Diff widened to any JSON-marshalable payload (internal/
+// platform reuses it for the platform-settings document rather than
+// duplicating the flatten/compare logic — design D6).
+func DiffAny(oldV, newV any) (map[string]Change, error) {
+	oldFlat, err := flatten(oldV)
 	if err != nil {
 		return nil, err
 	}
-	newFlat, err := flatten(newP)
+	newFlat, err := flatten(newV)
 	if err != nil {
 		return nil, err
 	}
@@ -109,8 +116,8 @@ func ApplyChange(p Params, path string, value any) (Params, error) {
 	return out, nil
 }
 
-func flatten(p Params) (map[string]any, error) {
-	raw, err := json.Marshal(p)
+func flatten(v any) (map[string]any, error) {
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}

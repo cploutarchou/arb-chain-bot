@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { api, ApiError } from "@/lib/api/client";
+import { api, ApiError, type AIRecommendation } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, Badge, Button, PageTitle, Section, Table, fmtTime } from "@/components/ui";
+import { Await, Badge, Button, ConfirmDialog, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
 export default function AIPage() {
   const { state: auth } = useAuth();
@@ -14,6 +14,7 @@ export default function AIPage() {
   const analyses = usePoll(() => api.ai.analyses(5), 15000, [refresh]);
   const recs = usePoll(() => api.ai.recommendations(""), 10000, [refresh]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [approveConfirm, setApproveConfirm] = useState<AIRecommendation | null>(null);
   const mayDecide = can(role, "ai:approve");
 
   const decide = async (fn: () => Promise<unknown>, verb: string) => {
@@ -61,7 +62,7 @@ export default function AIPage() {
                 </Badge>,
                 r.status === "proposed" && mayDecide ? (
                   <span key="act" className="flex gap-1">
-                    <Button onClick={() => decide(() => api.ai.approve(r.id), "approved")}>Approve</Button>
+                    <Button onClick={() => setApproveConfirm(r)}>Approve</Button>
                     <Button onClick={() => decide(() => api.ai.reject(r.id), "rejected")} danger>
                       Reject
                     </Button>
@@ -105,6 +106,37 @@ export default function AIPage() {
           )}
         </Await>
       </Section>
+
+      {approveConfirm && (
+        <ConfirmDialog
+          title={`Approve recommendation: ${approveConfirm.parameter} ${approveConfirm.current_value} → ${approveConfirm.recommended_value}?`}
+          confirmLabel="Approve"
+          onCancel={() => setApproveConfirm(null)}
+          onConfirm={() => {
+            const rec = approveConfirm;
+            setApproveConfirm(null);
+            void decide(() => api.ai.approve(rec.id), "approved");
+          }}
+          body={
+            <>
+              <p className="mb-3">
+                Reason: <em>{approveConfirm.reason}</em>. This applies immediately as a new config
+                version, auditable exactly like a manual change.
+              </p>
+              <Button
+                danger
+                onClick={() => {
+                  const rec = approveConfirm;
+                  setApproveConfirm(null);
+                  void decide(() => api.ai.reject(rec.id), "rejected");
+                }}
+              >
+                Reject instead
+              </Button>
+            </>
+          }
+        />
+      )}
     </ConsoleShell>
   );
 }

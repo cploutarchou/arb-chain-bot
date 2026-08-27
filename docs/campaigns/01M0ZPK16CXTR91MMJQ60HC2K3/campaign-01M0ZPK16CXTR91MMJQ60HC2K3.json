@@ -1,0 +1,750 @@
+{
+  "recording": "01M0ZPK16CXTR91MMJQ60HC2K3",
+  "generated_at": "2026-08-27T01:36:02.733950999Z",
+  "results": [
+    {
+      "scenario": {
+        "name": "baseline",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "baseline",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "baseline",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fees+5bps",
+        "fee_bump_bps": 5,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fees+5bps",
+        "fee_bump_bps": 5,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fees+5bps",
+        "fee_bump_bps": 5,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fees+10bps",
+        "fee_bump_bps": 10,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fees+10bps",
+        "fee_bump_bps": 10,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fees+10bps",
+        "fee_bump_bps": 10,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "latency-x2",
+        "fee_bump_bps": 0,
+        "latency_scale": 2,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "latency-x2",
+        "fee_bump_bps": 0,
+        "latency_scale": 2,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "latency-x2",
+        "fee_bump_bps": 0,
+        "latency_scale": 2,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "latency-x4",
+        "fee_bump_bps": 0,
+        "latency_scale": 4,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "latency-x4",
+        "fee_bump_bps": 0,
+        "latency_scale": 4,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "latency-x4",
+        "fee_bump_bps": 0,
+        "latency_scale": 4,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "1"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fills-50pct",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "0.5",
+        "world_depth_factor": "1"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fills-50pct",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "0.5",
+        "world_depth_factor": "1"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "fills-50pct",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "0.5",
+        "world_depth_factor": "1"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "liquidity-50pct",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "0.5"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "liquidity-50pct",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "0.5"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "liquidity-50pct",
+        "fee_bump_bps": 0,
+        "latency_scale": 1,
+        "fill_depth_factor": "1",
+        "world_depth_factor": "0.5"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "adverse-combo",
+        "fee_bump_bps": 10,
+        "latency_scale": 3,
+        "fill_depth_factor": "0.5",
+        "world_depth_factor": "0.5"
+      },
+      "seed": 1,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "adverse-combo",
+        "fee_bump_bps": 10,
+        "latency_scale": 3,
+        "fill_depth_factor": "0.5",
+        "world_depth_factor": "0.5"
+      },
+      "seed": 2,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    },
+    {
+      "scenario": {
+        "name": "adverse-combo",
+        "fee_bump_bps": 10,
+        "latency_scale": 3,
+        "fill_depth_factor": "0.5",
+        "world_depth_factor": "0.5"
+      },
+      "seed": 3,
+      "frames": 200000,
+      "frame_errors": 0,
+      "from": "2026-08-26T21:51:16.242699406+03:00",
+      "to": "2026-08-26T23:11:21.659929839+03:00",
+      "evaluations": 626156,
+      "qualified": 0,
+      "rejected": 626022,
+      "skipped_unhealthy": 134,
+      "cycles": null,
+      "net_pnl": {
+        "USDT": "0"
+      },
+      "fees_paid": {
+        "USDT": "0"
+      },
+      "max_drawdown": {
+        "USDT": "0.000000"
+      },
+      "turnover": {
+        "USDT": "0"
+      }
+    }
+  ]
+}

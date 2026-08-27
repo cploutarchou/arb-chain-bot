@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
@@ -46,7 +47,9 @@ export default function TrianglesPage() {
                 head={["Triangle", "Score", "Cycles", "Components", "Notes"]}
                 empty="scored triangles in this window (requires persisted history)"
                 rows={(q.scores ?? []).map((s) => [
-                  s.triangle_id,
+                  <Link key="id" href={`/triangles/${encodeURIComponent(s.triangle_id)}`} className="text-[var(--accent)] underline">
+                    {s.triangle_id}
+                  </Link>,
                   <Badge key="t" tone={s.total >= 70 ? "ok" : s.total >= 40 ? "warn" : "bad"}>
                     {s.total}
                   </Badge>,

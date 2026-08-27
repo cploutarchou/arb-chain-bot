@@ -61,6 +61,19 @@ func (o *Outbox) Enqueue(rec Record) bool {
 func (o *Outbox) Dropped() int64 { return o.dropped.Load() }
 func (o *Outbox) Written() int64 { return o.written.Load() }
 
+// Depth and Capacity expose the current queue backlog (BL-18: system
+// health's queue-depth panel). init() is called so a Depth() probe
+// before Run/Enqueue never races the lazy channel construction.
+func (o *Outbox) Depth() int {
+	o.init()
+	return len(o.ch)
+}
+
+func (o *Outbox) Capacity() int {
+	o.init()
+	return cap(o.ch)
+}
+
 func (o *Outbox) Name() string { return "outbox" }
 
 // Run drains until ctx cancels, then flushes what is already queued with
@@ -105,6 +118,10 @@ func (o *Outbox) write(ctx context.Context, rec Record) {
 		// The result itself carries OpportunityID (set by the simulator
 		// from the plan), so no caller has to re-attach the linkage.
 		err = o.Store.InsertCycle(ctx, rec.SessionID, rec.Cycle)
+	case "risk_event":
+		if rec.RiskEvent != nil {
+			err = o.Store.InsertRiskEvent(ctx, *rec.RiskEvent)
+		}
 	default:
 		o.Log.Warn("outbox: unknown record kind", "kind", rec.Kind)
 		return

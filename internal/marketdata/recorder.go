@@ -92,6 +92,19 @@ func (r *Recorder) enqueue(fr Frame) {
 func (r *Recorder) Dropped() int64 { return r.dropped.Load() }
 func (r *Recorder) Written() int64 { return r.written.Load() }
 
+// Depth and Capacity expose the current tap-queue backlog (BL-18: system
+// health's queue-depth panel). init() runs first so a probe before Run
+// starts never races the lazy channel construction.
+func (r *Recorder) Depth() int {
+	r.init()
+	return len(r.ch)
+}
+
+func (r *Recorder) Capacity() int {
+	r.init()
+	return cap(r.ch)
+}
+
 // Run drains the queue into rotated segments until ctx cancels, closing
 // the active segment on the way out.
 func (r *Recorder) Run(ctx context.Context) error {

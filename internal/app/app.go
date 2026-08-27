@@ -63,7 +63,7 @@ func (a *App) Run(parent context.Context) error {
 		wg.Add(1)
 		go func(c Component) {
 			defer wg.Done()
-			a.log.Info("component starting", "component", c.Name(), "mode", string(a.cfg.Mode))
+			a.log.Info("component starting", "component", c.Name())
 			err := c.Run(runCtx)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				a.log.Error("component failed", "component", c.Name(), "error", err)

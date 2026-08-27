@@ -1,15 +1,44 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
+
+// extractParentVersion pulls an optional top-level "parent_version" key
+// out of a raw JSON object body and returns it alongside the body with
+// that key removed — callers that strict-decode the remainder (e.g.
+// strategy.Params) then never see an "unknown field" for it. A body with
+// no parent_version key returns (0, body unchanged).
+func extractParentVersion(body []byte) (int64, []byte, error) {
+	var probe struct {
+		ParentVersion *int64 `json:"parent_version"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return 0, nil, err
+	}
+	if probe.ParentVersion == nil {
+		return 0, body, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return 0, nil, err
+	}
+	delete(m, "parent_version")
+	rest, err := json.Marshal(m)
+	if err != nil {
+		return 0, nil, err
+	}
+	return *probe.ParentVersion, rest, nil
+}
 
 // configRoutes serve the versioned strategy configuration. Reads need
 // PermViewSystem; writes map each changed top-level section to its RBAC
@@ -57,28 +86,65 @@ func (s *Server) configRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) handleConfigApply(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "bad_payload", "invalid config payload: "+err.Error(), correlationID(r))
+		return
+	}
+	// parent_version (T-058 optimistic concurrency) is an envelope field,
+	// not a strategy.Params field: pull it out before the strict decode
+	// below so an unrecognized-field 400 never fires on it.
+	parentVersion, rest, err := extractParentVersion(raw)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "bad_payload", "invalid config payload: "+err.Error(), correlationID(r))
+		return
+	}
 	var p strategy.Params
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	dec := json.NewDecoder(bytes.NewReader(rest))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&p); err != nil {
 		WriteError(w, http.StatusBadRequest, "bad_payload", "invalid config payload: "+err.Error(), correlationID(r))
 		return
 	}
+	// review P3(g): parent_version is optional for Telegram/system/AI
+	// callers (a single actor, no concurrent-editor risk), but the web
+	// console always has a GET-then-edit-then-POST flow where a SECOND
+	// browser tab (or a Telegram operator) can apply a change in between
+	// — omitting parent_version there would silently skip the optimistic-
+	// concurrency check ApplyAuthorizedExpect exists to provide. Every
+	// version the service ever returns is >= 1 (Load seeds version 1), so
+	// requiring parentVersion > 0 for source=="web" is exactly "the client
+	// must echo back a real version it actually loaded".
+	if parentVersion <= 0 {
+		WriteError(w, http.StatusBadRequest, "parent_version_required", "parent_version is required for changes made from the console", correlationID(r))
+		return
+	}
 	s.applyParams(w, r, func(actor string, authorize strategy.Authorize) (strategy.Snapshot, error) {
-		return s.Strategy.ApplyAuthorized(r.Context(), actor, "web", p, authorize)
+		return s.Strategy.ApplyAuthorizedExpect(r.Context(), actor, "web", p, authorize, parentVersion)
 	})
 }
 
 func (s *Server) handleConfigRollback(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Version int64 `json:"version"`
+		Version       int64  `json:"version"`
+		ParentVersion *int64 `json:"parent_version,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || body.Version <= 0 {
 		WriteError(w, http.StatusBadRequest, "bad_payload", "body must be {\"version\": n}", correlationID(r))
 		return
 	}
+	var parentVersion int64
+	if body.ParentVersion != nil {
+		parentVersion = *body.ParentVersion
+	}
+	// review P3(g): same requirement as handleConfigApply — a web-sourced
+	// rollback must echo the version it believes is active.
+	if parentVersion <= 0 {
+		WriteError(w, http.StatusBadRequest, "parent_version_required", "parent_version is required for changes made from the console", correlationID(r))
+		return
+	}
 	s.applyParams(w, r, func(actor string, authorize strategy.Authorize) (strategy.Snapshot, error) {
-		return s.Strategy.RollbackAuthorized(r.Context(), actor, "web", body.Version, authorize)
+		return s.Strategy.RollbackAuthorizedExpect(r.Context(), actor, "web", body.Version, authorize, parentVersion)
 	})
 }
 
@@ -115,7 +181,12 @@ func SectionAuthorizer(role auth.Role) strategy.Authorize {
 }
 
 func (s *Server) writeConfigError(w http.ResponseWriter, r *http.Request, err error) {
+	var stale *strategy.StaleVersionError
 	switch {
+	case errors.As(err, &stale):
+		WriteErrorData(w, http.StatusConflict, "stale_version",
+			"config changed since you loaded it; reload and retry", correlationID(r),
+			map[string]any{"current_version": stale.Current})
 	case errors.Is(err, strategy.ErrNoChange):
 		WriteError(w, http.StatusConflict, "no_change", "payload equals the current version", correlationID(r))
 	case errors.Is(err, strategy.ErrNotFound):

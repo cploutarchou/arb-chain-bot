@@ -143,12 +143,17 @@ func UsableInput(p Placement, in, rate decimal.Decimal) (usable, fee decimal.Dec
 // returning the net amount and the fee (in the received asset). For
 // input-side fees it returns the gross unchanged.
 //
-// Token-paid fees (TokenPaid) are modeled as an equivalent output-side
-// deduction: the venue debits the token balance instead of the received
-// asset, but in value terms the cost is rate x notional either way. The
-// approximation is explicit on the Effective ("+discount" source,
-// TokenPaid flag) and the paper engine additionally tracks the token
-// balance drain (resources/execution-simulation.md).
+// Token-paid fees (TokenPaid) are NOT modeled as a discount against the
+// received asset today: Taker() computes the discounted rate, and
+// Effective carries PayAsset/TokenPaid so a caller COULD account for the
+// pay-asset debit, but nothing does — no pay-asset balance is ever
+// reserved, spent, or tracked by the paper engine or portfolio (P1-2,
+// docs/MASTER_PLAN.md T-057). Concretely, applying the discounted rate
+// here still shrinks the fee taken from gross by the full discount
+// amount with no offsetting debit anywhere, which is exactly why
+// platform.FeeSettings.validate refuses token_discount:true at the
+// settings layer until a real pay-asset ledger lands: this function
+// alone cannot be relied on to keep P&L honest for a token-paid fee.
 func NetOutput(p Placement, gross, rate decimal.Decimal) (net, fee decimal.Decimal) {
 	if p != FeeOnOutput || !rate.IsPositive() {
 		return gross, decimal.Zero
@@ -160,4 +165,29 @@ func NetOutput(p Placement, gross, rate decimal.Decimal) (net, fee decimal.Decim
 // Bps converts a fractional rate to basis points (0.001 → 10).
 func Bps(rate decimal.Decimal) decimal.Decimal {
 	return rate.Mul(decimal.NewFromInt(10_000))
+}
+
+// venueDiscounts is the compiled-in per-venue token-discount constant
+// table (docs/research/fees.md): rate, pay asset and API eligibility are
+// never operator input (T-057 design §1.2) — an operator can only toggle
+// Enabled. Zero value (not present) means the venue offers no token
+// discount at all.
+var venueDiscounts = map[exchange.ExchangeID]Discount{
+	// Binance: 25% off when paid in BNB, verified to apply to
+	// API-executed trades (re-verified 2026-08-26, docs/research/fees.md).
+	"binance": {Rate: decimal.RequireFromString("0.25"), PayAsset: "BNB", AppliesToAPI: true},
+	// Bybit: MNT fee-payment discount excludes API-executed trades
+	// (re-verified 2026-08-26, docs/research/fees.md). Data only — Bybit
+	// has no compiled-in connector yet (T-050); the entry exists so a
+	// venue whose discount excludes API trades validates as an error
+	// (design §1.2) rather than a silent no-op the day one lands.
+	"bybit": {Rate: decimal.RequireFromString("0.25"), PayAsset: "MNT", AppliesToAPI: false},
+}
+
+// VenueDiscount returns the compiled-in discount profile for a venue
+// (Enabled always false in the returned value — the caller/operator
+// toggle decides that) and whether the venue has one at all.
+func VenueDiscount(ex exchange.ExchangeID) (Discount, bool) {
+	d, ok := venueDiscounts[ex]
+	return d, ok
 }
