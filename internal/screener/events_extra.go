@@ -22,6 +22,15 @@ type EventCounter interface {
 	CountEvents(ctx context.Context, ruleID string) (int64, error)
 }
 
+// EventDeliveryRecorder is the optional EventStore extension the T-086
+// alert dispatcher uses to patch one channel's delivery outcome onto an
+// already-inserted event (email/webhook results only become known
+// after the synchronous InsertEvent call, since they are dispatched to
+// a bounded worker rather than awaited inline).
+type EventDeliveryRecorder interface {
+	SetEventDelivered(ctx context.Context, id, channel string, outcome DeliveryOutcome) error
+}
+
 func (m *MemoryEventStore) CloseEvent(_ context.Context, id string, closedAt time.Time, lifetimeS int64, peakNetBps string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -44,6 +53,21 @@ func (m *MemoryEventStore) SetEventExecution(_ context.Context, id, paperExecuti
 		if m.rows[i].ID == id {
 			v := paperExecutionID
 			m.rows[i].PaperExecutionID = &v
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (m *MemoryEventStore) SetEventDelivered(_ context.Context, id, channel string, outcome DeliveryOutcome) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.rows {
+		if m.rows[i].ID == id {
+			if m.rows[i].Delivered == nil {
+				m.rows[i].Delivered = map[string]DeliveryOutcome{}
+			}
+			m.rows[i].Delivered[channel] = outcome
 			return nil
 		}
 	}

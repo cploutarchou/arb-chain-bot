@@ -339,6 +339,94 @@ func TestScreenerRulesCRUDViaAPI(t *testing.T) {
 	}
 }
 
+// TestScreenerRuleWebhookSecretWriteOnly covers T-086: webhook_secret
+// is accepted on create, never echoed back on create/list/update, and
+// an update that omits it keeps the existing secret rather than
+// clearing it (the console never receives the secret to echo back).
+func TestScreenerRuleWebhookSecretWriteOnly(t *testing.T) {
+	_, mux, svc := newScreenerServer(t)
+	aCookie, aCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	bps := "50"
+	body := map[string]any{
+		"name": "webhook rule", "enabled": true, "kind": "spread",
+		"min_spread_bps": bps, "min_liquidity_quote": "1000", "min_lifetime_s": 10,
+		"buy_venues": []string{"binance"}, "sell_venues": []string{"okx"},
+		"cooldown_s": 60, "paper_size_quote": "0",
+		"channels": []string{"webhook"}, "webhook_url": "https://hooks.example.test/screener",
+		"webhook_secret": "first-secret-0123456789",
+	}
+	rec := postScreener(t, mux, aCookie, aCSRF, http.MethodPost, "/api/v1/screener/rules", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "first-secret-0123456789") {
+		t.Fatalf("create response leaked webhook_secret: %s", rec.Body.String())
+	}
+	var created struct {
+		Data struct {
+			Rule screener.Rule `json:"rule"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Data.Rule.WebhookSecret != "" {
+		t.Fatalf("decoded rule has a non-empty webhook_secret: %+v", created.Data.Rule)
+	}
+
+	// List must not leak it either.
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/screener/rules", nil)
+	listReq.AddCookie(aCookie)
+	listRec := httptest.NewRecorder()
+	mux.ServeHTTP(listRec, listReq)
+	if strings.Contains(listRec.Body.String(), "first-secret-0123456789") {
+		t.Fatalf("list response leaked webhook_secret: %s", listRec.Body.String())
+	}
+
+	// Update WITHOUT webhook_secret: the existing secret must survive
+	// (proven indirectly — Validate would reject a webhook channel with
+	// no secret at all, and this update succeeds).
+	id := created.Data.Rule.ID
+	updateBody := map[string]any{
+		"name": "webhook rule renamed", "enabled": true, "kind": "spread",
+		"min_spread_bps": bps, "min_liquidity_quote": "1000", "min_lifetime_s": 10,
+		"buy_venues": []string{"binance"}, "sell_venues": []string{"okx"},
+		"cooldown_s": 60, "paper_size_quote": "0",
+		"channels": []string{"webhook"}, "webhook_url": "https://hooks.example.test/screener",
+	}
+	updRec := postScreener(t, mux, aCookie, aCSRF, http.MethodPut, "/api/v1/screener/rules/"+id, updateBody)
+	if updRec.Code != http.StatusOK {
+		t.Fatalf("update without webhook_secret = %d: %s", updRec.Code, updRec.Body.String())
+	}
+	if strings.Contains(updRec.Body.String(), "first-secret-0123456789") {
+		t.Fatalf("update response leaked webhook_secret: %s", updRec.Body.String())
+	}
+	// Direct store read (the API layer never returns the secret): the
+	// original value must have survived the no-secret update.
+	stored, err := svc.Rules.GetRule(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.WebhookSecret != "first-secret-0123456789" {
+		t.Fatalf("stored webhook_secret after update = %q, want unchanged", stored.WebhookSecret)
+	}
+
+	// Rotating the secret: a new non-empty value replaces it.
+	updateBody["webhook_secret"] = "second-secret-9876543210"
+	updRec = postScreener(t, mux, aCookie, aCSRF, http.MethodPut, "/api/v1/screener/rules/"+id, updateBody)
+	if updRec.Code != http.StatusOK {
+		t.Fatalf("update with new webhook_secret = %d: %s", updRec.Code, updRec.Body.String())
+	}
+	stored, err = svc.Rules.GetRule(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.WebhookSecret != "second-secret-9876543210" {
+		t.Fatalf("stored webhook_secret after rotation = %q", stored.WebhookSecret)
+	}
+}
+
 func TestScreenerCalculator(t *testing.T) {
 	_, mux, svc := newScreenerServer(t)
 	now := time.Now().UTC()

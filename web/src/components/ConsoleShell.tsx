@@ -92,6 +92,12 @@ const GROUPS: NavGroup[] = [
       { label: "Funding", href: "/funding" },
       { label: "Calculator", href: "/calculator" },
       { label: "Alert Rules", href: "/scanner-alerts" },
+      // Distinct label from the Control group's existing "Reports" item
+      // (engine daily/weekly ops reports, a different system per
+      // docs/user-guide/reports.md's "two report systems ... do not
+      // confuse them") — both GLYPHS and NavContent's activeGroupTitle
+      // lookup key off this exact string, so it must not collide.
+      { label: "Screener Reports", href: "/screener-reports" },
       { label: "Auto-Paper", href: "/auto-paper" },
     ],
   },

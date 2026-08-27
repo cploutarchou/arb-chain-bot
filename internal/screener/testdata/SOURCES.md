@@ -61,3 +61,29 @@ edited; only array elements were dropped.
 | coinbase | products.json | GET https://api.coinbase.com/api/v3/brokerage/market/products?product_type=SPOT |
 | coinbase | product_book_<product_id>.json (36 files) | GET https://api.coinbase.com/api/v3/brokerage/market/product_book?product_id=<product_id>&limit=1 |
 | coinbase | exchange_currencies.json | GET https://api.exchange.coinbase.com/currencies |
+
+## T-078 Tier-3 venues (recorded 2026-08-27, same rules: real responses; only array elements / keyed object entries dropped)
+
+| venue | file | endpoint |
+|---|---|---|
+| cryptocom | instruments.json | GET https://api.crypto.com/exchange/v1/public/get-instruments |
+| cryptocom | tickers.json | GET https://api.crypto.com/exchange/v1/public/get-tickers |
+| cryptocom | val_mark_<symbol>.json / val_funding_<symbol>.json / val_est_<symbol>.json (3 symbols) | GET https://api.crypto.com/exchange/v1/public/get-valuations?instrument_name=<symbol>&valuation_type=mark_price\|funding_hist\|estimated_funding_rate&count=1..3 |
+| bitfinex | conf.json | GET https://api-pub.bitfinex.com/v2/conf/pub:list:pair:exchange,pub:list:pair:futures,pub:map:currency:undl,pub:map:currency:sym,pub:info:tx:status,pub:map:tx:method,pub:list:currency (maps kept whole; pair lists trimmed) |
+| bitfinex | tickers.json | GET https://api-pub.bitfinex.com/v2/tickers?symbols=ALL (incl. 2 funding "f" rows so the skip is exercised) |
+| bitfinex | deriv_status.json | GET https://api-pub.bitfinex.com/v2/status/deriv?keys=ALL |
+| bingx | spot_symbols.json | GET https://open-api.bingx.com/openApi/spot/v1/common/symbols (incl. 2 non-online rows) |
+| bingx | spot_bookTicker.json | GET https://open-api.bingx.com/openApi/spot/v2/quote/bookTicker |
+| bingx | contracts.json | GET https://open-api.bingx.com/openApi/swap/v2/quote/contracts (incl. 1 USDC-margined + 1 status-25 row) |
+| bingx | swap_ticker.json | GET https://open-api.bingx.com/openApi/swap/v2/quote/ticker |
+| bingx | premiumIndex.json | GET https://open-api.bingx.com/openApi/swap/v2/quote/premiumIndex |
+| whitebit | markets.json | GET https://whitebit.com/api/v4/public/markets (incl. 2 tradfiFutures rows so the skip is exercised) |
+| whitebit | tickers_v1.json | GET https://whitebit.com/api/v1/public/tickers |
+| whitebit | futures.json | GET https://whitebit.com/api/v4/public/futures |
+| whitebit | assets.json | GET https://whitebit.com/api/v4/public/assets (incl. 2 closed assets) |
+| bitmart | symbols_details.json | GET https://api-cloud.bitmart.com/spot/v1/symbols/details |
+| bitmart | tickers_v3.json | GET https://api-cloud.bitmart.com/spot/quotation/v3/tickers |
+| bitmart | currencies.json | GET https://api-cloud.bitmart.com/spot/v1/currencies (incl. 1 disabled currency) |
+| bitmart | contract_details.json | GET https://api-cloud-v2.bitmart.com/contract/public/details (incl. 2 Delisted + 1 USD-quoted row) |
+| bitmart | funding_rate_v2.json | GET https://api-cloud-v2.bitmart.com/contract/public/funding-rate-v2 |
+| bitmart | markprice_kline.json | GET https://api-cloud-v2.bitmart.com/contract/public/markprice-kline?symbol=BTCUSDT&step=1&start_time=…&end_time=… (served for any symbol) |

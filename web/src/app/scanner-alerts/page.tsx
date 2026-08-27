@@ -13,6 +13,7 @@ import {
   type ScreenerRule,
   type ScreenerRuleInput,
   type ScreenerRuleKind,
+  type ScreenerRuleParams,
 } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
@@ -20,7 +21,9 @@ import { ConsoleShell } from "@/components/ConsoleShell";
 import {
   ScreenerAwait,
   VenueChips,
+  fractionToPercentStr,
   parseCsv,
+  percentToFractionStr,
   signedText,
 } from "@/components/screener/ScreenerShared";
 import {
@@ -54,7 +57,17 @@ function RuleForm({
   const [minSpreadBps, setMinSpreadBps] = useState(
     initial?.min_spread_bps ?? "",
   );
-  const [minCarryApr, setMinCarryApr] = useState(initial?.min_carry_apr ?? "");
+  // min_carry_apr is a FRACTION on the wire (internal/screener/basis.go
+  // MinCarryAPR / signals.go CarryAPR — e.g. 0.10 for 10% APR) but the
+  // console shows and accepts a PERCENT, same convention as the
+  // Perpetuals page's min_carry_apr filter. The conversion happens once
+  // here, at the form's load boundary, and once more at submit() below —
+  // never inside api/client.ts or on every keystroke, so an unrelated
+  // caller (e.g. toggleEnabled's PUT of the untouched rule) never
+  // double-converts an already-fraction value.
+  const [minCarryApr, setMinCarryApr] = useState(
+    initial?.min_carry_apr ? fractionToPercentStr(initial.min_carry_apr) : "",
+  );
   const [minLiquidityQuote, setMinLiquidityQuote] = useState(
     initial?.min_liquidity_quote ?? "0",
   );
@@ -85,34 +98,67 @@ function RuleForm({
     initial?.paper_size_quote ?? "100",
   );
 
+  // Advanced (strategy-model inputs, rule_params.go): only the four the
+  // task calls out — mmr is the load-bearing one (§3.4: without it every
+  // carry/basis rule skips every entry with MMR_UNKNOWN), slip_bps /
+  // buffer_bps / max_hold_h are the other commonly-tuned ones. Empty
+  // string = "not set" = the backend's documented default; placeholder
+  // text states that default, it is never written into the input value
+  // (a pre-filled mmr would fabricate a margin rate — see the type
+  // comment on ScreenerRuleParams.mmr in lib/api/client.ts). Everything
+  // the form doesn't expose (strategy, depth_haircut, step_size, …) is
+  // preserved from `initial.params` verbatim and merged back in on
+  // submit, so editing a rule through this form never silently drops a
+  // param someone set through the API directly.
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [slipBps, setSlipBps] = useState(initial?.params?.slip_bps ?? "");
+  const [bufferBps, setBufferBps] = useState(initial?.params?.buffer_bps ?? "");
+  const [maxHoldH, setMaxHoldH] = useState(
+    initial?.params?.max_hold_h ? String(initial.params.max_hold_h) : "",
+  );
+  const [mmr, setMmr] = useState(initial?.params?.mmr ?? "");
+
   const submit = () => {
+    const params: ScreenerRuleParams = { ...(initial?.params ?? {}) };
+    if (slipBps.trim()) params.slip_bps = slipBps.trim();
+    else delete params.slip_bps;
+    if (bufferBps.trim()) params.buffer_bps = bufferBps.trim();
+    else delete params.buffer_bps;
+    if (maxHoldH.trim() && Number(maxHoldH) > 0)
+      params.max_hold_h = Number(maxHoldH);
+    else delete params.max_hold_h;
+    if (mmr.trim()) params.mmr = mmr.trim();
+    else delete params.mmr;
+    // rule_params.go Validate rejects params.strategy=carry|funding_harvest
+    // for kind=spread. The form has no control to clear a preserved
+    // strategy override, so switching an existing carry/basis rule's kind
+    // to spread would otherwise submit an unfixable 400 every time — drop
+    // it here rather than leave that dead end.
+    if (kind === "spread" && params.strategy !== "cross_venue_spot") {
+      delete params.strategy;
+    }
+
     onSave({
       name: name.trim(),
       enabled,
       kind,
       // Absent, not zero, for the threshold the rule's kind doesn't use
       // — a sent 0 would be a real "always fires" threshold to the
-      // backend (design §7 notes both fields are kind-dependent).
+      // backend (design §7 notes both fields are kind-dependent; rules.go
+      // Validate requires min_spread_bps for kind=spread and
+      // min_carry_apr for kind=carry AND kind=basis).
       min_spread_bps:
-        kind !== "carry" && minSpreadBps.trim()
+        kind === "spread" && minSpreadBps.trim()
           ? minSpreadBps.trim()
           : undefined,
-      // KNOWN ISSUE (found, not fixed here): this field is labelled "Min
-      // carry APR (%)" but the wire contract (internal/screener/basis.go
-      // MinCarryAPR / signals.go CarryAPR) is a fraction, e.g. 0.10 for
-      // 10% — same class of bug as the Perpetuals page's min_carry_apr
-      // filter (fixed separately). Left unconverted here because
-      // RuleForm also loads an existing rule's already-stored (fraction)
-      // value straight into this same input for editing; a naive /100
-      // on submit would corrupt every edit-save round trip of an
-      // existing carry rule. Fixing this needs the load path converted
-      // too (fraction → percent on `initial?.min_carry_apr`) plus this
-      // kind's missing "basis" branch (kind=basis also requires
-      // min_carry_apr per rules.go Validate, but this form only shows
-      // the carry-APR field for kind==="carry", not "basis" — a second,
-      // separate defect). Out of scope for this change.
+      // Percent (form) → fraction (wire) — see the load-side conversion
+      // above; ScreenerShared's shiftDecimalPoint keeps this exact
+      // (Number()*100/100 reintroduces float noise on a value that
+      // round-trips through storage).
       min_carry_apr:
-        kind === "carry" && minCarryApr.trim() ? minCarryApr.trim() : undefined,
+        kind !== "spread" && minCarryApr.trim()
+          ? percentToFractionStr(minCarryApr.trim())
+          : undefined,
       min_liquidity_quote: minLiquidityQuote.trim() || "0",
       min_lifetime_s: Number(minLifetimeS) || 0,
       buy_venues: buyVenues,
@@ -124,6 +170,7 @@ function RuleForm({
       telegram,
       auto_paper: autoPaper,
       paper_size_quote: paperSizeQuote.trim() || "0",
+      params: Object.keys(params).length > 0 ? params : undefined,
     });
   };
 
@@ -152,7 +199,7 @@ function RuleForm({
             ))}
           </select>
         </label>
-        {kind !== "carry" ? (
+        {kind === "spread" ? (
           <label className="flex flex-col gap-1">
             <span className="text-[12px] text-[var(--text-dim)]">
               Min spread (bps)
@@ -165,6 +212,8 @@ function RuleForm({
             />
           </label>
         ) : (
+          // kind === "carry" | "basis" — rules.go Validate requires
+          // min_carry_apr for both, not just "carry".
           <label className="flex flex-col gap-1">
             <span className="text-[12px] text-[var(--text-dim)]">
               Min carry APR (%)
@@ -309,6 +358,75 @@ function RuleForm({
           />
         </label>
       )}
+
+      <div className="border-t border-[var(--border)] pt-3">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+          className="text-[12px] font-medium text-[var(--accent)] underline"
+        >
+          {showAdvanced ? "Hide" : "Show"} advanced model inputs
+        </button>
+        {showAdvanced && (
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] text-[var(--text-dim)]">
+                Slip allowance (bps)
+              </span>
+              <input
+                value={slipBps}
+                onChange={(e) => setSlipBps(e.target.value)}
+                inputMode="decimal"
+                placeholder="default 2"
+                className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] text-[var(--text-dim)]">
+                Buffer (bps)
+              </span>
+              <input
+                value={bufferBps}
+                onChange={(e) => setBufferBps(e.target.value)}
+                inputMode="decimal"
+                placeholder="default 5"
+                className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] text-[var(--text-dim)]">
+                Max hold (hours)
+              </span>
+              <input
+                value={maxHoldH}
+                onChange={(e) => setMaxHoldH(e.target.value)}
+                inputMode="numeric"
+                placeholder="default 720 (30 days)"
+                className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] text-[var(--text-dim)]">
+                Maintenance margin rate (fraction, e.g. 0.005)
+              </span>
+              <input
+                value={mmr}
+                onChange={(e) => setMmr(e.target.value)}
+                inputMode="decimal"
+                placeholder="unknown — carry/basis auto-paper skips entries"
+                className="rounded border border-[var(--border-strong)] bg-[var(--bg)] px-2 py-1 outline-none focus:border-[var(--accent)]"
+              />
+            </label>
+          </div>
+        )}
+        <p className="mt-2 text-[11px] text-[var(--text-dim)]">
+          Blank = the backend&apos;s documented default (strategy-models.md
+          §1–§5); the maintenance margin rate has no default — it is required
+          for a carry/basis rule&apos;s automatic PAPER execution to open any
+          position (MMR_UNKNOWN otherwise).
+        </p>
+      </div>
 
       {error && <p className="text-[var(--critical)]">{error}</p>}
       <div className="flex gap-2">
@@ -465,9 +583,12 @@ export default function ScannerAlertsPage() {
                 <Badge key="e" tone={r.enabled ? "ok" : "dim"}>
                   {r.enabled ? "enabled" : "disabled"}
                 </Badge>,
-                r.kind === "carry"
-                  ? `${r.min_carry_apr ?? "—"}% APR`
-                  : `${r.min_spread_bps ?? "—"} bps`,
+                r.kind === "spread"
+                  ? `${r.min_spread_bps ?? "—"} bps`
+                  : // kind === "carry" | "basis" — min_carry_apr is a
+                    // FRACTION on the wire; convert for display, never
+                    // suffix the raw fraction with "%".
+                    `${r.min_carry_apr ? fractionToPercentStr(r.min_carry_apr) : "—"}% APR`,
                 `${r.buy_venues.join("/") || "any"} → ${r.sell_venues.join("/") || "any"}`,
                 `${r.cooldown_s}s`,
                 <Badge key="t" tone={r.telegram ? "ok" : "dim"}>
