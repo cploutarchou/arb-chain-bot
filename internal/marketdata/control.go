@@ -51,6 +51,11 @@ type RecorderControl struct {
 	// OnChange, when set, fires after every start/stop with the new
 	// status (realtime fan-out).
 	OnChange func(RecorderStatus)
+	// OnStart, when set, runs once a session is live and receiving
+	// frames. The engine uses it to capture fresh REST snapshots so a
+	// session started mid-stream still replays (books need a snapshot
+	// to splice the buffered diffs onto).
+	OnStart func(sessionID string)
 
 	mu       sync.Mutex
 	lifetime context.Context
@@ -165,6 +170,9 @@ func (c *RecorderControl) Start(ctx context.Context) (string, error) {
 	}
 	if c.OnChange != nil {
 		c.OnChange(c.Status())
+	}
+	if c.OnStart != nil {
+		c.OnStart(id)
 	}
 	return id, nil
 }

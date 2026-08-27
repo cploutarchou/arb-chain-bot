@@ -813,6 +813,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	feed.RawTap = rctl.TapWS
 	feed.SnapTap = rctl.TapSnapshot
+	// A session started after the feed synced must still carry
+	// snapshots, or its replay can never initialise a book.
+	rctl.OnStart = func(sessionID string) {
+		go func() {
+			if err := feed.CaptureSnapshots(runCtx); err != nil && runCtx.Err() == nil {
+				e.log.Warn("recording snapshot capture failed; replay of this session may not sync",
+					"session", sessionID, "error", err)
+			}
+		}()
+	}
 
 	breakers := risk.NewRegistry(func(tr risk.Transition) {
 		e.log.Warn("circuit breaker transition",
