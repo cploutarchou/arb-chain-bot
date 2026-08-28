@@ -219,6 +219,9 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		executor := paperexec.New(screenerSvc, ledger, log, paperexec.Options{Seed: 1, IDGen: newULID, Entitle: tenant.paperEntitle(ledger)})
 		evaluator.OnOpen(executor.OnOpen)
 		screenerSvc.SetAutoPaper(executor)
+		// An edited paper.balances must reach the executor's wallets;
+		// without this it latches them at first load (T-096).
+		screenerSvc.OnSettingsApplied = func(screener.Snapshot) { executor.ReloadWallets() }
 		others = append(others, screener.NewAutomation(screenerSvc, executor, evaluator))
 		if mtr != nil {
 			if err := mtr.RegisterScreener(screenerMetricSources(screenerSvc, evaluator, executor, &feedRateLimited)); err != nil {
