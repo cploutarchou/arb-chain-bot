@@ -374,7 +374,13 @@ func (x *Executor) exitReason(r screener.Rule, pos Position, po perpOpen, p scre
 			}
 		}
 	default:
-		if basisNow.LessThanOrEqual(r.CloseBps()) {
+		// A carry's thesis is funding, so a "converged" close before the
+		// first settlement collects nothing and simply realises the
+		// round-trip spread plus four taker fees — the shape that lost
+		// 412 of 412 closes on 2026-08-27 (T-097). The stops above are
+		// deliberately checked first and stay immediate: a position that
+		// is genuinely going wrong still exits at once.
+		if basisNow.LessThanOrEqual(r.CloseBps()) && po.Settlements >= 1 {
 			return "converged"
 		}
 		if po.ExitCount >= r.ExitK() {
