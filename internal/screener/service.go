@@ -153,6 +153,13 @@ type Service struct {
 	// nil in profiles/tests that do not run it (status: not_started).
 	Collectors CollectorRunner
 
+	// OnSettingsApplied, when set, is called after a new settings version
+	// becomes active. The paper executor uses it to re-seed wallets for
+	// (venue, asset) pairs the operator has just added: without it the
+	// executor latches its wallets at first load and an edited
+	// paper.balances silently does nothing (T-096).
+	OnSettingsApplied func(Snapshot)
+
 	// SpreadLifetime is the ONE process-wide LifetimeTracker every GET
 	// /screener/spreads request shares (spreads.go's doc comment: the
 	// tracker's threshold must not be request-scoped, or one viewer's
@@ -296,6 +303,9 @@ func (s *Service) ApplyExpect(ctx context.Context, actor, source string, doc Set
 		})
 	}
 	s.log.Info("screener settings activated", "version", version, "parent", cur.Version, "actor", actor, "source", source, "changes", len(diff))
+	if s.OnSettingsApplied != nil {
+		s.OnSettingsApplied(snap)
+	}
 	return snap, nil
 }
 

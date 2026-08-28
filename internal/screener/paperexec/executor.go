@@ -272,6 +272,16 @@ func (x *Executor) ensureWallets(ctx context.Context) error {
 	return nil
 }
 
+// ReloadWallets makes the next tick re-run ensureWallets, which seeds any
+// (venue, asset) pair the operator added to paper.balances while leaving
+// every ledger balance the executor has already moved untouched. Wire it
+// to screener.Service.OnSettingsApplied (T-096).
+func (x *Executor) ReloadWallets() {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.loaded = false
+}
+
 func (x *Executor) wallet(v screener.Venue) *reservation.Manager {
 	m, ok := x.wallets[v]
 	if !ok {

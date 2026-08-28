@@ -51,7 +51,14 @@ const (
 	SkipMinNotional    = "MIN_NOTIONAL"
 	SkipOpenPosition   = "OPEN_POSITION"
 	SkipSettlementNear = "SETTLEMENT_NEAR"
-	SkipPartialLeg     = "partial_leg"
+	// SkipClosesImmediately: at open, the basis measured with the sides a
+	// close would cross is already at or below close_bps, so the position
+	// would exit having collected no funding, paying the round-trip
+	// spread and four taker fees. The alert layer refuses these too, but
+	// it reads the book one tick earlier; the executor must re-check
+	// against the book it actually opens on (T-097).
+	SkipClosesImmediately = "CLOSES_IMMEDIATELY"
+	SkipPartialLeg        = "partial_leg"
 	// Shared with the alert evaluator (screener/guard.go): a lane the
 	// asset-identity guard refuses, or one with no top-of-book size.
 	SkipSuspectMismatch  = screener.SkipSuspectMismatch
