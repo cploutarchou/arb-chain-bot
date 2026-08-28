@@ -56,6 +56,14 @@ type Signal struct {
 	ExecBps  decimal.Decimal
 	// Carry (§3.1) / funding harvest (§5.1).
 	BasisEntryBps decimal.Decimal
+	// BasisExitBps is the SAME basis measured with the sides a close
+	// would cross (perp ask vs spot bid), i.e. what paperexec/perp.go
+	// compares against close_bps. Entry uses perp bid vs spot ask, so on
+	// a book whose round-trip spread exceeds the entry basis this is
+	// already at or below the close threshold when the position opens —
+	// the position would close on the next poll, before any funding
+	// settles, realising the spread plus four taker fees (T-097).
+	BasisExitBps  decimal.Decimal
 	FeesRTBps     decimal.Decimal
 	FundingExpBps decimal.Decimal
 	EdgeBps       decimal.Decimal
@@ -63,6 +71,10 @@ type Signal struct {
 	MeanSettled   decimal.Decimal // per-interval fraction over the look-back
 	FHatBps       decimal.Decimal // min(predicted, mean settled) for §5.1
 	BreakevenN    int
+	// HoldIntervals is how many funding settlements fit in the rule's
+	// max hold; a carry whose breakeven needs more than this can never
+	// pay for its round trip within the time the rule will hold it.
+	HoldIntervals int
 	CarryAPR      decimal.Decimal // predicted rate annualised (display)
 
 	LiquidityQuote decimal.Decimal
@@ -319,6 +331,9 @@ func perpSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time)
 		}
 		s.DataAgeOK = dataAgeOK(now.Sub(spot.At), now.Sub(p.At), in.PollInterval) && fundingAgeOK(p, now, in.PollInterval)
 		s.BasisEntryBps = p.Bid.Sub(spot.Ask).Div(spot.Ask).Mul(decTenK)
+		if spot.Bid.IsPositive() {
+			s.BasisExitBps = p.Ask.Sub(spot.Bid).Div(spot.Bid).Mul(decTenK)
+		}
 		s.FeesRTBps = fSpot.Mul(decTwo).Add(fPerp.Mul(decTwo))
 		// screener.Perp (the collector contract, types.go) carries no
 		// top-of-book quantity, so liquidity is the spot leg's ask
@@ -367,6 +382,17 @@ func perpSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time)
 			// example charge slippage on all four legs (2 bps × 4 = 8);
 			// the worked example is the golden figure, so four legs it is.
 			s.EdgeBps = s.BasisEntryBps.Add(s.FundingExpBps).Sub(s.FeesRTBps).Sub(slip.Mul(decFour)).Sub(buffer)
+			// The carry thesis is funding, so it pays the same
+			// breakeven arithmetic as the harvest strategy: how many
+			// settlements at the conservative rate are needed before the
+			// round trip is paid for (§5.1). Without this the gate
+			// admitted 5 %-APR entries needing ~39 intervals (T-097).
+			s.HoldIntervals = int(nHold)
+			s.FHatBps = minDec(s.PredictedBps, mean.Mul(decTenK))
+			if s.FHatBps.IsPositive() {
+				costs := s.FeesRTBps.Add(slip.Mul(decFour)).Add(buffer)
+				s.BreakevenN = int(costs.Div(s.FHatBps).Ceil().IntPart())
+			}
 			s.Active, s.Reason = carryActive(r, s)
 		}
 		out = append(out, s)
@@ -386,6 +412,16 @@ func carryActive(r screener.Rule, s Signal) (bool, string) {
 		return false, "predicted_funding_not_positive"
 	case s.EdgeBps.LessThan(r.MinEdgeBps()):
 		return false, "below_min_edge"
+	case s.BreakevenN > s.HoldIntervals:
+		// Unlike the harvest strategy (§5.1, a fixed interval cap), a
+		// carry may hold for max_hold_h — but it must be able to pay for
+		// its round trip inside that window, or it is a losing trade by
+		// construction (T-097).
+		return false, "breakeven_exceeds_hold"
+	case s.BasisExitBps.LessThanOrEqual(r.CloseBps()):
+		// Opening here would satisfy the converged-exit test on the next
+		// poll, before any funding settles (T-097).
+		return false, "closes_immediately"
 	case r.MinCarryAPR != nil && s.CarryAPR.LessThan(*r.MinCarryAPR):
 		return false, "below_min_carry_apr"
 	case s.LiquidityQuote.LessThan(r.MinLiquidityQuote):
