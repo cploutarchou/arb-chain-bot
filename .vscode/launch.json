@@ -1,0 +1,61 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // PAPER on :18080 so it never collides with the compose stack's
+      // arbd-paper on :8080. Live execution stays disabled in every
+      // mode; this only exercises the paper path.
+      "name": "arbd (PAPER, :18080)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/arbd",
+      "env": {
+        "ARB_MODE": "PAPER",
+        "ARB_HTTP_ADDR": "127.0.0.1:18080",
+        "ARB_DATABASE_URL": "postgres://arb:arb-dev-password@localhost:5432/arb?sslmode=disable",
+        "ARB_ADMIN_EMAIL": "admin@example.invalid",
+        "ARB_ADMIN_PASSWORD": "change-me-local-dev-only",
+        "ARB_AI_PROVIDER": "fake",
+        "ARB_LOG_LEVEL": "debug"
+      }
+    },
+    {
+      // No database: the in-memory stores are enough to bring the API
+      // up and poke at it, and nothing is persisted between runs.
+      "name": "arbd (MARKET_DATA, in-memory)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/arbd",
+      "env": {
+        "ARB_MODE": "MARKET_DATA",
+        "ARB_HTTP_ADDR": "127.0.0.1:18080",
+        "ARB_DATABASE_URL": "",
+        "ARB_ADMIN_EMAIL": "admin@example.invalid",
+        "ARB_ADMIN_PASSWORD": "change-me-local-dev-only",
+        "ARB_LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "name": "Go: debug tests in current package",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "env": {
+        "ARB_TEST_DATABASE_URL": "postgres://arb:arb-dev-password@localhost:5432/arb?sslmode=disable"
+      }
+    },
+    {
+      // Attach after starting the console with `make web-dev`; Next
+      // listens for the inspector on the default 9229.
+      "name": "Next.js: attach to web dev server",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "skipFiles": ["<node_internals>/**"],
+      "cwd": "${workspaceFolder}/web"
+    }
+  ]
+}
