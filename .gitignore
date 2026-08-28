@@ -25,7 +25,14 @@ web/coverage/
 
 # Editors / OS
 .idea/
-.vscode/
+# The shared VS Code workspace config is committed (settings, task and
+# debug definitions, extension recommendations); per-user state is not.
+# The negations only work because the directory itself is not excluded.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
 *.swp
 .DS_Store
 

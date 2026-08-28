@@ -480,7 +480,25 @@ func TestSupervisorGraceTimeoutRestoresPauseState(t *testing.T) {
 	// (1) The timed-out restart itself must have restored the running
 	// state — nothing else exists to do it, since the abandoned
 	// generation never reaches its own boot sequence.
-	if !pe.Running() {
+	//
+	// Poll rather than assert once: restart() restores the pause state
+	// from a deferred call, which runs after both signals waited on
+	// above (markFailed sets StateFailed, then done() closes reqDone1,
+	// then the function returns and the defer fires). Asserting the
+	// instant StateFailed is observed reads a window in which the
+	// restore is guaranteed but has not necessarily happened yet, which
+	// is a flake, not a defect — CI lost that race on 2026-08-28.
+	// What is under test is that the state IS restored, not how many
+	// nanoseconds it takes.
+	restored := false
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if pe.Running() {
+			restored = true
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !restored {
 		t.Fatal("P2-3: the grace-timeout path left the paper engine paused instead of restoring its pre-restart running state")
 	}
 

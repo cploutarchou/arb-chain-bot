@@ -1,0 +1,69 @@
+{
+  // ---- Go -----------------------------------------------------------
+  // CI gates on `gofmt -l cmd internal`, so format with gofmt rather
+  // than goimports: goimports output passes gofmt, but keeping the two
+  // identical means a clean editor save is a clean CI run.
+  "go.formatTool": "gofmt",
+  "go.lintTool": "golangci-lint",
+  "go.lintOnSave": "package",
+  "go.vetOnSave": "package",
+  "go.testFlags": ["-race"],
+  "go.toolsManagement.autoUpdate": false,
+  "gopls": {
+    "ui.semanticTokens": true,
+    "formatting.gofumpt": false
+  },
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true,
+    "editor.insertSpaces": false,
+    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+  },
+
+  // ---- TypeScript / Next.js -----------------------------------------
+  // Two independent Next apps: web/ (operations console) and site/
+  // (marketing). ESLint needs both roots or it lints neither.
+  "eslint.workingDirectories": [
+    { "directory": "web", "changeProcessCWD": true },
+    { "directory": "site", "changeProcessCWD": true }
+  ],
+  "typescript.tsdk": "web/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "[typescript]": { "editor.formatOnSave": false },
+  "[typescriptreact]": { "editor.formatOnSave": false },
+
+  // ---- Editor -------------------------------------------------------
+  "editor.rulers": [72, 100],
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.eol": "\n",
+  "[markdown]": { "files.trimTrailingWhitespace": false },
+
+  // ---- Noise reduction ----------------------------------------------
+  // node_modules and build output dominate search results and slow the
+  // file watcher; recordings/ holds multi-hundred-MB capture segments.
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/recordings/**": true,
+    "**/.git/objects/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/out": true,
+    "**/recordings": true,
+    "**/package-lock.json": true,
+    "**/test-results": true,
+    "**/playwright-report": true
+  },
+
+  "files.associations": {
+    "*.sql": "sql",
+    "docker-compose*.yml": "dockercompose"
+  },
+  "yaml.schemas": {
+    "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.yml"
+  }
+}
