@@ -1405,8 +1405,23 @@ PAPER only; the vault's exchange credential group stays unread.
   The stops (margin, basis blow-out, funding reversal, max hold) are
   evaluated first and stay immediate — a position going wrong still
   exits at once, which the test pins explicitly.
-  STILL OPEN: no fresh evidence run has been made on an isolated backend
-  (T-098) to confirm the three guards hold in the wild. Do not raise
+  Re-run 2026-08-28 03:30 UTC on the guarded build proved the first fix
+  INSUFFICIENT and found two more defects, both now fixed:
+  (d) the `closes_immediately` guard lived only in the alert layer, but
+      the executor re-reads the book a tick later and applied no such
+      check, so it opened positions the guard had refused — 97 of 97
+      opened with a NEGATIVE entry basis. The executor now re-checks and
+      skips `CLOSES_IMMEDIATELY` (carry only: funding harvest never uses
+      the converged exit, so a negative basis there is the premise).
+  (e) `funding_reversal` degenerated on a negative entry basis:
+      `funding < −(basis/1e4 × notional)` becomes `0 < a positive
+      number`, firing on the first poll. It now measures against the
+      basis actually CAPTURED, `max(basis_entry, 0)`, and requires
+      funding to be negative. That stop closed all 97 positions
+      (−645.44 USDT) before the fix.
+  STILL OPEN: no evidence run since (d)/(e) landed, and none on an
+  isolated backend (T-098). Every guard is proven by tests; the wild
+  behaviour after these two fixes is UNMEASURED. Do not raise
   the threshold to hide anything.
 
 ### T-098 The console dev proxy lets a browser/e2e run mutate live data
