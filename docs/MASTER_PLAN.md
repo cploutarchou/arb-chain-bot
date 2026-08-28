@@ -1419,9 +1419,27 @@ PAPER only; the vault's exchange credential group stays unread.
       basis actually CAPTURED, `max(basis_entry, 0)`, and requires
       funding to be negative. That stop closed all 97 positions
       (−645.44 USDT) before the fix.
-  STILL OPEN: no evidence run since (d)/(e) landed, and none on an
-  isolated backend (T-098). Every guard is proven by tests; the wild
-  behaviour after these two fixes is UNMEASURED. Do not raise
+  Run on the (d)/(e) build, 2026-08-28 04:10–04:30 UTC: positions now
+  SURVIVE — 17 open at the end versus 0 before, and closes fell from 97
+  in seven minutes to 73 in twenty. But 73 closes are still labelled
+  `funding_reversal` while their persisted `funding_quote` is 0.00
+  (−483.05 USDT total), which the patched condition cannot produce: it
+  requires `FundingQuote` to be negative. The deployed binary does
+  contain the new guard (verified with `strings`), so the label and the
+  persisted funding disagree.
+  NEXT, in this order:
+  1. Resolve that contradiction before any further tuning — it may be a
+     reporting defect (the close execution recording a stale or default
+     reason) rather than an execution defect. Compare the in-memory
+     `pos.FundingQuote` at `exitReason` with the value persisted by
+     `closePerp`.
+  2. Only then revisit strategy scope. Entries keep coming from thin alt
+     perps where PREDICTED funding is positive but settled funding is
+     not; no amount of exit guarding fixes an entry premise that the
+     estimator is unreliable on that universe. That is a strategy
+     decision (restrict to liquid bases, or require settled-funding
+     consistency), not a code fix, and belongs to the operator and the
+     quant rather than to autonomous tuning. Do not raise
   the threshold to hide anything.
 
 ### T-098 The console dev proxy lets a browser/e2e run mutate live data
