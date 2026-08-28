@@ -1419,28 +1419,27 @@ PAPER only; the vault's exchange credential group stays unread.
       basis actually CAPTURED, `max(basis_entry, 0)`, and requires
       funding to be negative. That stop closed all 97 positions
       (−645.44 USDT) before the fix.
-  Run on the (d)/(e) build, 2026-08-28 04:10–04:30 UTC: positions now
-  SURVIVE — 17 open at the end versus 0 before, and closes fell from 97
-  in seven minutes to 73 in twenty. But 73 closes are still labelled
-  `funding_reversal` while their persisted `funding_quote` is 0.00
-  (−483.05 USDT total), which the patched condition cannot produce: it
-  requires `FundingQuote` to be negative. The deployed binary does
-  contain the new guard (verified with `strings`), so the label and the
-  persisted funding disagree.
-  NEXT, in this order:
-  1. Resolve that contradiction before any further tuning — it may be a
-     reporting defect (the close execution recording a stale or default
-     reason) rather than an execution defect. Compare the in-memory
-     `pos.FundingQuote` at `exitReason` with the value persisted by
-     `closePerp`.
-  2. Only then revisit strategy scope. Entries keep coming from thin alt
-     perps where PREDICTED funding is positive but settled funding is
-     not; no amount of exit guarding fixes an entry premise that the
-     estimator is unreliable on that universe. That is a strategy
-     decision (restrict to liquid bases, or require settled-funding
-     consistency), not a code fix, and belongs to the operator and the
-     quant rather than to autonomous tuning. Do not raise
-  the threshold to hide anything.
+  Run on the (d)/(e) build (container up 2026-08-28 03:37:55 UTC),
+  filtered strictly to positions OPENED under it: 3 closed, all
+  `converged` and therefore all after a collected settlement (−16.46
+  USDT, funding +0.15), 9 still open, 814 skipped (BALANCE 436, DEPTH
+  274, OPEN_POSITION 108). No `funding_reversal` and no immediate
+  close — the three guards behave as intended in the wild.
+  CORRECTION: an earlier note here claimed 73 `funding_reversal` closes
+  with zero funding "which the patched condition cannot produce". That
+  was a measurement error, not a defect: the query window mixed
+  positions opened under the previous binary with ones opened under the
+  fixed build. Filtering on the container start time removes the
+  contradiction entirely. Funding accrual and its persistence were also
+  checked and are sound (`UpdatePosition` writes `funding_quote`; 14
+  funding executions totalling +0.71 exist for the wider window).
+  STILL OPEN, and a strategy decision rather than a code fix: entries
+  still come from thin alt perps where PREDICTED funding is positive and
+  settled funding need not be. The sample under the fixed build is 3
+  closes — far too small to say anything about profitability, and the
+  §8 gate floors (≥ 30 closed positions, ≥ 90 settlements, 30 days)
+  remain unmet. Restricting the universe to liquid bases or requiring
+  settled-funding consistency belongs to the operator and the quant.
 
 ### T-098 The console dev proxy lets a browser/e2e run mutate live data
 - status: TODO (found 2026-08-27). `web/next.config.ts` proxies `/api`
