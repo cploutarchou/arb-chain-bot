@@ -1359,21 +1359,47 @@ PAPER only; the vault's exchange credential group stays unread.
   wallet on the settings-change hook. Until then the console's
   "simulated balances" control is misleading.
 
-### T-097 Carry entries on illiquid alt perps close immediately at a loss
-- status: TODO (found 2026-08-27, first auto-paper evidence). With
-  `min_carry_apr = 5 %`, `min_liquidity_quote = 500` over Binance USDT
-  perps, the executor opened 78 carry positions in ~20 minutes: 75
-  closed, **0 winners, 0 funding collected, net −398.96 USDT** (avg
-  −5.32 on 1000 notional ≈ −53 bps, i.e. the four taker legs plus
-  slippage). Entries are driven by an apparent basis on thin alt perps
-  that does not survive to the next poll. Investigate: (a) whether the
-  §5.1 breakeven-interval gate is applied on the `carry` path (5 % APR
-  ≈ 1.1 bps per 8 h interval needs ~39 intervals to clear 43 bps of
-  costs, so these entries should not have qualified), (b) whether the
-  perp leg needs the same plausibility/liquidity guard as spot lanes,
-  (c) a minimum-hold or no-immediate-close rule so a position cannot
-  open and close within one poll. Do NOT "fix" this by raising the
-  threshold until the entry gate itself is understood.
+### T-097 Carry entry gate admits positions that cannot pay their costs
+- status: TODO (evidence 2026-08-27 20:29–21:06 UTC, Binance USDT perps,
+  `min_carry_apr = 5 %`, 1000 quote per position). 412 positions closed,
+  **0 winners, 0 funding settlements collected, net −2283.14 USDT**
+  (≈ −55 bps each ≈ the four taker legs plus slippage); 1108 skipped
+  (DEPTH/BALANCE). Two code facts verified by reading the source, not
+  inferred from the numbers:
+  1. `alerts.carryActive` (kind `carry`) checks min-edge, min-carry-APR
+     and liquidity but has **no breakeven-interval gate**, while
+     `harvestActive` (kind `basis`) does check
+     `BreakevenN > MaxBreakevenIntervals`. At 5 % APR (≈ 1.1 bps per 8 h)
+     roughly 39 intervals are needed to clear ~43 bps of round-trip cost,
+     so these entries should not have qualified.
+  2. Entry measures basis as `(perp_bid − spot_ask)/spot_ask` while the
+     exit measures `(perp_ask − spot_bid)/spot_bid` — the opposite book
+     sides — against `close_bps` default 0 with no minimum hold
+     (`paperexec/perp.go:347,377`). On any book whose round-trip spread
+     exceeds the entry basis, a position satisfies its own "converged"
+     exit on the next poll, before any funding settlement, and realises
+     the spread plus four taker fees. That matches 0 funding rows across
+     412 closes.
+  Fix: add the breakeven gate to the carry path; require a minimum hold
+  of at least one funding settlement before a "converged" close (stops
+  must stay immediate); and make the close condition account for the
+  round-trip spread rather than comparing opposite-side bases against
+  zero. Do not raise the threshold to hide it.
+
+### T-098 The console dev proxy lets a browser/e2e run mutate live data
+- status: TODO (found 2026-08-27). `web/next.config.ts` proxies `/api`
+  to `http://localhost:8080` by default — the live backend. During this
+  evidence run a `screener.rule.update` landed at 21:06:15 UTC from a
+  host client with the admin session; the carry rule was rewritten into
+  a `spread` rule (kind and `min_spread_bps` replaced, `min_carry_apr`
+  dropped) and carry executions stopped one minute earlier, at 21:05:41.
+  `scripts/e2e.sh` is correctly isolated (port 18080, its own database),
+  so the exposure is the dev-server proxy plus any console session
+  pointed at it. Fix: default the proxy to a non-production port or
+  require `ARB_BACKEND_URL` explicitly, and make evidence runs refuse
+  writes from a session that did not create the rule (or run them
+  against a dedicated org). Until then, no evidence run should share a
+  backend with a console under test.
 
 ## Status log
 
