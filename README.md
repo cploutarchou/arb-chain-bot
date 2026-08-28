@@ -32,11 +32,18 @@ first-exchange definition of done.
 | `deploy/` | compose, dashboards, alert rules |
 | `docs/` | architecture, research, MASTER_PLAN, runbooks |
 | `.claude/` | development skill, agent team, skill resources |
+| `.devcontainer/`, `.vscode/` | development container and shared editor config (`docs/devcontainer.md`) |
 
 ## Development
 
-Requirements: Go 1.24+, Node 22+, Docker (for Postgres), or a local
-PostgreSQL 16.
+The quickest route is the development container, which carries every
+tool CI runs at the versions CI runs them, and forwards your SSH agent
+so git works unchanged: open the folder in VS Code and **Reopen in
+Container**, or `npx @devcontainers/cli up --workspace-folder .`. See
+`docs/devcontainer.md`.
+
+Working outside it, the requirements are Go 1.25+, Node 22+, and Docker
+(for Postgres) or a local PostgreSQL 16.
 
 ```bash
 cp .env.example .env          # never commit real secrets
@@ -48,8 +55,8 @@ make web-install && make web-dev   # operations console on :3000
 ```
 
 Key docs: `docs/architecture.md`, `docs/MASTER_PLAN.md` (task tracker),
-`docs/research/` (exchange/framework/fee research), `docs/risk.md`,
-`docs/security.md`.
+`docs/devcontainer.md` (development environment), `docs/research/`
+(exchange/framework/fee research), `docs/risk.md`, `docs/security.md`.
 
 ## Status
 

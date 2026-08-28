@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "golang.go",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "ms-playwright.playwright",
+    "ms-azuretools.vscode-docker",
+    "hashicorp.terraform",
+    "redhat.vscode-yaml",
+    "ms-vscode-remote.remote-containers"
+  ],
+  "unwantedRecommendations": [
+    "ms-vscode.go"
+  ]
+}

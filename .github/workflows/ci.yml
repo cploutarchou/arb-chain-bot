@@ -47,6 +47,10 @@ jobs:
       - name: go test (race)
         env:
           ARB_TEST_DATABASE_URL: postgres://arb:arb@localhost:5432/arb?sslmode=disable
+          # The storage integration tests DELETE most of the schema and
+          # refuse to run without this. The service container above is
+          # created and thrown away per job, so it is disposable.
+          ARB_TEST_DB_DESTRUCTIVE: "1"
         run: go test -race ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
