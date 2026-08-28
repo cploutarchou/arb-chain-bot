@@ -320,7 +320,10 @@ func TestStopsFire(t *testing.T) {
 	}{
 		{"margin_stop", "75200", "75135", "75200", "margin_stop"},
 		{"basis_stop", "50000", "50050", "50600", "basis_stop"}, // basis_now 120 bps − 20 ≥ 100
-		{"converged", "50000", "50050", "49990", "converged"},   // basis_now −2 ≤ 0
+		// A converged basis only closes once the position has collected a
+		// settlement (T-097): the "now" below is one funding interval on,
+		// so the accrual runs before the exit is evaluated.
+		{"converged", "50000", "50050", "49990", "converged"}, // basis_now −2 ≤ 0
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -336,6 +339,13 @@ func TestStopsFire(t *testing.T) {
 			setCarryBook(h.svc.Book, t0, "49998", "50000", "50100", "50102", "50050", "0.0001", t0.Add(4*time.Hour))
 			h.open(r, t0)
 			now := t0.Add(time.Hour)
+			if tc.want == "converged" {
+				// Past the first settlement, with its settled rate
+				// published, so funding actually accrues; the stop cases
+				// stay at one hour to prove stops never wait (T-097).
+				_ = h.svc.Funding.UpsertFunding(ctx, screener.VenueBinance, "BTC", t0.Add(4*time.Hour), "0.0001")
+				now = t0.Add(5 * time.Hour)
+			}
 			setCarryBook(h.svc.Book, now, tc.spotBid, d(tc.spotBid).Add(decimal.NewFromInt(2)).String(), d(tc.perpAsk).Sub(decimal.NewFromInt(2)).String(), tc.perpAsk, tc.mark, "0.0001", t0.Add(4*time.Hour))
 			h.x.Tick(ctx, now)
 			pos := h.positions(r.ID)[0]

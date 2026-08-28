@@ -1390,10 +1390,15 @@ PAPER only; the vault's exchange credential group stays unread.
   refused when the exit-side basis (perp ask vs spot bid, the sides a
   close actually crosses) already sits at or below `close_bps`, which is
   the configuration that produced 412 losing closes with zero funding.
-  STILL OPEN: the exit itself has no minimum hold, so a position can
-  still close before its first settlement if the book moves there
-  legitimately; and no fresh evidence run has been made on an isolated
-  backend (T-098) to confirm the guards hold in the wild. Do not raise
+  Exit guard SHIPPED 2026-08-28 (`paperexec/perp.go`, tests in
+  `paperexec/exit_hold_test.go` and the reworked `skip_test.go` case): a
+  "converged" close now requires at least one collected funding
+  settlement, so a carry cannot open and close having collected nothing.
+  The stops (margin, basis blow-out, funding reversal, max hold) are
+  evaluated first and stay immediate — a position going wrong still
+  exits at once, which the test pins explicitly.
+  STILL OPEN: no fresh evidence run has been made on an isolated backend
+  (T-098) to confirm the three guards hold in the wild. Do not raise
   the threshold to hide anything.
 
 ### T-098 The console dev proxy lets a browser/e2e run mutate live data
