@@ -48,6 +48,10 @@ services:
       ARB_SYMBOLS: ${ARB_SYMBOLS:-BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT}
       ARB_STARTING_ASSETS: ${ARB_STARTING_ASSETS:-USDT,USDC}
       ARB_LOG_LEVEL: ${ARB_LOG_LEVEL:-info}
+      # RECORD also serves the console on :8080; without these the first
+      # login is unavailable. See .env.example.
+      ARB_ADMIN_EMAIL: ${ARB_ADMIN_EMAIL:-}
+      ARB_ADMIN_PASSWORD: ${ARB_ADMIN_PASSWORD:-}
     ports:
       - "8080:8080"
     volumes:
