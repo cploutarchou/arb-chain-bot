@@ -1349,7 +1349,15 @@ PAPER only; the vault's exchange credential group stays unread.
 - T-095 BLOCKED by design (record in docs/decisions/; see compliance review #2, #16 for what client-funds execution would additionally require): live execution requires (a) ≥ 30 days positive auto-paper evidence across regimes, (b) security review, (c) the operator's recorded legal decision, (d) a human-reviewed code change replacing ErrLiveTradingDisabled. No work starts before (a)–(c) exist.
 
 ### T-096 Paper balances do not propagate from settings to the ledger
-- status: TODO (found 2026-08-27 during the T-071 evidence run). Editing
+- status: FIXED 2026-08-28 (`screener.Service.OnSettingsApplied` →
+  `paperexec.Executor.ReloadWallets`, test
+  `paperexec/wallet_reload_test.go`). The seeding rule was already
+  right — ledger rows win, settings seed only (venue, asset) pairs the
+  ledger lacks — but `ensureWallets` latched on `x.loaded`, so nothing
+  re-ran after a settings apply. The next tick now re-seeds newly added
+  assets while leaving every balance the executor has moved untouched.
+  Original report follows.
+- (found 2026-08-27 during the T-071 evidence run). Editing
   `paper.balances` in the screener settings changes nothing: the ledger
   (`screener_paper_balances`) is seeded once and the executor then holds
   the wallet in memory, so a balance change needs a direct DB write AND a
