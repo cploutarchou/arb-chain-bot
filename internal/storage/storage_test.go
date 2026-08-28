@@ -30,6 +30,16 @@ func testStore(t *testing.T) *Store {
 	if dsn == "" {
 		t.Skip("ARB_TEST_DATABASE_URL not set; skipping storage integration tests")
 	}
+	// The cleanup below is a DELETE over most of the schema, so pointing
+	// ARB_TEST_DATABASE_URL at a working database destroys it — settings,
+	// rules, paper positions, vault secrets and users included. That has
+	// happened. Require the caller to say out loud that the target is
+	// disposable; `make test-db` creates one.
+	if os.Getenv("ARB_TEST_DB_DESTRUCTIVE") != "1" {
+		t.Fatal("refusing to run: these tests DELETE nearly every table in " +
+			"ARB_TEST_DATABASE_URL. Point it at a disposable database " +
+			"(make test-db) and set ARB_TEST_DB_DESTRUCTIVE=1.")
+	}
 	s, err := Open(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)

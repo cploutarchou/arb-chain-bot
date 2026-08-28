@@ -1,0 +1,100 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "go: build",
+      "type": "shell",
+      "command": "make build",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: test (race)",
+      "type": "shell",
+      "command": "make race",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: vet",
+      "type": "shell",
+      "command": "make vet",
+      "problemMatcher": ["$go"]
+    },
+    {
+      // Same golangci-lint version CI runs (pinned in
+      // .devcontainer/Dockerfile), so a clean run here is a clean job.
+      "label": "go: lint (golangci-lint)",
+      "type": "shell",
+      "command": "make lint",
+      "problemMatcher": []
+    },
+    {
+      "label": "go: gofmt",
+      "type": "shell",
+      "command": "make fmt",
+      "problemMatcher": []
+    },
+    {
+      "label": "go: govulncheck",
+      "type": "shell",
+      "command": "govulncheck ./...",
+      "problemMatcher": []
+    },
+    {
+      "label": "db: start postgres",
+      "type": "shell",
+      "command": "make up",
+      "problemMatcher": []
+    },
+    {
+      "label": "db: apply migrations",
+      "type": "shell",
+      "command": "make migrate",
+      "dependsOn": ["db: start postgres"],
+      "problemMatcher": []
+    },
+    {
+      "label": "web: dev server",
+      "type": "shell",
+      "command": "make web-dev",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "web: lint + typecheck",
+      "type": "shell",
+      "command": "make web-lint",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "site: lint + typecheck + copy-lint",
+      "type": "shell",
+      "command": "npm --prefix site run lint && npm --prefix site run typecheck && npm --prefix site run copy-lint",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      // Brings up arbd on :18080 itself and lets Playwright start Next
+      // on :3100; nothing else needs to be running first.
+      "label": "e2e: Playwright suite",
+      "type": "shell",
+      "command": "./scripts/e2e.sh",
+      "problemMatcher": []
+    },
+    {
+      // --no-git scans the working tree, which is what you want before a
+      // commit; the CI job scans history instead.
+      "label": "secrets: gitleaks (working tree)",
+      "type": "shell",
+      "command": "gitleaks detect -s . --no-git --no-banner --redact",
+      "problemMatcher": []
+    },
+    {
+      // The whole pre-push gate in one task, in CI's order.
+      "label": "check: everything CI runs",
+      "type": "shell",
+      "command": "make fmt vet build race lint && make web-lint && gitleaks detect -s . --no-banner --redact",
+      "problemMatcher": []
+    }
+  ]
+}

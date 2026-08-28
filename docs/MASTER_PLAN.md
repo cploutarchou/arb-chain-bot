@@ -1456,6 +1456,79 @@ PAPER only; the vault's exchange credential group stays unread.
   against a dedicated org). Until then, no evidence run should share a
   backend with a console under test.
 
+### T-099 Development container and shared editor configuration
+- status: DONE (2026-08-28). `.devcontainer/` builds on
+  `mcr.microsoft.com/devcontainers/go:1.25-bookworm` and pins every tool
+  to the version `.github/workflows/ci.yml` uses: golangci-lint 2.5.0,
+  Node 22, gitleaks 8.30.1, govulncheck, Playwright chromium, the psql
+  client, plus Docker CLI, Terraform, Helm, kubectl, gh, jq and make.
+  Verified inside the running container: Go 1.25.14 (the `go.mod`
+  toolchain pin), `golangci-lint run ./...` 0 issues, `gofmt -l cmd
+  internal` clean, `go build`/`go vet` clean, web lint + typecheck
+  clean.
+- `--network=host` keeps every `localhost` in the repo meaningful:
+  `MIGRATE_DSN`, `.env.example` and `scripts/e2e.sh` all work unchanged,
+  and `psql -h localhost` from inside the container reached the compose
+  PostgreSQL 16.15. Docker is the host daemon mounted in, not nested, so
+  `docker compose` drives the same stack as a terminal outside.
+- SSH is agent-forwarded (`$SSH_AUTH_SOCK` bound to `/ssh-agent`), never
+  copied: no private key enters the container filesystem or an image
+  layer. `git ls-remote origin` succeeds inside the container, so
+  fetch/push over the `git@github.com` remote works. `~/.gitconfig` is
+  mounted read-only so commit authorship is inherited from the host.
+- `.vscode/{settings,extensions,launch,tasks}.json` are committed and
+  the rest of `.vscode/` stays ignored. Go formats with `gofmt` (not
+  goimports) so a clean save is a clean CI gofmt gate; ESLint is pointed
+  at both `web/` and `site/`. Docs: `docs/devcontainer.md`.
+
+### T-100 The carry gate validates against max_hold_h; the exit closes at the first settlement
+- status: TODO (found 2026-08-28), operator decision. Measured on the
+  fixed T-097 build (container started 03:37:55Z, rule
+  `rule-01M136G9FEH33Q987CEMP6CRAA`, `paper_size_quote` 1000): 13 closed
+  carry positions, **all 13 negative**, total `pnl_quote` −71.51 USDT
+  (`pnl_quote` already includes funding — `paperexec/perp.go:434`).
+  Every close is `reason=converged` and every one has `settlements = 1`.
+- The arithmetic: `fees_open` 1.499 ≈ 15 bps, so ~30 bps round trip;
+  one settlement paid ~0.05 USDT ≈ 0.5 bps, matching
+  `predicted_bps_at_open` 0.5. One settlement therefore pays about a
+  sixtieth of the round trip, so `settlements >= 1` cannot be a
+  sufficient precondition for the converged exit. Holds ran 0.37 h to
+  4.01 h; `basis_entry_bps` was negative on all 13 (−3.5 to −50 bps).
+- Why the T-097 `breakeven_exceeds_hold` gate did not bind: the rule
+  sets `max_hold_h: 720`, so `HoldIntervals` = 180 and the gate approves
+  against a 30-day horizon the exit never permits.
+- Two candidate fixes, not implemented: (a) settings only — reduce
+  `max_hold_h` to a horizon the exit can honour (24–48 h), which will
+  likely return carry entries to zero, the honest result at these costs;
+  (b) code — require `po.Settlements >= po.BreakevenN` for the converged
+  exit, which changes the risk profile by letting positions run toward
+  `max_hold_h`. (a) is reversible and needs no code, so it should be
+  tried first. Related: T-097, and the universe-scope question still
+  open with the operator.
+
+### T-101 Storage integration tests wiped the development database
+- status: DONE (2026-08-28). `internal/storage`'s `testStore` helper
+  `DELETE`s from ~35 tables with no guard on which database it is
+  pointed at. While verifying the T-099 devcontainer, the suite was run
+  with `ARB_TEST_DATABASE_URL` set to the working `arb` database: it
+  cleared `screener_rules`, `screener_settings`, `screener_events`,
+  `screener_paper_{positions,executions,balances}`, `screener_reports`,
+  `platform_settings`, `users`, `sessions` and `secrets`. Only
+  `organisations`, `exchanges` and `market_recording_metadata` survived,
+  the last two because a foreign key blocked the delete. Recordings on
+  disk were untouched (files, not rows). The T-097/T-100 carry figures
+  survived only because they had already been written into this plan.
+- Fix: `testStore` now fails unless `ARB_TEST_DB_DESTRUCTIVE=1` is set,
+  naming what it is about to delete; `make test-db` creates a disposable
+  `arb_test` and the CI job sets the opt-in on its per-job service
+  container. Verified: the suite passes against `arb_test`, and refuses
+  to start without the opt-in. Documented in `docs/devcontainer.md`.
+- Consequence: auto-paper evidence collection restarted from zero, and
+  the §8 gate floors (≥ 30 closed positions, ≥ 90 settlements, 30 days)
+  are that much further away. See T-100 before the carry rule is
+  recreated — recreating it verbatim re-runs a configuration measured to
+  lose on every close.
+
 ## Status log
 
 - 2026-08-26: Plan created. Phases 0–1 are DONE (research in
