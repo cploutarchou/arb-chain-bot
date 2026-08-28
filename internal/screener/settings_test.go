@@ -16,9 +16,10 @@ func TestDefaultsValidates(t *testing.T) {
 	}
 	for id := range KnownVenues {
 		v, ok := def.Venues[id]
-		// Tier-1 and Tier-2 on since the 2026-08-27 soak (T-075); Tier-3
-		// (T-078) opt-in until its own soak — see TestDefaultsTier3OptIn.
-		if !ok || v.Enabled == tier3Venues[id] {
+		// Every known venue is on at first boot: Tier-2 since the
+		// 2026-08-27 soak (T-075), Tier-3 since the 2026-08-28 soak
+		// (T-078) — see TestDefaultsEnablesEveryVenue.
+		if !ok || v.Enabled == (id == VenueCoinbase) {
 			t.Fatalf("Defaults() venue %s enabled=%v", id, v.Enabled)
 		}
 		if v.PerpsEnabled == (id == VenueCoinbase) { // Coinbase: no retail perps
@@ -30,26 +31,26 @@ func TestDefaultsValidates(t *testing.T) {
 	}
 }
 
-// TestDefaultsTier3OptIn pins the T-078 opt-in set: the five Tier-3
-// venues start DISABLED (they enable per venue after their own 30-min
-// soak, SKILL.md step 5) and every other known venue starts enabled.
-func TestDefaultsTier3OptIn(t *testing.T) {
-	wantOff := map[Venue]bool{
-		VenueCryptoCom: true, VenueBitfinex: true, VenueBingX: true,
-		VenueWhiteBIT: true, VenueBitMart: true,
+// TestDefaultsEnablesEveryVenue pins the post-soak invariant: every
+// known venue whose 30-min live soak was clean starts ENABLED, and the
+// one venue whose soak was NOT clean (Coinbase: 20 × HTTP 429 and 20
+// failed polls on 2026-08-28) starts DISABLED. A venue added without a
+// soak, or one whose soak regresses, belongs on the disabled side here
+// rather than being silently enabled.
+func TestDefaultsEnablesEveryVenue(t *testing.T) {
+	def := Defaults()
+	if len(OrderedVenues) != len(KnownVenues) {
+		t.Fatalf("OrderedVenues has %d entries, KnownVenues %d", len(OrderedVenues), len(KnownVenues))
 	}
-	if len(wantOff) != len(tier3Venues) {
-		t.Fatalf("tier3Venues has %d entries, want %d", len(tier3Venues), len(wantOff))
-	}
-	for id := range wantOff {
-		if !tier3Venues[id] {
-			t.Fatalf("tier3Venues missing %s", id)
+	for _, id := range OrderedVenues {
+		want := id != VenueCoinbase
+		if def.Venues[id].Enabled != want {
+			t.Fatalf("Defaults() venue %s enabled=%v, want %v", id, def.Venues[id].Enabled, want)
 		}
 	}
-	def := Defaults()
-	for _, id := range OrderedVenues {
-		if def.Venues[id].Enabled != !wantOff[id] {
-			t.Fatalf("Defaults() venue %s enabled=%v, want %v", id, def.Venues[id].Enabled, !wantOff[id])
+	for _, id := range []Venue{VenueCryptoCom, VenueBitfinex, VenueBingX, VenueWhiteBIT, VenueBitMart} {
+		if !def.Venues[id].Enabled {
+			t.Fatalf("Tier-3 venue %s must be enabled after the 2026-08-28 soak", id)
 		}
 	}
 }

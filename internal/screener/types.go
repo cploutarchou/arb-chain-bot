@@ -41,8 +41,9 @@ const (
 	VenueHTX      Venue = "htx"
 	VenueKraken   Venue = "kraken"
 	VenueCoinbase Venue = "coinbase"
-	// Tier-3 venues (T-078): opt-in (settings.go tier3Venues) until each
-	// clears its 30-min live soak (docs/research/venues/<venue>.md).
+	// Tier-3 venues (T-078): enabled by default since each cleared the
+	// 30-min live soak of 2026-08-28 (settings.go Defaults;
+	// docs/research/venues/<venue>.md).
 	VenueCryptoCom Venue = "cryptocom"
 	VenueBitfinex  Venue = "bitfinex"
 	VenueBingX     Venue = "bingx"

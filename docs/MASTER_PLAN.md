@@ -1318,7 +1318,7 @@ PAPER only; the vault's exchange credential group stays unread.
 ### Phase 23 Venue breadth
 - T-073 `Collector` interface + conformance test + venue registry (verified flag, fee defaults). TODO.
 - T-074 Tier-1 venues via public bulk tickers: Binance, OKX, Bybit, Bitget, Gate, MEXC (from T-065/T-066). TODO.
-- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE and ENABLED BY DEFAULT (30-min live soak 2026-08-27, all ten venues, poll 5 s: kucoin 295 polls 1006 spot/664 perps avg 1104 ms max 3346; htx 197 polls 600/301 avg 4145 max 7496; kraken 248 polls 1382/276 avg 2249 max 3806; coinbase 142 polls 921/0 avg 7701 max 9365 — 0 × 429/418/403/510 and 0 errors each; book 6690 pairs / 5231 perps). HTX/Coinbase limits and fees still UNVERIFIED (flagged in the registry). MEXC in-band 510 now detected (1 hit in the soak on contract/ticker → counted, 10 s pause, recovered). Tier-3 (Crypto.com, Bitfinex, BingX, WhiteBIT, BitMart) added 2026-08-27 with research files, recorded fixtures and passing conformance, registered OPT-IN (`tier3Venues`): their 30-minute soaks were NOT run (the authoring agent hit a model usage limit mid-task), so no venue may be enabled by default until each soak is filed here. Remaining venues: Upbit, Bithumb, LBank, Phemex. IN_PROGRESS.
+- T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE and ENABLED BY DEFAULT (30-min live soak 2026-08-27, all ten venues, poll 5 s: kucoin 295 polls 1006 spot/664 perps avg 1104 ms max 3346; htx 197 polls 600/301 avg 4145 max 7496; kraken 248 polls 1382/276 avg 2249 max 3806; coinbase 142 polls 921/0 avg 7701 max 9365 — 0 × 429/418/403/510 and 0 errors each; book 6690 pairs / 5231 perps). HTX/Coinbase limits and fees still UNVERIFIED (flagged in the registry). MEXC in-band 510 now detected (1 hit in the soak on contract/ticker → counted, 10 s pause, recovered). Tier-3 (Crypto.com, Bitfinex, BingX, WhiteBIT, BitMart) added 2026-08-27 with research files, recorded fixtures and passing conformance, registered OPT-IN in 227b0d6; their 30-min soak ran 2026-08-28 (TestSoakLive, poll 5 s, ALL FIFTEEN venues in one process, sharing the IP with the running paper stack — a stricter per-IP budget than production) and ALL FIVE PASSED, so they are now ENABLED BY DEFAULT (`tier3Venues` removed; `Defaults()` enables every known venue). Per venue, polls / spot min..last / perps min..last / min-avg-max ms / 429-418-403 / in-band / failed polls: cryptocom 118, 576..576, 10..366, 9623-10243-25108, 0, 0, 0; bitfinex 347, 197..197, 75..75, 100-192-3588, 0, 0, 0; bingx 283, 669..669, 881..881, 915-1370-2573, 0, 0, 0; whitebit 343, 798..798, 305..305, 157-248-641, 0, 0, 0; bitmart 167, 27..27, 354..354, 5441-5790-12539, 0, 0, 0. Book 7015 pairs / 7218 perps; 671 funding-history rows. Reading notes: cryptocom's perps 10..366 is the round-robin mark fill saturating (spot 576 was flat throughout) and its avg 10.2 s poll exceeds the 5 s interval, so it self-paces to ~15 s — the slow venue in the set; BitMart's 27 spot quotes are 100 % of the rows its bulk ticker returns (documented: only pairs with 24 h volume > 0 — 27 of 65 tradable symbols on the day, all normalised, none dropped) plus 354 perps. The in-band column read 0 for every venue but was never exercised this run (MEXC's 510 did not recur), so it is zero-by-absence; what makes the passes robust is errs=0 — a rate-limit answer the classifier missed still surfaces as a failed poll, as HTX's did. SAME RUN, TIER-2 REGRESSION (reported, not acted on — Tier-2 defaults are the coordinator's call): coinbase recorded 20 x HTTP 429 and 20 failed polls out of 61 attempts (41 successful, spot dipping to 61 at the low end, avg 24.4 s) — under this run it would FAIL the rule that admitted it on 2026-08-27; the confound is that the running paper stack polls coinbase from the same IP, roughly doubling its request rate. HTX recorded 1 failed poll of 197, `htx: batch_merged: invalid-parameter: request limit` — a request-limit answer the gate does NOT classify as a rate limit (so it neither counted nor backed off); both warrant review. Remaining venues: Upbit, Bithumb, LBank, Phemex. IN_PROGRESS.
 - T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO.
 
 ### Phase 24 Strategies, auto-paper, unattended operation
@@ -1347,6 +1347,115 @@ PAPER only; the vault's exchange credential group stays unread.
 
 ### Phase 27 Production execution gate
 - T-095 BLOCKED by design (record in docs/decisions/; see compliance review #2, #16 for what client-funds execution would additionally require): live execution requires (a) ≥ 30 days positive auto-paper evidence across regimes, (b) security review, (c) the operator's recorded legal decision, (d) a human-reviewed code change replacing ErrLiveTradingDisabled. No work starts before (a)–(c) exist.
+
+### T-096 Paper balances do not propagate from settings to the ledger
+- status: FIXED 2026-08-28 (`screener.Service.OnSettingsApplied` →
+  `paperexec.Executor.ReloadWallets`, test
+  `paperexec/wallet_reload_test.go`). The seeding rule was already
+  right — ledger rows win, settings seed only (venue, asset) pairs the
+  ledger lacks — but `ensureWallets` latched on `x.loaded`, so nothing
+  re-ran after a settings apply. The next tick now re-seeds newly added
+  assets while leaving every balance the executor has moved untouched.
+  Original report follows.
+- (found 2026-08-27 during the T-071 evidence run). Editing
+  `paper.balances` in the screener settings changes nothing: the ledger
+  (`screener_paper_balances`) is seeded once and the executor then holds
+  the wallet in memory, so a balance change needs a direct DB write AND a
+  process restart. Fix: apply settings balances on activation (upsert the
+  ledger for assets the operator added, never silently overwriting a
+  balance the executor has already moved), and reload the executor's
+  wallet on the settings-change hook. Until then the console's
+  "simulated balances" control is misleading.
+
+### T-097 Carry entry gate admits positions that cannot pay their costs
+- status: TODO (evidence 2026-08-27 20:29–21:06 UTC, Binance USDT perps,
+  `min_carry_apr = 5 %`, 1000 quote per position). 412 positions closed,
+  **0 winners, 0 funding settlements collected, net −2283.14 USDT**
+  (≈ −55 bps each ≈ the four taker legs plus slippage); 1108 skipped
+  (DEPTH/BALANCE). Two code facts verified by reading the source, not
+  inferred from the numbers:
+  1. `alerts.carryActive` (kind `carry`) checks min-edge, min-carry-APR
+     and liquidity but has **no breakeven-interval gate**, while
+     `harvestActive` (kind `basis`) does check
+     `BreakevenN > MaxBreakevenIntervals`. At 5 % APR (≈ 1.1 bps per 8 h)
+     roughly 39 intervals are needed to clear ~43 bps of round-trip cost,
+     so these entries should not have qualified.
+  2. Entry measures basis as `(perp_bid − spot_ask)/spot_ask` while the
+     exit measures `(perp_ask − spot_bid)/spot_bid` — the opposite book
+     sides — against `close_bps` default 0 with no minimum hold
+     (`paperexec/perp.go:347,377`). On any book whose round-trip spread
+     exceeds the entry basis, a position satisfies its own "converged"
+     exit on the next poll, before any funding settlement, and realises
+     the spread plus four taker fees. That matches 0 funding rows across
+     412 closes.
+  Entry guards SHIPPED 2026-08-28 (`alerts/signals.go`, tests in
+  `alerts/carry_gate_test.go`): (a) `breakeven_exceeds_hold` — a carry is
+  refused when the settlements needed to pay its round trip exceed the
+  settlements that fit in `max_hold_h`. Note this is deliberately NOT the
+  harvest strategy's fixed 12-interval cap: that cap rejects the design's
+  own §3.5 worked example (43 intervals inside a 30-day hold), so the
+  gate is breakeven-versus-hold. (b) `closes_immediately` — the entry is
+  refused when the exit-side basis (perp ask vs spot bid, the sides a
+  close actually crosses) already sits at or below `close_bps`, which is
+  the configuration that produced 412 losing closes with zero funding.
+  Exit guard SHIPPED 2026-08-28 (`paperexec/perp.go`, tests in
+  `paperexec/exit_hold_test.go` and the reworked `skip_test.go` case): a
+  "converged" close now requires at least one collected funding
+  settlement, so a carry cannot open and close having collected nothing.
+  The stops (margin, basis blow-out, funding reversal, max hold) are
+  evaluated first and stay immediate — a position going wrong still
+  exits at once, which the test pins explicitly.
+  Re-run 2026-08-28 03:30 UTC on the guarded build proved the first fix
+  INSUFFICIENT and found two more defects, both now fixed:
+  (d) the `closes_immediately` guard lived only in the alert layer, but
+      the executor re-reads the book a tick later and applied no such
+      check, so it opened positions the guard had refused — 97 of 97
+      opened with a NEGATIVE entry basis. The executor now re-checks and
+      skips `CLOSES_IMMEDIATELY` (carry only: funding harvest never uses
+      the converged exit, so a negative basis there is the premise).
+  (e) `funding_reversal` degenerated on a negative entry basis:
+      `funding < −(basis/1e4 × notional)` becomes `0 < a positive
+      number`, firing on the first poll. It now measures against the
+      basis actually CAPTURED, `max(basis_entry, 0)`, and requires
+      funding to be negative. That stop closed all 97 positions
+      (−645.44 USDT) before the fix.
+  Run on the (d)/(e) build, 2026-08-28 04:10–04:30 UTC: positions now
+  SURVIVE — 17 open at the end versus 0 before, and closes fell from 97
+  in seven minutes to 73 in twenty. But 73 closes are still labelled
+  `funding_reversal` while their persisted `funding_quote` is 0.00
+  (−483.05 USDT total), which the patched condition cannot produce: it
+  requires `FundingQuote` to be negative. The deployed binary does
+  contain the new guard (verified with `strings`), so the label and the
+  persisted funding disagree.
+  NEXT, in this order:
+  1. Resolve that contradiction before any further tuning — it may be a
+     reporting defect (the close execution recording a stale or default
+     reason) rather than an execution defect. Compare the in-memory
+     `pos.FundingQuote` at `exitReason` with the value persisted by
+     `closePerp`.
+  2. Only then revisit strategy scope. Entries keep coming from thin alt
+     perps where PREDICTED funding is positive but settled funding is
+     not; no amount of exit guarding fixes an entry premise that the
+     estimator is unreliable on that universe. That is a strategy
+     decision (restrict to liquid bases, or require settled-funding
+     consistency), not a code fix, and belongs to the operator and the
+     quant rather than to autonomous tuning. Do not raise
+  the threshold to hide anything.
+
+### T-098 The console dev proxy lets a browser/e2e run mutate live data
+- status: TODO (found 2026-08-27). `web/next.config.ts` proxies `/api`
+  to `http://localhost:8080` by default — the live backend. During this
+  evidence run a `screener.rule.update` landed at 21:06:15 UTC from a
+  host client with the admin session; the carry rule was rewritten into
+  a `spread` rule (kind and `min_spread_bps` replaced, `min_carry_apr`
+  dropped) and carry executions stopped one minute earlier, at 21:05:41.
+  `scripts/e2e.sh` is correctly isolated (port 18080, its own database),
+  so the exposure is the dev-server proxy plus any console session
+  pointed at it. Fix: default the proxy to a non-production port or
+  require `ARB_BACKEND_URL` explicitly, and make evidence runs refuse
+  writes from a session that did not create the rule (or run them
+  against a dedicated org). Until then, no evidence run should share a
+  backend with a console under test.
 
 ## Status log
 

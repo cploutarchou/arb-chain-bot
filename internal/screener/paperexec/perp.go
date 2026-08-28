@@ -98,6 +98,20 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 		x.skip(ctx, s, ev, now, SkipDepth, "qty truncates to zero")
 		return
 	}
+	// The exit compares perp ask against spot bid; if that is already at
+	// or below close_bps the position would close on the next poll with
+	// nothing collected (T-097). The signal checked this a tick ago —
+	// re-check against the book we are about to open on.
+	// Carry only: funding harvest (§5) never uses the converged exit, so
+	// a negative basis there is the premise, not a defect.
+	if s.Strategy != screener.StrategyFundingHarvest && q.Bid.IsPositive() {
+		basisExit := p.Ask.Sub(q.Bid).Div(q.Bid).Mul(decTenK)
+		if basisExit.LessThanOrEqual(r.CloseBps()) {
+			x.skip(ctx, s, ev, now, SkipClosesImmediately,
+				errf("exit-side basis %s bps <= close_bps %s", basisExit.StringFixed(2), r.CloseBps()))
+			return
+		}
+	}
 	w := x.wallet(venue)
 	quoteAsset, baseAsset, perpAsset := exchange.Asset(s.Lane.Quote), exchange.Asset(s.Lane.Base), perpWallet(s.Lane.Quote)
 	needSpot := qty.Mul(q.Ask).Mul(decOne.Add(x.tolBps.Div(decTenK))).Mul(decOne.Add(fSpot.Div(decTenK)))
@@ -353,7 +367,12 @@ func (x *Executor) exitReason(r screener.Rule, pos Position, po perpOpen, p scre
 	if basisNow.Sub(po.BasisEntryBps).GreaterThanOrEqual(r.BasisStopBps(pos.Base)) {
 		return "basis_stop"
 	}
-	if pos.FundingQuote.LessThan(po.BasisEntryBps.Div(decTenK).Mul(notional).Neg()) {
+	// §3.4: funding has eaten the basis the position captured. Only a
+	// POSITIVE entry basis was captured — with a negative one the naive
+	// form degenerates to "0 < a positive number" and fires on the first
+	// poll, which closed 97 of 97 positions on 2026-08-28 (T-097).
+	captured := decimal.Max(po.BasisEntryBps, decimal.Zero)
+	if pos.FundingQuote.IsNegative() && pos.FundingQuote.LessThan(captured.Div(decTenK).Mul(notional).Neg()) {
 		return "funding_reversal"
 	}
 	if held >= time.Duration(r.MaxHoldH())*time.Hour {
@@ -374,7 +393,13 @@ func (x *Executor) exitReason(r screener.Rule, pos Position, po perpOpen, p scre
 			}
 		}
 	default:
-		if basisNow.LessThanOrEqual(r.CloseBps()) {
+		// A carry's thesis is funding, so a "converged" close before the
+		// first settlement collects nothing and simply realises the
+		// round-trip spread plus four taker fees — the shape that lost
+		// 412 of 412 closes on 2026-08-27 (T-097). The stops above are
+		// deliberately checked first and stay immediate: a position that
+		// is genuinely going wrong still exits at once.
+		if basisNow.LessThanOrEqual(r.CloseBps()) && po.Settlements >= 1 {
 			return "converged"
 		}
 		if po.ExitCount >= r.ExitK() {
