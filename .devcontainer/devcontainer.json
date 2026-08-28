@@ -1,0 +1,61 @@
+{
+  "name": "arb-chain-bot",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  // Node 22 matches .github/workflows/ci.yml; a newer local Node can
+  // resolve dependencies CI then rejects. Docker is mounted from the
+  // host rather than nested so `docker compose` here drives the same
+  // daemon (and the same db/arbd containers) as a terminal outside.
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": { "moby": false },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/terraform:1": {},
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": { "minikube": "none" }
+  },
+
+  // Host networking (Linux) so every `localhost` in the repo keeps its
+  // meaning: MIGRATE_DSN and .env.example point at localhost:5432, and
+  // scripts/e2e.sh polls 127.0.0.1:18080. Ports published by
+  // `docker compose up -d db` land on the same loopback the container
+  // sees, so no forwardPorts entry is needed — or would work.
+  "runArgs": ["--network=host"],
+
+  // SSH agent forwarding: the socket is bound in and SSH_AUTH_SOCK is
+  // repointed at it, so git over SSH (the origin remote is
+  // git@github.com:...) authenticates with keys that never enter the
+  // container. Requires an agent on the host — see docs/devcontainer.md.
+  // ~/.gitconfig is read-only so commit authorship is inherited from the
+  // host rather than configured twice.
+  "mounts": [
+    "type=bind,source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent",
+    "type=bind,source=${localEnv:HOME}/.gitconfig,target=/home/vscode/.gitconfig,readonly"
+  ],
+  "remoteEnv": {
+    "SSH_AUTH_SOCK": "/ssh-agent"
+  },
+
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "postStartCommand": ".devcontainer/post-start.sh",
+  "remoteUser": "vscode",
+
+  "customizations": {
+    "vscode": {
+      // The workspace .vscode/extensions.json is the source of truth for
+      // recommendations; these are installed into the container so a
+      // fresh clone is usable without a manual install pass.
+      "extensions": [
+        "golang.go",
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss",
+        "ms-playwright.playwright",
+        "ms-azuretools.vscode-docker",
+        "hashicorp.terraform",
+        "redhat.vscode-yaml"
+      ]
+    }
+  }
+}
