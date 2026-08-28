@@ -1380,11 +1380,21 @@ PAPER only; the vault's exchange credential group stays unread.
      exit on the next poll, before any funding settlement, and realises
      the spread plus four taker fees. That matches 0 funding rows across
      412 closes.
-  Fix: add the breakeven gate to the carry path; require a minimum hold
-  of at least one funding settlement before a "converged" close (stops
-  must stay immediate); and make the close condition account for the
-  round-trip spread rather than comparing opposite-side bases against
-  zero. Do not raise the threshold to hide it.
+  Entry guards SHIPPED 2026-08-28 (`alerts/signals.go`, tests in
+  `alerts/carry_gate_test.go`): (a) `breakeven_exceeds_hold` — a carry is
+  refused when the settlements needed to pay its round trip exceed the
+  settlements that fit in `max_hold_h`. Note this is deliberately NOT the
+  harvest strategy's fixed 12-interval cap: that cap rejects the design's
+  own §3.5 worked example (43 intervals inside a 30-day hold), so the
+  gate is breakeven-versus-hold. (b) `closes_immediately` — the entry is
+  refused when the exit-side basis (perp ask vs spot bid, the sides a
+  close actually crosses) already sits at or below `close_bps`, which is
+  the configuration that produced 412 losing closes with zero funding.
+  STILL OPEN: the exit itself has no minimum hold, so a position can
+  still close before its first settlement if the book moves there
+  legitimately; and no fresh evidence run has been made on an isolated
+  backend (T-098) to confirm the guards hold in the wild. Do not raise
+  the threshold to hide anything.
 
 ### T-098 The console dev proxy lets a browser/e2e run mutate live data
 - status: TODO (found 2026-08-27). `web/next.config.ts` proxies `/api`
