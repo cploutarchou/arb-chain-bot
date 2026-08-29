@@ -448,6 +448,9 @@ func (s *Server) handleScreenerSettingsApply(w http.ResponseWriter, r *http.Requ
 	if s.writeEntitlementError(w, r, principal.Ent().CheckVenues(enabled)) {
 		return
 	}
+	if s.writeEntitlementError(w, r, principal.Ent().CheckVenueTiers(enabled, venueTier)) {
+		return
+	}
 	snap, err := s.Screener.ApplyExpect(r.Context(), principal.UserID, "web", body.Settings, *body.ParentVersion)
 	if err != nil {
 		s.writeScreenerError(w, r, err)
@@ -544,9 +547,16 @@ func (s *Server) handleScreenerRuleUpdate(w http.ResponseWriter, r *http.Request
 	WriteData(w, http.StatusOK, map[string]any{"rule": updated.Redact()})
 }
 
+// venueTier is the tier lookup injected into
+// entitlements.CheckVenueTiers (T-104). It lives here, in the layer that
+// already imports both packages, so internal/entitlements keeps no
+// dependency on internal/screener. An id the screener does not know
+// returns "", which CheckVenueTiers refuses.
+func venueTier(id string) string { return screener.VenueTiers[screener.Venue(id)] }
+
 // enforceRule applies the packages.md §3.2 rule-level entitlements:
-// kind, venues (fixed set / count), cooldown floor, every requested
-// alert channel, and — when the rule asks for automatic paper
+// kind, venues (fixed set / count and tier), cooldown floor, every
+// requested alert channel, and — when the rule asks for automatic paper
 // execution — the strategy list and the decimal size cap. Writes the
 // 403 itself.
 func (s *Server) enforceRule(w http.ResponseWriter, r *http.Request, ent entitlements.Entitlements, rule screener.Rule) bool {
@@ -560,6 +570,7 @@ func (s *Server) enforceRule(w http.ResponseWriter, r *http.Request, ent entitle
 	checks := []error{
 		ent.CheckRuleKind(string(rule.Kind)),
 		ent.CheckVenues(venues),
+		ent.CheckVenueTiers(venues, venueTier),
 		ent.CheckCooldown(rule.CooldownS),
 	}
 	for _, ch := range rule.EffectiveChannels() {
