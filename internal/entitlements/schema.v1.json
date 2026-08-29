@@ -12,7 +12,7 @@
       "required": ["screener_max", "screener_tiers", "screener_fixed", "triangular_max", "dex_enabled", "perps_enabled"],
       "properties": {
         "screener_max":    { "type": "integer", "minimum": 0, "description": "-1 = unlimited" },
-        "screener_tiers":  { "type": "array", "items": { "type": "string", "enum": ["tier1", "tier2", "dex"] } },
+        "screener_tiers":  { "type": "array", "items": { "type": "string", "enum": ["tier1", "tier2", "tier3", "dex"] } },
         "screener_fixed":  { "type": "array", "items": { "type": "string" }, "description": "non-empty = venue set is locked to these ids (Watch)" },
         "triangular_max":  { "type": "integer", "minimum": 0 },
         "dex_enabled":     { "type": "boolean" },

@@ -93,6 +93,45 @@ func (e Entitlements) CheckVenues(venues []string) error {
 	return nil
 }
 
+// CheckVenueTiers enforces venues.screener_tiers, the row that until
+// T-104 printed a limit and gated nothing: CheckVenues below reads
+// screener_fixed and screener_max only, so a Signal tenant could enable
+// Tier-2 venues and the two most expensive packages differed on a line
+// no code consulted.
+//
+// A venue's tier is a screener concept, so the lookup is INJECTED rather
+// than imported. That keeps the policy layer free of any dependency on
+// the domain it describes — the same seam T-102 established when it put
+// the tier cross-check in an external test package. Callers pass
+// screener.VenueTiers; internal/entitlements still imports nothing from
+// internal/screener.
+//
+// tierOf returns "" for a venue it cannot classify, and an unclassifiable
+// venue is REFUSED, never waved through: a venue that no tier claims is
+// exactly the state T-102 found being sold. A nil lookup is refused for
+// the same reason — this gate fails closed.
+func (e Entitlements) CheckVenueTiers(venues []string, tierOf func(string) string) error {
+	if len(venues) == 0 {
+		return nil // nothing to classify; the lookup is not needed
+	}
+	if tierOf == nil {
+		return exceeded("venues.screener_tiers", e.Venues.ScreenerTiers,
+			"venue tiers cannot be checked without a tier lookup")
+	}
+	for _, v := range venues {
+		tier := tierOf(v)
+		if tier == "" {
+			return exceeded("venues.screener_tiers", e.Venues.ScreenerTiers,
+				"venue %q belongs to no known tier", v)
+		}
+		if !Has(e.Venues.ScreenerTiers, tier) {
+			return exceeded("venues.screener_tiers", e.Venues.ScreenerTiers,
+				"venue %q is in tier %q; your package includes %v", v, tier, e.Venues.ScreenerTiers)
+		}
+	}
+	return nil
+}
+
 // CheckAutoPaper enforces auto_paper.strategies and max_size_quote
 // (decimal compare, never float) for a rule that asks for automatic
 // paper execution.

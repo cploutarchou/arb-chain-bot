@@ -22,8 +22,8 @@ and limits only — no return, hit rate or spread size, because no report in
 | | Watch | Signal | Operator | Desk | Institution |
 |---|---|---|---|---|---|
 | Price | free | {{price.signal.month}} / {{price.signal.year}} | {{price.operator.month}} / {{price.operator.year}} | {{price.desk.month}} / {{price.desk.year}} | from {{price.institution.year}}, annual, quoted |
-| Screener and perps venues | 3, fixed (Binance, OKX, Bybit) | 6 (Tier-1) | Tier-1 + Tier-2 | all CEX venues | all, plus venue requests |
-| Triangular engine venues | 1 | 2 | 4 | all supported | all |
+| Screener and perps venues | 3, fixed (Binance, OKX, Bybit) | 6 (Tier-1) | Tier-1 + Tier-2 (10) | all CEX venues: Tier-1 + Tier-2 + Tier-3 (15) | all, plus venue requests |
+| Triangular engine venues (limit, not shipped breadth — the engine runs on one venue today) | 1 | 2 | 4 | all supported | all |
 | Concurrent alert rules | 2 | 8 | 25 | 80 | 250 (soft) |
 | Saved screener templates | 3 | 10 | 40 | unlimited | unlimited |
 | Lowest screener refresh | 30 s | 10 s | 5 s | 3 s | 2 s (collector floor) |
@@ -41,7 +41,7 @@ and limits only — no return, hit rate or spread size, because no report in
 | Evidence reports | public samples | own rules, weekly | own rules, nightly | nightly + per-strategy comparison | nightly + custom cadence |
 | Seats | 1 | 1 | 3 | 12 | 40 (more on quote) |
 | Roles | owner | owner | owner, admin, viewer | + operator | + custom names |
-| Support | community docs | e-mail, 2 business days | e-mail, 1 business day | e-mail + shared Telegram, 8 business hours | named contact, 4 business hours, quarterly review |
+| Support | community docs | e-mail, 2 business days | e-mail, 8 business hours | e-mail + shared Telegram, 8 business hours | named contact, 4 business hours, quarterly review |
 
 Futures–futures and triangular auto-paper strategies are listed in the
 entitlement schema; of the five, `cross_venue_spot`, `carry` and
@@ -61,7 +61,7 @@ subscription state, read-only flag, effective package, trial end).
 
 | Limit | On breach |
 |---|---|
-| Venues (`screener_max`, `screener_fixed`) | `403 entitlement_exceeded` on rule and settings writes; rules naming a venue you lose are paused, not deleted |
+| Venues (`screener_max`, `screener_fixed`, `screener_tiers`) | `403 entitlement_exceeded` on rule and settings writes; rules naming a venue you lose are paused, not deleted. The tier check (T-104) refuses a venue whose tier your package does not include — a Tier-3 venue on Operator, say — with key `venues.screener_tiers` |
 | Rules (`max_active`, `kinds`, `min_refresh_s`, `templates_max`) | `403`; the evaluator loads the first N enabled rules by creation time and flags the rest `paused_by_entitlement` |
 | Alert channel, cooldown, destinations | `403` at rule validation |
 | Alerts per day | event stored, push suppressed, counted `skipped: quota` (dispatcher wiring **planned**) |

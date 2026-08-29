@@ -35,8 +35,8 @@ sign-off and a margin check against infra cost per tenant (T-094 load tests).
 | Monthly | $0 | $39 | $89 | $219 | from $690 (annual only, quoted) |
 | Annual | – | $390 | $890 | $2,190 | from $6,900 |
 | Trial | – | 14-day Operator trial on sign-up, no card, one per organisation | ← same | ← same | pilot by agreement |
-| Venues (screener + perps) | 3 fixed (Binance, OKX, Bybit) | 6 (Tier-1 set) | all Tier-1 + Tier-2 | all CEX venues | all, plus venue requests |
-| Triangular engine venues | 1 | 2 | 4 | all supported | all |
+| Venues (screener + perps) [^tiers] | 3 fixed (Binance, OKX, Bybit) | 6 (Tier-1 set) | Tier-1 + Tier-2 (10 venues) | all CEX venues: Tier-1 + Tier-2 + Tier-3 (15) | all, plus venue requests |
+| Triangular engine venues [^tri] | 1 | 2 | 4 | all supported | all |
 | Concurrent alert rules | 2 | 8 | 25 | 80 | 250 (soft; raise on request) |
 | Saved screener templates | 3 | 10 | 40 | unlimited | unlimited |
 | Screener refresh interval | 30 s | 10 s | 5 s | 3 s | 2 s (= collector floor) |
@@ -51,8 +51,28 @@ sign-off and a margin check against infra cost per tenant (T-094 load tests).
 | Campaign / evidence reports | public samples only | own rules, weekly | own rules, nightly | nightly + per-strategy comparison | nightly + custom cadence |
 | Seats (members) | 1 | 1 | 3 | 12 | 40 (more on quote) |
 | Roles | owner | owner | owner, admin, viewer | + operator | + custom role names, SSO (later) |
-| Support | community docs | e-mail, 2 business days | e-mail, 1 business day | e-mail + shared Telegram channel, 8 business hours | named contact, 4 business hours, quarterly review |
+| Support [^sup] | community docs | e-mail, 2 business days | e-mail, 8 business hours | e-mail **plus a shared Telegram channel**, 8 business hours | named contact, 4 business hours, quarterly review |
 | White-label | – | – | – | – | option (T-088, later phase) |
+
+[^tiers]: The tier row is **enforced** since T-104
+    (`entitlements.CheckVenueTiers`, checked on settings apply and on rule
+    create). Until then nothing read `venues.screener_tiers`: a Signal
+    tenant could enable Tier-2 venues, and the row printed a limit that
+    gated nothing. Tier membership lives in `screener.VenueTiers` and is
+    injected into the check, so the policy layer keeps no dependency on
+    the screener.
+
+[^tri]: Venue **counts** here are the package limit, not shipped
+    breadth. `platform.CompiledVenues` is `{binance}` — one live
+    triangular connector, with OKX blocked (T-050) and the rest behind
+    T-051. Until those land, "4" and "all supported" are limits over a
+    set of size one, and no copy derived from this row may imply
+    otherwise.
+
+[^sup]: Operator and Desk carry the same `response_hours` (8) in the
+    shipped documents; "1 business day" and "8 business hours" were the
+    same commitment written two ways. Desk's real support difference is
+    the shared Telegram channel, not a faster number.
 
 **DEX coverage is not sold by any package** (T-102, operator decision
 2026-08-29). Desk and Institution previously advertised "all CEX + DEX
@@ -64,10 +84,20 @@ override — that advertises it. T-116 restores the tier in the same change
 that registers the first DEX venue. Design of record:
 `docs/design/dex-arbitrage.md`.
 
-One consequence to settle before launch: with DEX withdrawn, **Desk and
-Operator have identical venue coverage**, so the venue row no longer
-differentiates the two. Desk's remaining levers are rules, refresh, the
-full strategy set, write API, history depth and seats.
+That withdrawal briefly left **Desk and Operator with identical venue
+coverage**, since both then read `["tier1","tier2"]`. T-104 resolved it
+from shipped code rather than from a price change: Desk and Institution
+now carry `["tier1","tier2","tier3"]`, so the row differentiates on the
+five Tier-3 venues (Crypto.com, Bitfinex, BingX, WhiteBIT, BitMart) that
+are already coded, conformance-tested and soaked (T-078) — and the row
+is now enforced, where before it gated nothing.
+
+Prices are unchanged. The $89 → $219 step never rested on DEX: it is a
+**team step** (3 seats to 12, $29.67 to $18.25 per seat) plus 3.2× the
+rules, the write API and 400 days with Parquet — what a desk needs to
+audit our evidence itself. Reasoning and the rejected alternative
+(repricing Desk to ~$169) are in
+`docs/decisions/2026-08-29-dex-package-capability-withdrawn.md` §5.
 
 Rationale for the levers:
 
