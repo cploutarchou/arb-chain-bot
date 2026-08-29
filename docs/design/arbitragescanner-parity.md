@@ -46,7 +46,7 @@ Two consequences for us:
 | Saved scanners / templates | yes ("scanners" are their unit of pricing) | yes (screener settings, versioned) | **parity** |
 | Packages / billing / affiliate | yes | yes (Paddle sandbox, T-081..T-088 partially landed) | **parity** |
 | Public B2B API | yes | `internal/apikey` + package limit exists | verify surface |
-| **DEX scanning** | **500+ DEX, 90+ chains; CEX↔DEX and DEX↔DEX** | **none — zero code; T-076 is a one-line TODO** | **the largest gap; see §2** |
+| **DEX scanning** | **500+ DEX, 90+ chains; CEX↔DEX and DEX↔DEX** | **none — zero code; designed in `dex-arbitrage.md`, T-110..T-116 TODO; sold by no package (T-102)** | **the largest gap; see §2** |
 | **P2P / fiat arbitrage** | **Binance/Bybit/HTX P2P, 7+ fiat currencies** | **none, and absent from the command** | **see §3** |
 | On-chain address analysis | yes (their Enterprise tier) | none | out of scope — see §4 |
 | Mass search | yes | partial (screener filters) | small |
@@ -58,16 +58,21 @@ Two consequences for us:
 
 ## 2. DEX is the real gap — and it is currently over-sold
 
-`internal/entitlements/packages.go` ships `DexEnabled: true` and the
+**Resolved 2026-08-29 — the entitlement is off.** As found,
+`internal/entitlements/packages.go` shipped `DexEnabled: true` and the
 screener tier `"dex"` in the **Desk** and **Enterprise** packages, and
-`docs/design/packages.md` §2 advertises "all CEX + DEX aggregators" at
-those tiers. No DEX collector, quote source, chain client or venue
-constant exists anywhere in `internal/`. Nothing reads `DexEnabled`.
+`docs/design/packages.md` §2 advertised "all CEX + DEX aggregators" at
+those tiers, with no DEX collector, quote source, chain client or venue
+constant anywhere in `internal/` and nothing reading `DexEnabled`.
+Billing was still in Paddle **sandbox**, so nothing had been mis-sold.
 
-Billing is still in Paddle **sandbox**, so nothing has been mis-sold to a
-paying customer yet. It must not reach production in this state: either
-the tier is built (Phase 28) or the entitlement is switched off until it
-is. Filed as **T-102** (P0, product-correctness).
+The operator chose to switch the capability off rather than hold the
+packages as a launch blocker (**T-102**, DONE): both packages now
+advertise `["tier1","tier2"]` with `DexEnabled: false`, every published
+claim is withdrawn, and `entitlements.DexImplemented` refuses any document
+— package or tenant override — that advertises DEX until T-116 builds it.
+The gap in §1's matrix is unchanged; what is fixed is that we no longer
+sell it.
 
 The plan already carries **T-076** ("DEX quotes via public aggregator
 APIs … with gas cost model", TODO) — one line, no design, no

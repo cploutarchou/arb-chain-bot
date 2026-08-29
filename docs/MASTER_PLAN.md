@@ -1530,8 +1530,30 @@ PAPER only; the vault's exchange credential group stays unread.
   lose on every close.
 
 ### T-102 Desk and Enterprise packages sell a DEX tier that does not exist
-- status: OPEN (P0, product-correctness; found 2026-08-29 during the
-  arbitragescanner parity review)
+- status: DONE (2026-08-29) — operator chose option (a): the capability is
+  switched OFF until it is built. Desk and Institution now ship
+  `ScreenerTiers: ["tier1","tier2"]` and `DexEnabled: false`; the claim is
+  gone from `packages.md` §2, `billing.md` §5, `site/src/lib/packages.ts`,
+  `docs/site/copy/pricing.md` and both user-guide pages. Enforcement, not
+  just correction: `entitlements.DexImplemented` (false until T-116) makes
+  `Validate` reject any document advertising DEX with the new
+  `ErrUnimplemented` sentinel — packages, stored documents and tenant
+  overrides alike, so the resolver degrades a widening override to the
+  bare package instead of serving it. Acceptance test
+  `TestAdvertisedTiersResolveToRegisteredVenues` (external test package,
+  so the policy layer keeps no screener import) asserts every advertised
+  screener tier resolves to at least one registered venue, backed by the
+  new `screener.VenueTiers` map that makes the Tier-1/2/3 grouping
+  machine-readable for the first time. Re-introducing the original defect
+  fails four tests, including the pre-existing `TestPackagesValid`.
+- Left for the packaging write-up, NOT a defect: with DEX withdrawn, Desk
+  and Operator have identical venue coverage, so the venue row no longer
+  differentiates them (noted in `packages.md` §2).
+- Reversal is one constant: T-116 flips `DexImplemented` in the same change
+  that registers the first DEX venue, and the tree cross-check fails if it
+  is flipped without one. The `"dex"` tier deliberately stays in
+  `enumTiers` and `schema.v1.json`, so no schema bump or override
+  migration is needed then.
 - `internal/entitlements/packages.go` sets `DexEnabled: true` and includes
   the screener tier `"dex"` in the **Desk** and **Enterprise** packages;
   `enumTiers` in `validate.go` accepts `"dex"`; `docs/design/packages.md`
@@ -1979,3 +2001,26 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   environment; figures came from search summaries) and must be re-read in
   a browser before informing pricing or marketing copy. No code changed
   and no task status advanced in this round.
+
+- 2026-08-29 — **T-102 DONE: the DEX tier is switched off until it is
+  built.** Operator decision on the packaging question the parity review
+  left open: option (a), withdraw the capability, rather than (b), hold
+  Desk and Institution as launch blockers on T-076. Both package documents
+  now carry `ScreenerTiers: ["tier1","tier2"]` and `DexEnabled: false`,
+  and every published claim is gone (`packages.md` §2, `billing.md` §5,
+  `docs/site/copy/pricing.md`, `site/src/lib/packages.ts`,
+  `docs/user-guide/packages-and-billing.md`, `docs/user-guide/venues.md`).
+  The correction is enforced, not just applied: new
+  `internal/entitlements/capabilities.go` holds `DexImplemented` (false)
+  and the `ErrUnimplemented` sentinel, and `Validate` now refuses any
+  document advertising DEX — including a tenant override, which the
+  resolver degrades to the bare package rather than serving a widened one.
+  New `internal/screener/tiers.go` makes the Tier-1/2/3 grouping
+  machine-readable (it had lived only in comments and plan prose), which
+  is what lets `TestAdvertisedTiersResolveToRegisteredVenues` — in an
+  external test package, so the policy layer keeps no screener import —
+  assert T-102's acceptance criterion directly. Verified by mutation:
+  re-introducing the exact defect fails four tests, `TestPackagesValid`
+  among them. Second-order effect recorded for the packaging write-up, not
+  fixed here: Desk and Operator now have identical venue coverage, so that
+  row no longer differentiates them.

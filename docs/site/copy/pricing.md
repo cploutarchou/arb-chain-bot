@@ -73,7 +73,7 @@ reports, a read API.
 {{price.desk.monthly}} / {{price.desk.annual}}
 For a team that wants all five strategies on paper, webhook routing, and
 enough history to do its own evaluation of our evidence.
-- All CEX plus DEX aggregators; all supported triangular venues
+- All CEX venues; all supported triangular venues
 - 80 active rules; unlimited templates
 - 3-second refresh
 - Web + Telegram + e-mail + webhook, 8,000 alerts per day

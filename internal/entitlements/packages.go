@@ -43,7 +43,11 @@ var packages = map[string]Entitlements{
 	},
 	PackageDesk: {
 		SchemaVersion: SchemaVersion, PackageCode: PackageDesk,
-		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2", "dex"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: true, PerpsEnabled: true},
+		// DEX coverage is NOT advertised here: T-102 (operator decision
+		// 2026-08-29) switched it off until T-116 builds it. Restore
+		// "dex" and DexEnabled: true in the same change that flips
+		// DexImplemented — Validate rejects them until then.
+		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: false, PerpsEnabled: true},
 		Rules:     Rules{MaxActive: 80, TemplatesMax: Unlimited, MinRefreshS: 3, Kinds: []string{"spread", "carry", "basis", "funding", "triangular"}},
 		Alerts:    Alerts{Channels: []string{"web", "telegram", "email", "webhook"}, PerDay: 8000, TelegramDestinationsMax: 1, MinCooldownS: 10},
 		AutoPaper: AutoPaper{Strategies: []string{"cross_venue_spot", "carry", "futures_futures", "funding_harvest", "triangular"}, MaxOpenPositions: 150, LedgersMax: 10, MaxSizeQuote: "100000"},
@@ -55,7 +59,8 @@ var packages = map[string]Entitlements{
 	},
 	PackageInstitution: {
 		SchemaVersion: SchemaVersion, PackageCode: PackageInstitution,
-		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2", "dex"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: true, PerpsEnabled: true},
+		// See the Desk note: no DEX tier until T-116 (T-102).
+		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: false, PerpsEnabled: true},
 		Rules:     Rules{MaxActive: 250, TemplatesMax: Unlimited, MinRefreshS: 2, Kinds: []string{"spread", "carry", "basis", "funding", "triangular"}},
 		Alerts:    Alerts{Channels: []string{"web", "telegram", "email", "webhook"}, PerDay: 40000, TelegramDestinationsMax: 5, MinCooldownS: 5},
 		AutoPaper: AutoPaper{Strategies: []string{"cross_venue_spot", "carry", "futures_futures", "funding_harvest", "triangular"}, MaxOpenPositions: 600, LedgersMax: 25, MaxSizeQuote: "1000000"},
