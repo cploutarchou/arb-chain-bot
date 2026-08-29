@@ -1319,7 +1319,7 @@ PAPER only; the vault's exchange credential group stays unread.
 - T-073 `Collector` interface + conformance test + venue registry (verified flag, fee defaults). TODO.
 - T-074 Tier-1 venues via public bulk tickers: Binance, OKX, Bybit, Bitget, Gate, MEXC (from T-065/T-066). TODO.
 - T-075 Tier-2 venues: KuCoin, HTX, Kraken, Coinbase DONE and ENABLED BY DEFAULT (30-min live soak 2026-08-27, all ten venues, poll 5 s: kucoin 295 polls 1006 spot/664 perps avg 1104 ms max 3346; htx 197 polls 600/301 avg 4145 max 7496; kraken 248 polls 1382/276 avg 2249 max 3806; coinbase 142 polls 921/0 avg 7701 max 9365 — 0 × 429/418/403/510 and 0 errors each; book 6690 pairs / 5231 perps). HTX/Coinbase limits and fees still UNVERIFIED (flagged in the registry). MEXC in-band 510 now detected (1 hit in the soak on contract/ticker → counted, 10 s pause, recovered). Tier-3 (Crypto.com, Bitfinex, BingX, WhiteBIT, BitMart) added 2026-08-27 with research files, recorded fixtures and passing conformance, registered OPT-IN in 227b0d6; their 30-min soak ran 2026-08-28 (TestSoakLive, poll 5 s, ALL FIFTEEN venues in one process, sharing the IP with the running paper stack — a stricter per-IP budget than production) and ALL FIVE PASSED, so they are now ENABLED BY DEFAULT (`tier3Venues` removed; `Defaults()` enables every known venue). Per venue, polls / spot min..last / perps min..last / min-avg-max ms / 429-418-403 / in-band / failed polls: cryptocom 118, 576..576, 10..366, 9623-10243-25108, 0, 0, 0; bitfinex 347, 197..197, 75..75, 100-192-3588, 0, 0, 0; bingx 283, 669..669, 881..881, 915-1370-2573, 0, 0, 0; whitebit 343, 798..798, 305..305, 157-248-641, 0, 0, 0; bitmart 167, 27..27, 354..354, 5441-5790-12539, 0, 0, 0. Book 7015 pairs / 7218 perps; 671 funding-history rows. Reading notes: cryptocom's perps 10..366 is the round-robin mark fill saturating (spot 576 was flat throughout) and its avg 10.2 s poll exceeds the 5 s interval, so it self-paces to ~15 s — the slow venue in the set; BitMart's 27 spot quotes are 100 % of the rows its bulk ticker returns (documented: only pairs with 24 h volume > 0 — 27 of 65 tradable symbols on the day, all normalised, none dropped) plus 354 perps. The in-band column read 0 for every venue but was never exercised this run (MEXC's 510 did not recur), so it is zero-by-absence; what makes the passes robust is errs=0 — a rate-limit answer the classifier missed still surfaces as a failed poll, as HTX's did. SAME RUN, TIER-2 REGRESSION (reported, not acted on — Tier-2 defaults are the coordinator's call): coinbase recorded 20 x HTTP 429 and 20 failed polls out of 61 attempts (41 successful, spot dipping to 61 at the low end, avg 24.4 s) — under this run it would FAIL the rule that admitted it on 2026-08-27; the confound is that the running paper stack polls coinbase from the same IP, roughly doubling its request rate. HTX recorded 1 failed poll of 197, `htx: batch_merged: invalid-parameter: request limit` — a request-limit answer the gate does NOT classify as a rate limit (so it neither counted nor backed off); both warrant review. Remaining venues: Upbit, Bithumb, LBank, Phemex. IN_PROGRESS.
-- T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO.
+- T-076 DEX quotes via public aggregator APIs (Uniswap/PancakeSwap/Jupiter) with gas cost model. TODO — DESIGNED 2026-08-29 in `docs/design/dex-arbitrage.md` and decomposed into T-110..T-116 (below). Scope fixed there: aggregator quote APIs only (no pool math, no wallet keys, no signing, no contract deployment, no mempool, no bridging); identity keyed on `(chain_id, contract_address)` and never on a symbol; gas modelled as a fixed per-transaction cost that sets each rule's `min_notional`; CEX↔DEX treated as an inventory lane, not a round trip; DEX paper reports carry a standing MEV caveat that bars DEX paper evidence from satisfying the production gate on its own. This is the only Phase 23 item with no work started and the largest single gap in `docs/design/arbitragescanner-parity.md` §1.
 
 ### Phase 24 Strategies, auto-paper, unattended operation
 - T-077 Strategy registry (cross-venue spot, carry, futures-futures, funding harvest, triangular) with per-strategy paper ledger and statistics. TODO.
@@ -1528,6 +1528,106 @@ PAPER only; the vault's exchange credential group stays unread.
   are that much further away. See T-100 before the carry rule is
   recreated — recreating it verbatim re-runs a configuration measured to
   lose on every close.
+
+### T-102 Desk and Enterprise packages sell a DEX tier that does not exist
+- status: DONE (2026-08-29) — operator chose option (a): the capability is
+  switched OFF until it is built. Desk and Institution now ship
+  `ScreenerTiers: ["tier1","tier2"]` and `DexEnabled: false`; the claim is
+  gone from `packages.md` §2, `billing.md` §5, `site/src/lib/packages.ts`,
+  `docs/site/copy/pricing.md` and both user-guide pages. Enforcement, not
+  just correction: `entitlements.DexImplemented` (false until T-116) makes
+  `Validate` reject any document advertising DEX with the new
+  `ErrUnimplemented` sentinel — packages, stored documents and tenant
+  overrides alike, so the resolver degrades a widening override to the
+  bare package instead of serving it. Acceptance test
+  `TestAdvertisedTiersResolveToRegisteredVenues` (external test package,
+  so the policy layer keeps no screener import) asserts every advertised
+  screener tier resolves to at least one registered venue, backed by the
+  new `screener.VenueTiers` map that makes the Tier-1/2/3 grouping
+  machine-readable for the first time. Re-introducing the original defect
+  fails four tests, including the pre-existing `TestPackagesValid`.
+- Left for the packaging write-up, NOT a defect: with DEX withdrawn, Desk
+  and Operator have identical venue coverage, so the venue row no longer
+  differentiates them (noted in `packages.md` §2).
+- Reversal is one constant: T-116 flips `DexImplemented` in the same change
+  that registers the first DEX venue, and the tree cross-check fails if it
+  is flipped without one. The `"dex"` tier deliberately stays in
+  `enumTiers` and `schema.v1.json`, so no schema bump or override
+  migration is needed then.
+- `internal/entitlements/packages.go` sets `DexEnabled: true` and includes
+  the screener tier `"dex"` in the **Desk** and **Enterprise** packages;
+  `enumTiers` in `validate.go` accepts `"dex"`; `docs/design/packages.md`
+  §2 advertises "all CEX + DEX aggregators" at those tiers. No DEX
+  collector, quote source, chain client or venue constant exists anywhere
+  in `internal/`, and nothing reads `DexEnabled` — the two most expensive
+  packages advertise a venue tier with zero implementation behind it.
+- Not yet a live misrepresentation: Paddle is still in sandbox (T-083) and
+  no paying customer has been sold either package. It must not reach
+  production in this state.
+- Fix, operator's choice, one of: (a) switch `DexEnabled` to false and
+  drop `"dex"` from both packages' `ScreenerTiers` until T-076 lands,
+  keeping the schema enum for forward compatibility, and remove the claim
+  from `packages.md` §2 and any marketing copy; or (b) hold the packages
+  as designed and treat DEX as a launch blocker for those two tiers.
+  Deliberately left open: this is a pricing and packaging decision, not
+  purely a technical one.
+- Acceptance: shipped entitlements and published package copy describe
+  only capabilities that exist in the tree, with a test asserting that
+  every advertised screener tier resolves to at least one registered
+  venue.
+
+### T-103 P2P / fiat arbitrage — scope decision required before any work
+- status: BLOCKED on an operator decision record (P3)
+- The competitor scans P2P ad boards (Binance/Bybit/HTX P2P) across RUB,
+  UAH, TRY, KZT and other fiat corridors. We have none of it, and the
+  platform command does not mention it.
+- Recommendation (`docs/design/arbitragescanner-parity.md` §3): **do not
+  build it.** A P2P "price" is an advertisement, not an executable quote,
+  so the lane cannot be paper-validated — which breaks the rule that no
+  strategy is described as profitable without a campaign report.
+  Settlement is bank-side and human (chargebacks, counterparty fraud), and
+  the fiat corridors carry sanctions and money-transmission exposure that
+  varies by operator residence.
+- If built anyway: read-only ad-board monitor, no execution, no paper
+  ledger, explicit risk disclosure, and only after a signed record under
+  `docs/decisions/` naming the fiat corridors offered and the jurisdiction
+  analysis — the same convention that gates the production execution gate.
+- No implementation task exists until that record does.
+
+### T-076 decomposition — DEX lanes (T-110..T-116)
+Design of record: `docs/design/dex-arbitrage.md`. Every task below is
+signals + automatic PAPER execution only; the §1 refusals (no pool math,
+no wallet keys, no signing, no contract deployment, no mempool, no
+bridging) are binding. Skill: `.claude/skills/dex-arbitrage/SKILL.md`.
+Agent: `dex-engineer`.
+
+- **T-110** DEX research round → `docs/research/dex-endpoints.md`, in the
+  form of `screener-endpoints.md`: for each candidate aggregator (1inch,
+  0x, OpenOcean, ParaSwap, Jupiter) the quote endpoint, whether it quotes
+  at size, whether it returns a gas estimate, its documented rate limit,
+  and its API-key policy — each with URL and access date, VERIFIED or
+  UNVERIFIED. Per chain: block time, typical swap gas units, native asset,
+  canonical token-list URL. TODO. **Everything in design §3 is UNVERIFIED
+  until this lands; no collector is written before it.**
+- **T-111** `QuoteSource` interface + first aggregator + recorded fixtures
+  + shared conformance test + per-source rate gate honouring `Retry-After`
+  (modelled on `internal/screener/venue/ratelimit.go`). TODO.
+- **T-112** Token identity: pinned canonical token lists per chain,
+  `(chain_id, contract_address)` keying with checksum validation, CEX
+  contract-address matching for CEX↔DEX pairs, fee-on-transfer/rebasing/
+  honeypot exclusion. Must include a deliberate symbol-collision fixture
+  proving a fake `USDC` is rejected. TODO. **P0 correctness — this is the
+  VON/TROLL/XTER failure (T-067) with a far lower barrier to entry.**
+- **T-113** Gas oracle, cost model and `min_notional` derivation from live
+  gas; golden test reproducing design §4's worked example; `GAS` rejection
+  reason wired to the skip counters. TODO.
+- **T-114** CEX↔DEX lane: inventory model per `strategy-models.md`,
+  `NetworkStatus` gating with `unknown` treated as closed, block-staleness
+  gate, cross-chain pairs marked informational-only. TODO.
+- **T-115** DEX↔DEX same-chain lane. TODO.
+- **T-116** Automatic paper execution with its own ledger tag, nightly
+  report carrying the MEV and inventory caveats, and the T-102 entitlement
+  flip once the tier is real. TODO.
 
 ## Status log
 
@@ -1875,3 +1975,52 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   taker leg is free at Regular tier; coinbase.com/advanced-fees redirects
   to sign-in and stays a runtime-verified assumption; the Gate fee page
   remains unreachable (browser domain not allowed).
+- 2026-08-29 (arbitragescanner parity review): compared the shipped tree
+  against the competitor's public feature set and recorded the result in
+  `docs/design/arbitragescanner-parity.md`. Findings: (1) we are at or
+  ahead of parity on cross-venue spot, perp basis/funding, alerts, saved
+  scanners, packages and billing, and strictly ahead on automatic paper
+  execution, deterministic replay and sequence-validated books — none of
+  which the competitor has, because **they execute nothing and take no API
+  keys**; (2) the one large product gap is DEX, where T-076 was a
+  single-line TODO — now DESIGNED in `docs/design/dex-arbitrage.md` and
+  decomposed into T-110..T-116, scoped to aggregator quote APIs with
+  identity keyed on `(chain_id, contract_address)`, gas as a fixed cost
+  setting `min_notional`, CEX↔DEX as an inventory lane, and a standing MEV
+  caveat barring DEX paper evidence from satisfying the production gate
+  alone; (3) **T-102 filed P0** — Desk and Enterprise sell `DexEnabled:
+  true` and a `"dex"` screener tier with zero DEX code behind them (Paddle
+  still sandbox, so nothing mis-sold yet, but it cannot ship this way);
+  (4) T-103 filed — P2P is absent from the command and is recommended
+  against on the merits (an advertisement is not an executable quote, so
+  the lane can never produce a campaign report), blocked on an operator
+  decision record either way; (5) on-chain wallet analysis stays out of
+  scope as already declared in `packages.md` §1. Added the
+  `dex-arbitrage` skill and the `dex-engineer` agent. Competitor facts are
+  UNVERIFIED-INDIRECT (their site is egress-blocked from this
+  environment; figures came from search summaries) and must be re-read in
+  a browser before informing pricing or marketing copy. No code changed
+  and no task status advanced in this round.
+
+- 2026-08-29 — **T-102 DONE: the DEX tier is switched off until it is
+  built.** Operator decision on the packaging question the parity review
+  left open: option (a), withdraw the capability, rather than (b), hold
+  Desk and Institution as launch blockers on T-076. Both package documents
+  now carry `ScreenerTiers: ["tier1","tier2"]` and `DexEnabled: false`,
+  and every published claim is gone (`packages.md` §2, `billing.md` §5,
+  `docs/site/copy/pricing.md`, `site/src/lib/packages.ts`,
+  `docs/user-guide/packages-and-billing.md`, `docs/user-guide/venues.md`).
+  The correction is enforced, not just applied: new
+  `internal/entitlements/capabilities.go` holds `DexImplemented` (false)
+  and the `ErrUnimplemented` sentinel, and `Validate` now refuses any
+  document advertising DEX — including a tenant override, which the
+  resolver degrades to the bare package rather than serving a widened one.
+  New `internal/screener/tiers.go` makes the Tier-1/2/3 grouping
+  machine-readable (it had lived only in comments and plan prose), which
+  is what lets `TestAdvertisedTiersResolveToRegisteredVenues` — in an
+  external test package, so the policy layer keeps no screener import —
+  assert T-102's acceptance criterion directly. Verified by mutation:
+  re-introducing the exact defect fails four tests, `TestPackagesValid`
+  among them. Second-order effect recorded for the packaging write-up, not
+  fixed here: Desk and Operator now have identical venue coverage, so that
+  row no longer differentiates them.

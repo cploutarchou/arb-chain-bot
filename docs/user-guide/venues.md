@@ -95,8 +95,13 @@ ban codes and what to do about them are in
 
 ## Planned venues
 
-Upbit, Bithumb, LBank and Phemex are on the list but not built. DEX
-aggregators (Desk package) are **planned**.
+Upbit, Bithumb, LBank and Phemex are on the list but not built.
+
+DEX aggregator coverage is **designed but not built**
+(`docs/design/dex-arbitrage.md`, T-076 → T-110..T-116) and is **not
+included in any package**. It was withdrawn from the Desk and Institution
+descriptions on 2026-08-29 rather than left standing as a promise: nothing
+here scans a DEX today.
 
 ---
 
