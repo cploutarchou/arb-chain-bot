@@ -399,7 +399,30 @@ func (x *Executor) exitReason(r screener.Rule, pos Position, po perpOpen, p scre
 		// 412 of 412 closes on 2026-08-27 (T-097). The stops above are
 		// deliberately checked first and stay immediate: a position that
 		// is genuinely going wrong still exits at once.
-		if basisNow.LessThanOrEqual(r.CloseBps()) && po.Settlements >= 1 {
+		// T-100: `>= 1` was nowhere near enough. Measured on the guarded
+		// build, 13 of 13 carry closes were `converged` with exactly one
+		// settlement and every one was negative: fees_open ~15 bps means
+		// a ~30 bps round trip, while one settlement paid ~0.5 bps —
+		// about a sixtieth of what the position owed.
+		//
+		// The number the entry gate already computed is the right one.
+		// carryActive admits a position only when BreakevenN settlements
+		// (the settlements needed to pay the round trip at the
+		// conservative rate) fit inside max_hold_h. The converged exit
+		// now waits for exactly that many, so the take-profit cannot
+		// fire before the thesis it was admitted on has been tested.
+		//
+		// max(BreakevenN, 1) covers positions opened before the entry
+		// gate guaranteed BreakevenN >= 1: they keep the old behaviour
+		// rather than becoming unclosable by this branch. Every stop
+		// above — margin, basis blow-out, funding reversal, max hold —
+		// is checked first and stays immediate, so a position going
+		// wrong still exits at once; only the take-profit waits.
+		needed := po.BreakevenN
+		if needed < 1 {
+			needed = 1
+		}
+		if basisNow.LessThanOrEqual(r.CloseBps()) && po.Settlements >= needed {
 			return "converged"
 		}
 		if po.ExitCount >= r.ExitK() {
