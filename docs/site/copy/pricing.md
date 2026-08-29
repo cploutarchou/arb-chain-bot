@@ -58,7 +58,7 @@ paper.
 {{price.operator.monthly}} / {{price.operator.annual}}
 The package the 14-day trial gives you. Three strategies on paper, nightly
 reports, a read API.
-- All Tier-1 and Tier-2 venues; 4 triangular venues
+- All Tier-1 and Tier-2 venues (10); triangular limit 4 venues
 - 25 active rules; 40 templates
 - 5-second refresh
 - Web + Telegram + e-mail, 1,500 alerts per day
@@ -66,14 +66,14 @@ reports, a read API.
   positions; 3 ledgers
 - Read API, 2 keys
 - 90 days of history; CSV export; nightly reports
-- 3 seats: owner, admin, viewer; e-mail support, 1 business day
+- 3 seats: owner, admin, viewer; e-mail support, 8 business hours
 **CTA:** Start the 14-day trial — no card
 
 ### Desk
 {{price.desk.monthly}} / {{price.desk.annual}}
 For a team that wants all five strategies on paper, webhook routing, and
 enough history to do its own evaluation of our evidence.
-- All CEX venues; all supported triangular venues
+- All CEX venues (15): Tier-1, Tier-2 and Tier-3; triangular limit: all supported
 - 80 active rules; unlimited templates
 - 3-second refresh
 - Web + Telegram + e-mail + webhook, 8,000 alerts per day
@@ -111,6 +111,9 @@ Support. Final row, all columns: **Live execution — not offered.**]
 
 ## What every package includes
 
+- **Triangular venue counts are package limits, not shipped breadth.** The
+  triangular engine currently runs on one venue; the others are in
+  progress. A limit of four does not mean four are available today.
 - Fees subtracted on every leg; verification status shown per venue.
 - Data-age gate on every comparison.
 - Decimal arithmetic throughout.
