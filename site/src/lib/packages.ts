@@ -27,8 +27,8 @@ export const CAPABILITY_ROWS: CapabilityRow[] = [
     cells: [
       "3 fixed",
       "6 (Tier-1 set)",
-      "all Tier-1 and Tier-2",
-      "all CEX venues",
+      "all Tier-1 and Tier-2 (10)",
+      "all CEX venues (15)",
       "all, plus venue requests",
     ],
   },
