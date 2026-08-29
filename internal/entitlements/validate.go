@@ -85,6 +85,11 @@ func Validate(e Entitlements) error {
 	if err := enumList("venues.screener_tiers", v.ScreenerTiers, enumTiers); err != nil {
 		return err
 	}
+	// T-102: the vocabulary check above says the tier name is spellable;
+	// this says the build can actually deliver it (capabilities.go).
+	if err := checkImplemented(e); err != nil {
+		return err
+	}
 	if v.ScreenerFixed == nil {
 		return fmt.Errorf("%w: venues.screener_fixed is required", ErrInvalid)
 	}

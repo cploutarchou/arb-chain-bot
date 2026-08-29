@@ -35,7 +35,7 @@ sign-off and a margin check against infra cost per tenant (T-094 load tests).
 | Monthly | $0 | $39 | $89 | $219 | from $690 (annual only, quoted) |
 | Annual | – | $390 | $890 | $2,190 | from $6,900 |
 | Trial | – | 14-day Operator trial on sign-up, no card, one per organisation | ← same | ← same | pilot by agreement |
-| Venues (screener + perps) | 3 fixed (Binance, OKX, Bybit) | 6 (Tier-1 set) | all Tier-1 + Tier-2 | all CEX + DEX aggregators | all, plus venue requests |
+| Venues (screener + perps) | 3 fixed (Binance, OKX, Bybit) | 6 (Tier-1 set) | all Tier-1 + Tier-2 | all CEX venues | all, plus venue requests |
 | Triangular engine venues | 1 | 2 | 4 | all supported | all |
 | Concurrent alert rules | 2 | 8 | 25 | 80 | 250 (soft; raise on request) |
 | Saved screener templates | 3 | 10 | 40 | unlimited | unlimited |
@@ -53,6 +53,21 @@ sign-off and a margin check against infra cost per tenant (T-094 load tests).
 | Roles | owner | owner | owner, admin, viewer | + operator | + custom role names, SSO (later) |
 | Support | community docs | e-mail, 2 business days | e-mail, 1 business day | e-mail + shared Telegram channel, 8 business hours | named contact, 4 business hours, quarterly review |
 | White-label | – | – | – | – | option (T-088, later phase) |
+
+**DEX coverage is not sold by any package** (T-102, operator decision
+2026-08-29). Desk and Institution previously advertised "all CEX + DEX
+aggregators" and shipped `DexEnabled: true`; no DEX collector, quote source
+or venue existed in the tree. The capability was withdrawn from both
+documents rather than held as a launch blocker, and
+`entitlements.DexImplemented` now refuses any document — package or tenant
+override — that advertises it. T-116 restores the tier in the same change
+that registers the first DEX venue. Design of record:
+`docs/design/dex-arbitrage.md`.
+
+One consequence to settle before launch: with DEX withdrawn, **Desk and
+Operator have identical venue coverage**, so the venue row no longer
+differentiates the two. Desk's remaining levers are rules, refresh, the
+full strategy set, write API, history depth and seats.
 
 Rationale for the levers:
 
