@@ -132,9 +132,16 @@ from it:
    rule this whole programme rests on. Any reversal needs a record under
    `docs/decisions/` naming the corridors and the jurisdiction analysis.
 
-3. **Nothing may be sold that is not built.** T-102 (P0): the Desk and
-   Enterprise packages currently advertise a DEX tier with no
-   implementation behind it. Billing is still in Paddle sandbox, so
-   nothing has been mis-sold — it must not reach production in that state.
-   Generalised rule for the programme: an advertised package capability
-   must resolve to something that exists in the tree, enforced by a test.
+3. **Nothing may be sold that is not built.** T-102 (P0, DONE
+   2026-08-29): the Desk and Enterprise packages advertised a DEX tier
+   with no implementation behind it. Billing was still in Paddle sandbox,
+   so nothing had been mis-sold. The operator's decision was to switch the
+   capability off until it is built, and the fix is enforced rather than
+   merely corrected: `entitlements.DexImplemented` is false, and
+   `Validate` refuses any package, stored document or tenant override that
+   advertises DEX. Generalised rule for the programme, now with a test
+   behind it: an advertised package capability must resolve to something
+   that exists in the tree
+   (`TestAdvertisedTiersResolveToRegisteredVenues`). Apply the same shape
+   to every future capability flag — a boolean that nothing reads is a
+   promise nothing keeps.

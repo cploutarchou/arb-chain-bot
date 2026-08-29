@@ -22,7 +22,7 @@ and limits only — no return, hit rate or spread size, because no report in
 | | Watch | Signal | Operator | Desk | Institution |
 |---|---|---|---|---|---|
 | Price | free | {{price.signal.month}} / {{price.signal.year}} | {{price.operator.month}} / {{price.operator.year}} | {{price.desk.month}} / {{price.desk.year}} | from {{price.institution.year}}, annual, quoted |
-| Screener and perps venues | 3, fixed (Binance, OKX, Bybit) | 6 (Tier-1) | Tier-1 + Tier-2 | all CEX + DEX aggregators (**planned**) | all, plus venue requests |
+| Screener and perps venues | 3, fixed (Binance, OKX, Bybit) | 6 (Tier-1) | Tier-1 + Tier-2 | all CEX venues | all, plus venue requests |
 | Triangular engine venues | 1 | 2 | 4 | all supported | all |
 | Concurrent alert rules | 2 | 8 | 25 | 80 | 250 (soft) |
 | Saved screener templates | 3 | 10 | 40 | unlimited | unlimited |
