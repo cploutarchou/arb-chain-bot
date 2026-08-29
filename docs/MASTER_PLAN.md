@@ -1580,6 +1580,27 @@ PAPER only; the vault's exchange credential group stays unread.
   `max_hold_h`. (a) is reversible and needs no code, so it should be
   tried first. Related: T-097, and the universe-scope question still
   open with the operator.
+- 2026-08-28 09:20Z, the operator chose (a). After the T-101 wipe the
+  stack was restarted (admin bootstrapped, platform settings v4,
+  screener settings v6, 14/15 venues enabled, collectors running over
+  6 764 pairs) and the rule recreated as
+  `rule-01M13T0XRW1TH3H0PAFW27V5VX`, identical to the wiped one except
+  `max_hold_h` 720 -> 48. Paper balances were re-seeded at binance
+  USDT 10 000 and USDT:perp 10 000 (screener settings v7); the wipe had
+  cleared them, and without them the executor cannot fill.
+- The result is the predicted one: **zero** signals in the first 77
+  minutes (09:09Z to 10:26Z) — no alerts, no positions, not even skips,
+  while the collectors stayed healthy and `funding_history` grew to 971
+  points. Under `max_hold_h: 720` the same rule opened alerts
+  continuously, several per second. `FundingExpBps` scales with
+  `nHold`, so cutting the horizon from 180 intervals to 6–12 leaves
+  `EdgeBps` under `MinEdgeBps` on every lane once the ~30 bps round
+  trip is charged. Carry does not survive on its own economics at these
+  costs; the earlier trades existed only because the gate validated
+  against a horizon the exit never permitted. Funding rates move, so
+  this is not a permanent verdict — but it is the honest reading, and
+  it is the same conclusion the six-major and 46-symbol universes
+  reached before it (§ status log, 2026-08-27).
 
 ### T-101 Storage integration tests wiped the development database
 - status: DONE (2026-08-28). `internal/storage`'s `testStore` helper
