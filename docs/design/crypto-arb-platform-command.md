@@ -104,3 +104,37 @@ evidence is also the marketing material.
 - Phase 26 Production infra: k8s, HA Postgres, observability, backups,
   security hardening, staged deploys (T-089..T-094).
 - Phase 27 Production execution gate (T-095) — blocked on the gate above.
+
+## Parity review (2026-08-29)
+
+`docs/design/arbitragescanner-parity.md` compares the shipped tree to the
+competitor's public feature set. Three amendments to this command follow
+from it:
+
+1. **DEX is under-specified here.** Item 4 gives it one clause ("and DEX
+   aggregators … via public quote APIs") and the plan carried it as the
+   single-line T-076. It is the largest remaining product gap and now has
+   a design of record — `docs/design/dex-arbitrage.md` — decomposed into
+   T-110..T-116, with its own skill (`dex-arbitrage`) and agent
+   (`dex-engineer`). Scope is fixed there: aggregator quote APIs only, no
+   wallet keys, no signing, no contract deployment, no mempool, no
+   bridging; identity keyed on `(chain_id, contract_address)` and never on
+   a symbol; gas as a fixed per-transaction cost that sets each rule's
+   `min_notional`; CEX↔DEX as an inventory lane, not a round trip.
+   **DEX paper evidence never satisfies the production execution gate on
+   its own**, because the paper model omits MEV extraction — the dominant
+   adversarial cost on a real swap.
+
+2. **P2P is out, pending an operator decision.** The competitor scans P2P
+   fiat corridors; this command never mentioned them. Recommended against
+   on the merits (T-103): a P2P advertisement is not an executable quote,
+   so the lane cannot produce a campaign report, which breaks the evidence
+   rule this whole programme rests on. Any reversal needs a record under
+   `docs/decisions/` naming the corridors and the jurisdiction analysis.
+
+3. **Nothing may be sold that is not built.** T-102 (P0): the Desk and
+   Enterprise packages currently advertise a DEX tier with no
+   implementation behind it. Billing is still in Paddle sandbox, so
+   nothing has been mis-sold — it must not reach production in that state.
+   Generalised rule for the programme: an advertised package capability
+   must resolve to something that exists in the tree, enforced by a test.
