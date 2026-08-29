@@ -1368,7 +1368,15 @@ PAPER only; the vault's exchange credential group stays unread.
   "simulated balances" control is misleading.
 
 ### T-097 Carry entry gate admits positions that cannot pay their costs
-- status: TODO (evidence 2026-08-27 20:29–21:06 UTC, Binance USDT perps,
+- status: CODE FIXES DONE (2026-08-28, five of them — see (a)–(e) below);
+  what remains is a STRATEGY DECISION for the operator and the quant, not
+  an implementation. Corrected 2026-08-29: this line read "TODO" while the
+  body below recorded every guard as shipped, which reads as unfixed to
+  anyone scanning statuses. The open half is the last paragraph of this
+  entry: entries still come from thin alt perps where predicted funding is
+  positive and settled funding need not be, and the sample under the fixed
+  build is 3 closes.
+- Original finding (evidence 2026-08-27 20:29–21:06 UTC, Binance USDT perps,
   `min_carry_apr = 5 %`, 1000 quote per position). 412 positions closed,
   **0 winners, 0 funding settlements collected, net −2283.14 USDT**
   (≈ −55 bps each ≈ the four taker legs plus slippage); 1108 skipped
@@ -1442,7 +1450,17 @@ PAPER only; the vault's exchange credential group stays unread.
   settled-funding consistency belongs to the operator and the quant.
 
 ### T-098 The console dev proxy lets a browser/e2e run mutate live data
-- status: TODO (found 2026-08-27). `web/next.config.ts` proxies `/api`
+- status: DONE (2026-08-29). `web/next.config.ts` no longer defaults the
+  `/api` rewrite to anything: with `ARB_BACKEND_URL` unset it proxies
+  nothing and logs what to set. Pointing the console at a live backend is
+  now a deliberate act. Nothing else had to change — `playwright.config.ts`
+  already sets the variable to its isolated port 18080, and the Docker
+  image and Helm configmap set it explicitly — so only the local
+  `npm run dev` path was ever relying on the silent default. The second
+  half of the original fix note (evidence runs refusing writes from a
+  session that did not create the rule) is NOT done and is not this task:
+  it belongs with per-org run isolation.
+- Original finding (2026-08-27). `web/next.config.ts` proxied `/api`
   to `http://localhost:8080` by default — the live backend. During this
   evidence run a `screener.rule.update` landed at 21:06:15 UTC from a
   host client with the admin session; the carry rule was rewritten into
@@ -1593,6 +1611,76 @@ PAPER only; the vault's exchange credential group stays unread.
   `docs/decisions/` naming the fiat corridors offered and the jurisdiction
   analysis — the same convention that gates the production execution gate.
 - No implementation task exists until that record does.
+
+### T-104 Screener tier entitlement was advertised but enforced by nothing
+- status: DONE (2026-08-29). Filed from
+  `docs/decisions/2026-08-29-dex-package-capability-withdrawn.md` §6 and
+  implemented in the same change.
+- The defect: `venues.screener_tiers` appeared in every package document
+  and in the published table, and **no code read it**. `CheckVenues`
+  enforced `screener_fixed` and `screener_max` only, and its two call
+  sites passed venue ids with no tier map — so a Signal tenant could
+  enable Tier-2 venues, and the row that separated the packages gated
+  nothing. The vocabulary was stale in the other direction too: five
+  shipped, soaked, enabled-by-default Tier-3 venues (T-078) belonged to
+  no advertised tier at all.
+- Done: `"tier3"` added to `enumTiers` and to `schema.v1.json` (additive;
+  `schema_version` stays 1, so no override migration). Desk and
+  Institution now carry `["tier1","tier2","tier3"]`; Watch, Signal and
+  Operator are unchanged. New `Entitlements.CheckVenueTiers(venues,
+  tierOf)` refuses a venue whose tier the package does not include, with
+  key `venues.screener_tiers`. The tier lookup is **injected**, not
+  imported — `internal/api` passes `screener.VenueTiers` — so
+  `internal/entitlements` keeps the no-screener-import seam T-102
+  established. Wired into both call sites: settings apply and rule
+  create/update.
+- The gate fails closed: a venue no tier claims is refused rather than
+  waved through, since an unclassifiable venue is exactly the state T-102
+  found being sold. A missing lookup is refused for the same reason —
+  except with no venues to classify, where there is nothing to ask.
+- Tests: `entitlements/tiers_test.go` (per-package table, the refusal
+  key and message, fail-closed posture, and that Desk and Operator no
+  longer advertise identical tiers) and `api/screener_tier_test.go`
+  (the acceptance criterion through the real wiring: Operator + a Tier-3
+  venue → 403 `venues.screener_tiers`; the same rule under Desk → 200;
+  plus a guard that the injected lookup agrees with `screener.VenueTiers`
+  for every ordered venue).
+- Landed before Paddle left sandbox, which is what made it free:
+  tightening an unenforced limit after the first paying tenant would have
+  been a downgrade transition with a 30-day data grace (`packages.md`
+  §3.2, §4) instead of a correction.
+- NOT changed: no price moved, and the settings-apply path refuses rather
+  than coercing. Refusal is what `CheckVenues` already does there on
+  `screener_fixed`/`screener_max` — a Watch admin saving the 15-venue
+  `Defaults()` document was already refused before this change — so the
+  tier check adds no new failure shape.
+
+### T-105 Desk positioning: team tier, not venue tier
+- status: DONE (2026-08-29), docs only, **no price change**.
+- `packages.md` §2: the venue row states counts (Operator 10, Desk 15)
+  and carries a footnote saying the tier row is now enforced; the
+  triangular row carries a footnote stating the honest ceiling —
+  `platform.CompiledVenues` is `{binance}`, so "4" and "all supported"
+  are limits over a set of size one until T-050/T-051 land; the support
+  row stops implying Desk answers faster than Operator (both are
+  `response_hours: 8` in the shipped documents — "1 business day" and "8
+  business hours" were one commitment written two ways) and
+  differentiates on the shared Telegram channel. The paragraph recording
+  the Desk/Operator venue collision now records its resolution.
+- Same three corrections applied to the marketing surfaces, which is
+  where they actually mattered: `docs/site/copy/pricing.md` (Operator no
+  longer reads "1 business day"; Desk no longer claims "all supported
+  triangular venues" without the ceiling; a new bullet under "What every
+  package includes" states that triangular counts are limits, not shipped
+  breadth), `docs/user-guide/packages-and-billing.md` (venue counts,
+  support row, and the enforcement table now lists `screener_tiers` and
+  its 403), and `site/src/lib/packages.ts` (venue cells carry counts).
+  Copy lint passes: no figure without a `docs/campaigns/` citation.
+- Deliberately not done: no repricing. The $89 → $219 step is a team step
+  (3 seats to 12) plus 3.2× the rules, the write API and 400 days with
+  Parquet; the rejected alternative (Desk to ~$169) is argued in the
+  decision record §5.3 — it concedes a loss no customer experienced,
+  since nothing has been sold, and turns T-116 into a price rise.
 
 ### T-076 decomposition — DEX lanes (T-110..T-116)
 Design of record: `docs/design/dex-arbitrage.md`. Every task below is
@@ -2024,3 +2112,40 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   among them. Second-order effect recorded for the packaging write-up, not
   fixed here: Desk and Operator now have identical venue coverage, so that
   row no longer differentiates them.
+
+- 2026-08-29 — **PR #13 merged; T-104, T-105 and T-098 follow it.** The
+  operator settled the packaging question the decision record left open,
+  choosing the recommendation: hold the shipped prices and restore the
+  venue row from Tier-3 rather than with a price cut.
+  **T-104** made `venues.screener_tiers` real. It had been printed in
+  every package document and in the published table while no code read
+  it — `CheckVenues` enforced `screener_fixed` and `screener_max` only —
+  so a Signal tenant could enable Tier-2 venues and the row that
+  separated the packages gated nothing. `"tier3"` is now in the enum and
+  the schema (additive, no version bump), Desk and Institution carry
+  `["tier1","tier2","tier3"]`, and `CheckVenueTiers` refuses an
+  out-of-tier venue with key `venues.screener_tiers` on both settings
+  apply and rule create. The tier lookup is injected rather than
+  imported, so the policy layer keeps the no-screener-import seam T-102
+  established. Two tests I wrote failed on first run and both were right
+  to: the policy test caught the gate refusing a nil lookup when there
+  were no venues to classify (fixed — an empty request asks nothing of
+  the lookup), and the API test caught my own mis-modelling of the 403
+  envelope (the key is at `data.key`; the behaviour was already correct).
+  **T-105** carried the same corrections into the published copy, where
+  they mattered more than in the design doc: Desk no longer claims "all
+  supported triangular venues" without stating that
+  `platform.CompiledVenues` is `{binance}`, and Operator's support row no
+  longer reads "1 business day" against Desk's "8 business hours" when
+  both documents say `response_hours: 8`.
+  **T-098** removed the `/api` proxy default from `web/next.config.ts`.
+  It fell back to `http://localhost:8080` — the port the live paper stack
+  listens on — so `npm run dev` pointed the console at whatever evidence
+  run was in progress; on 2026-08-27 that cost a measurement. With
+  `ARB_BACKEND_URL` unset it now proxies nothing and says what to set.
+  Nothing else needed changing: Playwright, the Docker image and the Helm
+  configmap all set the variable explicitly.
+  **T-097 status corrected, not advanced**: the line read TODO while the
+  body recorded five shipped guards. The code fixes landed 2026-08-28;
+  what is open is a strategy decision about the entry universe, and the
+  sample under the fixed build is 3 closes.
