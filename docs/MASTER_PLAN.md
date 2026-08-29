@@ -460,6 +460,17 @@ data-flow,security,risk}.md`.
 - status: BLOCKED (by SKILL.md §79 first-exchange definition of done —
   gate 1 of okx-connector-checklist.md §0: the T-046 campaign verdict).
   Research gate (T-047) is cleared.
+- Blocker reviewed 2026-08-29 and CONFIRMED, not stale. The gate is the
+  T-046 campaign verdict on the first exchange, and T-046 is still
+  IN_PROGRESS with one sample. The gate is doing exactly what it was
+  written to do: a second live-trading connector is a large, ongoing
+  maintenance commitment, and building it before the first exchange has
+  a profitability verdict multiplies that commitment across a strategy
+  with no positive evidence. Every measurement so far is negative.
+  What unblocks it is a T-046 verdict, not a decision to proceed —
+  so the shortest path to venue breadth for LIVE trading runs through
+  T-046, not through T-050. (Screener venue breadth is a separate,
+  read-only concern and is not blocked: that is T-075.)
 - description / acceptance (restated 2026-08-26 from the verified facts,
   okx-connector-checklist.md §14): `books` channel connector with in-band
   snapshots (`prevSeqId = -1`) and a strict `prevSeqId == last seqId`
@@ -1368,14 +1379,40 @@ PAPER only; the vault's exchange credential group stays unread.
   "simulated balances" control is misleading.
 
 ### T-097 Carry entry gate admits positions that cannot pay their costs
-- status: CODE FIXES DONE (2026-08-28, five of them — see (a)–(e) below);
-  what remains is a STRATEGY DECISION for the operator and the quant, not
-  an implementation. Corrected 2026-08-29: this line read "TODO" while the
-  body below recorded every guard as shipped, which reads as unfixed to
-  anyone scanning statuses. The open half is the last paragraph of this
-  entry: entries still come from thin alt perps where predicted funding is
-  positive and settled funding need not be, and the sample under the fixed
-  build is 3 closes.
+- status: DONE (2026-08-29). The five code guards landed 2026-08-28
+  ((a)–(e) below); the strategy half was decided and implemented
+  2026-08-29 on the operator's delegation, and is described immediately
+  below. (Interim note, kept for the record: this line read "TODO" on
+  2026-08-29 while the body already recorded every guard as shipped.)
+- **The entry universe, decided 2026-08-29.** The open half was "entries
+  come from thin alt perps where PREDICTED funding is positive and
+  settled funding need not be". Reading the code showed this was
+  structural, not statistical: `meanSettled` returns `(0, 0)` when the
+  look-back finds nothing, and its caller then substitutes the predicted
+  rate for the settled mean — so `FHatBps = min(predicted, predicted)`
+  and the conservative estimator silently compares the venue's forecast
+  against itself. Every number downstream, breakeven included, then
+  rests on one unverified figure published by the venue whose perp we
+  are about to trade.
+  Two gates, both in `carryActive`: `funding_unconfirmed` refuses a
+  signal with no settled points at all (no evidence is not confirming
+  evidence), and `funding_not_consistent` refuses one whose settled mean
+  contradicts the forecast. `harvestActive` has refused the second since
+  it was written; carry did not — the same asymmetry this task found in
+  the breakeven gate. The first gate is added to BOTH strategies,
+  because the `n == 0` substitution defeats harvest's existing check in
+  exactly the same way. Tests: `alerts/funding_confirmation_test.go`.
+  Rejected alternative: a hand-maintained allow-list of liquid bases.
+  It is arbitrary, needs maintaining, biases the sample toward venues we
+  happened to pick, and does not address the actual defect — a liquid
+  base with an unconfirmed forecast is the same trap. Requiring the
+  evidence to exist is cheaper and generalises.
+  This narrows the universe deliberately, so the auto-paper sample rate
+  will fall. That is the point: a smaller sample of confirmed setups is
+  worth more than a larger one drawn from forecasts nothing corroborates.
+  Consequence for the §8 gate floors: the ≥ 30 closed positions / ≥ 90
+  settlements / 30 days clock effectively restarts on the narrowed
+  universe.
 - Original finding (evidence 2026-08-27 20:29–21:06 UTC, Binance USDT perps,
   `min_carry_apr = 5 %`, 1000 quote per position). 412 positions closed,
   **0 winners, 0 funding settlements collected, net −2283.14 USDT**
@@ -1500,7 +1537,27 @@ PAPER only; the vault's exchange credential group stays unread.
   at both `web/` and `site/`. Docs: `docs/devcontainer.md`.
 
 ### T-100 The carry gate validates against max_hold_h; the exit closes at the first settlement
-- status: TODO (found 2026-08-28), operator decision. Measured on the
+- status: DONE (2026-08-29, decided on the operator's delegation). The
+  converged exit now requires `settlements >= max(BreakevenN, 1)` rather
+  than `>= 1`. The number was already there and already trusted: the
+  entry gate admits a carry only when the `BreakevenN` settlements
+  needed to pay its round trip at the conservative rate fit inside
+  `max_hold_h`, so the take-profit had no business firing before that
+  many had actually been collected. Entry and exit now quote the same
+  figure, which is what makes the pair coherent rather than two
+  independently tuned thresholds.
+  `max(BreakevenN, 1)` covers positions opened before the T-097 entry
+  gate guaranteed `BreakevenN >= 1`: they keep the previous behaviour
+  rather than becoming unclosable by this branch. Every stop — margin,
+  basis blow-out, funding reversal, max hold — is still evaluated first
+  and stays immediate, so a position going wrong exits at once; only the
+  take-profit waits. `paperexec/perp.go`, tests in `skip_test.go`
+  (`converged_waits_for_breakeven` proves one settlement of 43 does NOT
+  close; `converged` proves a position whose breakeven is 1 does).
+  The old test asserted that one settlement closes the position — it
+  encoded the defect, which is why it had to be rewritten rather than
+  extended.
+- Original finding (2026-08-28), operator decision. Measured on the
   fixed T-097 build (container started 03:37:55Z, rule
   `rule-01M136G9FEH33Q987CEMP6CRAA`, `paper_size_quote` 1000): 13 closed
   carry positions, **all 13 negative**, total `pnl_quote` −71.51 USDT
@@ -1595,7 +1652,16 @@ PAPER only; the vault's exchange credential group stays unread.
   venue.
 
 ### T-103 P2P / fiat arbitrage — scope decision required before any work
-- status: BLOCKED on an operator decision record (P3)
+- status: CLOSED — DECLINED (2026-08-29). Decision record:
+  `docs/decisions/2026-08-29-p2p-fiat-arbitrage-not-built.md`. Declining
+  needs no jurisdiction analysis; only building would, which is why this
+  direction could be recorded now and its reversal cannot. Reversal
+  requires a superseding record naming counsel, the corridors offered and
+  the money-transmission and sanctions analysis for each. The record also
+  fixes the shape any reversal inherits (read-only ad-board monitor, no
+  paper ledger, its own risk disclosure, corridor allow-list, and no
+  contribution to the production execution gate).
+- Original framing (P3), retained:
 - The competitor scans P2P ad boards (Binance/Bybit/HTX P2P) across RUB,
   UAH, TRY, KZT and other fiat corridors. We have none of it, and the
   platform command does not mention it.
@@ -2149,3 +2215,45 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   body recorded five shipped guards. The code fixes landed 2026-08-28;
   what is open is a strategy decision about the entry universe, and the
   sample under the fixed build is 3 closes.
+
+- 2026-08-29 — **PR #14 merged; the four open decisions taken on the
+  operator's delegation.** Asked to decide rather than escalate, so each
+  is recorded with its reasoning and its rejected alternative.
+  **T-097 (entry universe) — DONE.** Reading the code turned a
+  statistical question into a structural one: `meanSettled` returns
+  `(0, 0)` with no history and the caller substitutes the predicted rate,
+  so `FHatBps = min(predicted, predicted)` and the conservative estimator
+  compares the venue's forecast against itself. Carry now refuses
+  `funding_unconfirmed` (no settled points) and `funding_not_consistent`
+  (settled mean contradicts the forecast); harvest gains the first, since
+  the same substitution defeated its existing sign check. Chose this over
+  a hand-maintained liquid-base allow-list, which is arbitrary, needs
+  maintaining and does not address the defect — a liquid base with an
+  unconfirmed forecast is the same trap.
+  **T-100 (exit rule) — DONE.** The converged exit waits for
+  `settlements >= max(BreakevenN, 1)` instead of `>= 1`. The right number
+  already existed and was already trusted at entry: a carry is admitted
+  only when `BreakevenN` settlements fit inside `max_hold_h`, so the
+  take-profit should not fire before that many are collected. Entry and
+  exit now quote one figure rather than two independently tuned
+  thresholds. Stops stay immediate; only the take-profit waits.
+  **T-103 (P2P) — CLOSED, DECLINED.**
+  `docs/decisions/2026-08-29-p2p-fiat-arbitrage-not-built.md`. Decidable
+  without legal input precisely because declining a regulated activity
+  needs no opinion while entering one does. The record fixes the shape
+  any reversal inherits so a future attempt starts from the constraints.
+  **T-050/T-051 — reviewed, blocker CONFIRMED, left blocked.** Gate 1 is
+  the T-046 campaign verdict and T-046 is still IN_PROGRESS with one
+  sample. Not stale: it exists to stop a second live-trading connector
+  being built before the first exchange has a verdict, on a strategy
+  whose every measurement so far is negative. The shortest path to LIVE
+  venue breadth therefore runs through T-046, not T-050. Screener venue
+  breadth is read-only, unblocked, and tracked separately as T-075.
+  Two existing tests had to be rewritten rather than extended, and both
+  were load-bearing: `TestStopsFire/converged` asserted that one
+  settlement closes a carry — it encoded the T-100 defect — and
+  `TestHarvestBreakevenMatchesSpec` seeded no settled history, so it was
+  exercising the predicted rate against itself, the very substitution
+  T-097 closes. Fixing the second surfaced that `UpsertFunding` is
+  ON CONFLICT DO NOTHING, so re-seeding a timestamp keeps the first rate;
+  the fixture now uses a fresh store per rate.
