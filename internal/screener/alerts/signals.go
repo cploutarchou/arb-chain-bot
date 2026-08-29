@@ -70,7 +70,14 @@ type Signal struct {
 	PredictedBps  decimal.Decimal // F̂₁ × 10 000, labelled "predicted"
 	MeanSettled   decimal.Decimal // per-interval fraction over the look-back
 	FHatBps       decimal.Decimal // min(predicted, mean settled) for §5.1
-	BreakevenN    int
+	// SettledN is how many SETTLED funding points backed MeanSettled.
+	// Zero means the look-back found none, in which case meanSettled's
+	// caller substitutes the predicted rate — so FHatBps degenerates to
+	// the predicted rate and stops being conservative at all. A signal
+	// with SettledN == 0 is therefore refused rather than scored: no
+	// evidence is not confirming evidence (T-097).
+	SettledN   int
+	BreakevenN int
 	// HoldIntervals is how many funding settlements fit in the rule's
 	// max hold; a carry whose breakeven needs more than this can never
 	// pay for its round trip within the time the rule will hold it.
@@ -359,9 +366,13 @@ func perpSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time)
 		}
 		mean, n := meanSettled(ctx, in.FundingHistory, p, lookback, now)
 		if n == 0 {
+			// Kept so MeanSettled and FHatBps stay populated for the
+			// alert text and the event payload; the gates below refuse
+			// the signal on SettledN == 0 rather than trusting it.
 			mean = predicted
 		}
 		s.MeanSettled = mean
+		s.SettledN = n
 
 		slip, buffer := r.SlipBps(), r.BufferBps()
 		switch strategy {
@@ -410,6 +421,19 @@ func carryActive(r screener.Rule, s Signal) (bool, string) {
 		return false, screener.SkipLiquidityUnknown
 	case !s.PredictedBps.IsPositive():
 		return false, "predicted_funding_not_positive"
+	case s.SettledN == 0:
+		// The carry thesis is funding, and a venue's PREDICTED rate is
+		// its own forecast. With no settled history the look-back
+		// substitutes that forecast for its own confirmation, so every
+		// downstream number derives from one unverified figure. This is
+		// the entry universe T-097 left open: thin alt perps where
+		// predicted funding is positive and settled funding need not be.
+		return false, "funding_unconfirmed"
+	case !s.FHatBps.IsPositive():
+		// Settled funding contradicts the forecast. harvestActive has
+		// refused this since it was written; carry did not, which is the
+		// same asymmetry T-097 found in the breakeven gate.
+		return false, "funding_not_consistent"
 	case s.EdgeBps.LessThan(r.MinEdgeBps()):
 		return false, "below_min_edge"
 	case s.BreakevenN > s.HoldIntervals:
@@ -438,6 +462,11 @@ func harvestActive(r screener.Rule, s Signal) (bool, string) {
 		return false, screener.SkipSuspectMismatch
 	case s.LiquidityUnknown:
 		return false, screener.SkipLiquidityUnknown
+	case s.SettledN == 0:
+		// Same defect as the carry branch: with no settled points the
+		// look-back substitutes the predicted rate, so the check below
+		// compares the forecast against itself (T-097).
+		return false, "funding_unconfirmed"
 	case !s.FHatBps.IsPositive():
 		return false, "funding_not_positive"
 	case s.FHatBps.LessThan(r.MinFundingBps()):

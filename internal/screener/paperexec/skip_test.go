@@ -316,14 +316,23 @@ func TestStopsFire(t *testing.T) {
 		name          string
 		spotBid, mark string
 		perpAsk       string
-		want          string
+		rate          string // settled + predicted funding rate per 8 h
+		settle        bool   // advance past the first settlement first
+		want          string // "" = the position must stay OPEN
 	}{
-		{"margin_stop", "75200", "75135", "75200", "margin_stop"},
-		{"basis_stop", "50000", "50050", "50600", "basis_stop"}, // basis_now 120 bps − 20 ≥ 100
-		// A converged basis only closes once the position has collected a
-		// settlement (T-097): the "now" below is one funding interval on,
-		// so the accrual runs before the exit is evaluated.
-		{"converged", "50000", "50050", "49990", "converged"}, // basis_now −2 ≤ 0
+		{"margin_stop", "75200", "75135", "75200", "0.0001", false, "margin_stop"},
+		{"basis_stop", "50000", "50050", "50600", "0.0001", false, "basis_stop"}, // basis_now 120 bps − 20 ≥ 100
+		// T-100. At 1 bps per 8 h the round trip needs 43 settlements, so
+		// one settlement pays about a sixtieth of what the position owes
+		// and the take-profit must NOT fire. This case previously
+		// asserted the opposite, which is precisely the configuration
+		// that closed 13 of 13 carries at a loss, every one `converged`
+		// with `settlements = 1`.
+		{"converged_waits_for_breakeven", "50000", "50050", "49990", "0.0001", true, ""},
+		// Same book at 50 bps per 8 h: breakeven is 1 settlement, so the
+		// one collected settlement does pay the round trip and the
+		// position converges.
+		{"converged", "50000", "50050", "49990", "0.005", true, "converged"}, // basis_now −2 ≤ 0
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -333,22 +342,32 @@ func TestStopsFire(t *testing.T) {
 			h.balance(screener.VenueBinance, "USDT:perp", "20000")
 			mmr := d("0.004")
 			r := h.rule(carryRule(screener.RuleKindCarry, &screener.RuleParams{MMR: &mmr}))
+			// Settled history at the same rate: the entry gate refuses a
+			// carry whose funding is unconfirmed by settled points
+			// (T-097), so the look-back has to be populated for the
+			// position to open at all.
 			for i := 1; i <= 30; i++ {
-				_ = h.svc.Funding.UpsertFunding(ctx, screener.VenueBinance, "BTC", t0.Add(-time.Duration(i*8)*time.Hour), "0.00012")
+				_ = h.svc.Funding.UpsertFunding(ctx, screener.VenueBinance, "BTC", t0.Add(-time.Duration(i*8)*time.Hour), tc.rate)
 			}
-			setCarryBook(h.svc.Book, t0, "49998", "50000", "50100", "50102", "50050", "0.0001", t0.Add(4*time.Hour))
+			setCarryBook(h.svc.Book, t0, "49998", "50000", "50100", "50102", "50050", tc.rate, t0.Add(4*time.Hour))
 			h.open(r, t0)
 			now := t0.Add(time.Hour)
-			if tc.want == "converged" {
+			if tc.settle {
 				// Past the first settlement, with its settled rate
 				// published, so funding actually accrues; the stop cases
 				// stay at one hour to prove stops never wait (T-097).
-				_ = h.svc.Funding.UpsertFunding(ctx, screener.VenueBinance, "BTC", t0.Add(4*time.Hour), "0.0001")
+				_ = h.svc.Funding.UpsertFunding(ctx, screener.VenueBinance, "BTC", t0.Add(4*time.Hour), tc.rate)
 				now = t0.Add(5 * time.Hour)
 			}
-			setCarryBook(h.svc.Book, now, tc.spotBid, d(tc.spotBid).Add(decimal.NewFromInt(2)).String(), d(tc.perpAsk).Sub(decimal.NewFromInt(2)).String(), tc.perpAsk, tc.mark, "0.0001", t0.Add(4*time.Hour))
+			setCarryBook(h.svc.Book, now, tc.spotBid, d(tc.spotBid).Add(decimal.NewFromInt(2)).String(), d(tc.perpAsk).Sub(decimal.NewFromInt(2)).String(), tc.perpAsk, tc.mark, tc.rate, t0.Add(4*time.Hour))
 			h.x.Tick(ctx, now)
 			pos := h.positions(r.ID)[0]
+			if tc.want == "" {
+				if pos.Status == StatusClosed {
+					t.Fatalf("closed before breakeven, which is the T-100 defect: %+v", pos)
+				}
+				return
+			}
 			if pos.Status != StatusClosed {
 				t.Fatalf("not closed: %+v", pos)
 			}
