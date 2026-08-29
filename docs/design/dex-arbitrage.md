@@ -169,7 +169,15 @@ stack:
   `amountOut` at the requested size, plus DEX-only fields carried
   alongside (chain, block, gas estimate, route hash).
 - Entitlement: the `"dex"` screener tier and `DexEnabled` become real and
-  enforced here (T-102 keeps them switched off until then).
+  enforced here. T-102 switched them off on 2026-08-29 and made the
+  refusal enforced: `entitlements.DexImplemented` is `false`, and
+  `Validate` rejects any package, stored document or tenant override that
+  advertises DEX. The tier name stays in `enumTiers` and `schema.v1.json`,
+  so re-enabling it needs no schema bump and no override migration — T-116
+  flips one constant **in the same change that registers the first DEX
+  venue**, which `TestDexCapabilityMatchesTree` enforces in both
+  directions (flipped without a venue fails; a venue without the flip
+  fails as under-selling).
 
 ## 8. Verification status
 
@@ -193,4 +201,6 @@ whether the chain's finality makes a 2-block staleness gate sensible.
 - **T-113** Gas oracle + cost model + `min_notional` derivation.
 - **T-114** CEX↔DEX lane (inventory model, `NetworkStatus` gating).
 - **T-115** DEX↔DEX same-chain lane.
-- **T-116** Paper execution, nightly report, MEV caveat, entitlement flip.
+- **T-116** Paper execution, nightly report, MEV caveat, entitlement flip
+  (`DexImplemented` → true, `"dex"` restored to the Desk and Institution
+  documents and to the published copy T-102 withdrew).
