@@ -278,6 +278,23 @@ func TestHarvestBreakevenMatchesSpec(t *testing.T) {
 		p.FundingRate = d(rate)
 		p.Bid = d("49990") // basis −2 bps
 		svc.Book.SetPerp(p)
+		// Settled history at the same rate. Without it the look-back
+		// finds nothing, ComputeSignals substitutes the predicted rate
+		// for its own confirmation, and the gate refuses the signal as
+		// `funding_unconfirmed` (T-097) — so the breakeven arithmetic
+		// below would never be reached. Seeding at the same rate leaves
+		// FHatBps = min(predicted, settled) = predicted, which is what
+		// this test is about.
+		//
+		// A FRESH store per rate: UpsertFunding is ON CONFLICT DO
+		// NOTHING (memory.go), so re-seeding the same timestamps would
+		// silently keep the first rate and test the wrong number.
+		fs := screener.NewMemoryFundingStore()
+		for i := 1; i <= harvestLookback+2; i++ {
+			_ = fs.UpsertFunding(context.Background(), screener.VenueBinance, "BTC",
+				t0.Add(-time.Duration(i*8)*time.Hour), rate)
+		}
+		in.FundingHistory = fs
 	}
 	set("0.0001") // 1 bps/8 h: costs 43 → breakeven 43 → skip
 	s := ComputeSignals(context.Background(), in, r, t0)[0]
