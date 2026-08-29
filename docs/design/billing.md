@@ -235,7 +235,7 @@ them off. Tax category: `standard` (SaaS). Currency: USD; let Paddle localise.
 |  | Signal annual | year | 390.00 | none |
 | **Operator** — all Tier-1 + Tier-2 venues, 25 rules, carry + triangular paper strategies, e-mail alerts, read API | Operator monthly | month | 89.00 | none |
 |  | Operator annual | year | 890.00 | none |
-| **Desk** — all CEX + DEX aggregators, 80 rules, all five paper strategies, webhook alerts, read/write API, 12 seats | Desk monthly | month | 219.00 | none |
+| **Desk** — all CEX venues, 80 rules, all five paper strategies, webhook alerts, read/write API, 12 seats | Desk monthly | month | 219.00 | none |
 |  | Desk annual | year | 2190.00 | none |
 | **Institution** — quoted; annual invoice via Paddle | Institution annual (per quote) | year | from 6900.00 (custom) | pilot by agreement |
 | **Seat add-on** (Desk, Institution) | Extra seat | month | 8 % of tier monthly price (17.52 / quoted) | — |

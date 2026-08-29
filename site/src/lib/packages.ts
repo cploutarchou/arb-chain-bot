@@ -28,7 +28,7 @@ export const CAPABILITY_ROWS: CapabilityRow[] = [
       "3 fixed",
       "6 (Tier-1 set)",
       "all Tier-1 and Tier-2",
-      "all CEX plus DEX aggregators",
+      "all CEX venues",
       "all, plus venue requests",
     ],
   },
