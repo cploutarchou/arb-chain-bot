@@ -1572,7 +1572,10 @@ PAPER only; the vault's exchange credential group stays unread.
 - Why the T-097 `breakeven_exceeds_hold` gate did not bind: the rule
   sets `max_hold_h: 720`, so `HoldIntervals` = 180 and the gate approves
   against a 30-day horizon the exit never permits.
-- Two candidate fixes, not implemented: (a) settings only — reduce
+- Two candidate fixes, not implemented **at the time of writing —
+  SUPERSEDED, see the 2026-08-30 reconciliation at the end of this
+  entry: both were subsequently applied, in the order recommended here**:
+  (a) settings only — reduce
   `max_hold_h` to a horizon the exit can honour (24–48 h), which will
   likely return carry entries to zero, the honest result at these costs;
   (b) code — require `po.Settlements >= po.BreakevenN` for the converged
@@ -1601,6 +1604,48 @@ PAPER only; the vault's exchange credential group stays unread.
   this is not a permanent verdict — but it is the honest reading, and
   it is the same conclusion the six-major and 46-symbol universes
   reached before it (§ status log, 2026-08-27).
+
+- **Reconciled 2026-08-30.** This entry had grown three narratives that
+  never met: a DONE status describing fix (b), a bullet recommending (a)
+  be tried first, and a measurement showing (a) had already been tried.
+  Both fixes exist. (a) was applied as a rule setting on 2026-08-28
+  (`max_hold_h` 720 → 48) and measured: zero signals. (b) landed as code
+  on 2026-08-29 (`settlements >= max(BreakevenN, 1)` on the converged
+  exit). They are different levers — one a per-rule setting, one the exit
+  condition — and they compose rather than conflict.
+- Process note, recorded because it explains the ordering: (b) was
+  implemented without reading this entry to its end, so it went in
+  despite the bullet above recommending (a) first, and without knowing
+  that (a) had already been run — that measurement was sitting in an
+  unmerged PR (#12, merged 2026-08-29). No harm resulted, since the two
+  compose, but the ordering was not a considered choice at the time.
+- **How they interact, which is the useful part.** Breakeven charges
+  `FeesRTBps + 4 × slip + buffer` ≈ 43 bps, and `BreakevenN` settlements
+  must fit inside `max_hold_h`. Expressed as the funding rate the lane
+  needs — which is interval-independent, so it holds for 8 h and 4 h
+  perps alike:
+  - at `max_hold_h: 48`, breakeven must clear in ≤ 48 h, requiring
+    **≈ 78.5 % APR sustained**. Effectively nothing qualifies, which is
+    why (a) produced zero signals — and note the gate that binds is
+    `breakeven_exceeds_hold`, not only `EdgeBps < MinEdgeBps`.
+  - at `max_hold_h: 720`, the same arithmetic needs only **≈ 5.2 % APR**.
+    The rule's `min_carry_apr` was 5 %, so it was admitting almost
+    exactly the marginal case — which is why entries flowed continuously.
+    But collecting that breakeven then takes **43 settlements: ~14 days
+    on 8 h funding, ~7 days on 4 h**, and at 0.5 bps per interval, ~29
+    and ~14 days respectively.
+  So with (a) in force (b) is **inert** — there are no positions to
+  exit — and with the long horizon restored (b) binds and produces
+  exactly the risk profile the superseded bullet warned about.
+- **The horizon is therefore not a tuning knob.** It is a choice between
+  no trades and multi-week holds. (b) remains the right structural fix
+  independent of which is chosen, because entry and exit must quote the
+  same number or the gate is validating against a horizon the exit will
+  not honour — that was the original defect. But (b) does not rescue the
+  economics and must not be read as having done so: the T-100 code fix
+  makes the lane *coherent*, not *profitable*.
+- Open question this leaves, filed as **T-106**: whether the carry lane
+  stays enabled at all.
 
 ### T-101 Storage integration tests wiped the development database
 - status: DONE (2026-08-28). `internal/storage`'s `testStore` helper
@@ -1768,6 +1813,50 @@ PAPER only; the vault's exchange credential group stays unread.
   Parquet; the rejected alternative (Desk to ~$169) is argued in the
   decision record §5.3 — it concedes a loss no customer experienced,
   since nothing has been sold, and turns T-116 into a price rise.
+
+### T-106 Carry lane viability — keep, restrict or retire
+- status: OPEN — **operator decision required** (P1, product/strategy).
+  Deliberately not decided: this is a question about what the product
+  measures, not a defect with a right answer in the code.
+- What forces the question. T-100 is now coherent — entry and exit quote
+  the same breakeven — and the arithmetic that falls out of it is stark.
+  Charging `FeesRTBps + 4 × slip + buffer` ≈ 43 bps, the lane needs
+  **≈ 78.5 % APR sustained funding** to break even inside a 48 h hold,
+  or **≈ 5.2 % APR** if it may hold 720 h — at which point it must hold
+  for 43 settlements, roughly 7–14 days depending on funding interval.
+  Measured 2026-08-28 at 48 h: **zero signals in 77 minutes**, collectors
+  healthy. Measured earlier at 720 h: continuous entries, and of the
+  closes that were measured, all negative.
+  T-097's `funding_unconfirmed` / `funding_not_consistent` gates
+  (2026-08-29) narrow the universe further, on purpose.
+- The three options, honestly stated:
+  - **(i) Retire the lane.** Cleanest, and the evidence points at it.
+    Costs the ability to catch a genuine funding regime, and discards
+    working, tested code that is now internally consistent.
+  - **(ii) Keep it enabled at a horizon the exit can honour (48 h), and
+    treat zero signals as the correct output.** The lane fires only in a
+    real funding spike. Cheap: no positions means no risk and almost no
+    cost. RECOMMENDED.
+  - **(iii) Keep the 720 h horizon.** Rejected on the merits: it buys
+    entries only by accepting 1–4 week holds, concentrating risk exactly
+    as the superseded T-100 bullet warned, on a lane with no positive
+    evidence.
+- Recommendation: **(ii)**. A lane that fires rarely and correctly is
+  worth more than one retired, and it now costs almost nothing to leave
+  running. But the consequence must be stated plainly rather than
+  discovered later: under (ii) **carry contributes approximately nothing
+  to the §8 evidence floors** (≥ 30 closed positions, ≥ 90 settlements,
+  30 days). If the goal is reaching the production execution gate, carry
+  is not the lane that gets there — cross-venue spot is. Choosing (ii)
+  is choosing to stop counting on carry for evidence.
+- Whichever is chosen, one rule holds: a falling sample rate is a signal
+  about the universe, not a reason to loosen the gates. The gates were
+  added because the earlier sample was drawn from forecasts nothing
+  corroborated (T-097) and closed before the thesis was tested (T-100).
+- Acceptance: the decision recorded here (and under `docs/decisions/` if
+  it changes what the product offers), the rule's `max_hold_h` set to
+  match it, and `docs/user-guide` / package copy checked for any claim
+  that assumes carry produces signals.
 
 ### T-076 decomposition — DEX lanes (T-110..T-116)
 Design of record: `docs/design/dex-arbitrage.md`. Every task below is
@@ -2278,3 +2367,31 @@ green after the batch, with golangci-lint at 0 issues and Playwright
   T-097 closes. Fixing the second surfaced that `UpsertFunding` is
   ON CONFLICT DO NOTHING, so re-seeding a timestamp keeps the first rate;
   the fixture now uses a fresh store per rate.
+
+- 2026-08-30 — **T-100 reconciled; T-106 filed.** PR #12 merged on
+  2026-08-29 brought in the 2026-08-28 measurement of fix (a), and T-100
+  was then carrying three narratives that never met: a DONE status for
+  fix (b), a bullet saying (a) should be tried first, and the record of
+  (a) having already been tried. All three are now joined up, the
+  candidate-fixes bullet is marked SUPERSEDED rather than deleted (the
+  ordering it recommended is part of the record), and the process miss is
+  stated: (b) went in without reading the entry to its end, and without
+  knowing (a) had already been run, because that measurement was in an
+  unmerged PR.
+  The reconciliation's substance is the interaction, expressed as the
+  funding rate the lane needs — interval-independent, so it holds for 8 h
+  and 4 h perps alike. Against ~43 bps of charged cost, breakeven inside
+  a 48 h hold needs **≈ 78.5 % APR sustained**; inside 720 h it needs
+  **≈ 5.2 % APR** but must then be held 43 settlements, ~7–14 days. The
+  rule's `min_carry_apr` was 5 %, so it was admitting almost exactly the
+  marginal case. So the horizon is not a tuning knob: it is a choice
+  between no trades and multi-week holds. Fix (b) remains right
+  structurally — entry and exit must quote the same number — but it makes
+  the lane coherent, not profitable, and the entry now says so.
+  **T-106** puts the resulting question to the operator rather than
+  answering it: keep the carry lane, restrict it, or retire it.
+  Recommendation is (ii), keep it at a horizon the exit can honour and
+  treat zero signals as the correct output — with the consequence stated
+  plainly, that carry then contributes approximately nothing to the §8
+  evidence floors, and cross-venue spot is the lane that reaches the
+  production gate.
