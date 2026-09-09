@@ -1017,7 +1017,9 @@ func (e *Engine) Run(ctx context.Context) error {
 				e.log.Warn("paper session registration failed", "error", err)
 			}
 		}
-		marker = portfolio.BookMarker{Books: books, Markets: scoped}
+		// Liquidation marks: stranded exposure is valued through the
+		// book's depth net of the taker fee, not at the top level.
+		marker = portfolio.BookMarker{Books: books, Markets: scoped, Fees: sched, Depth: 50}
 		executor := simulation.NewPaper(
 			books, rulesLookup(rules), sched,
 			simulation.WallClock{}, simulation.RealWaiter{}, marker,
