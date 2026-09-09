@@ -102,6 +102,7 @@ func (t telegramServices) Balances() []telegram.BalanceView {
 func (t telegramServices) PnL() []telegram.PnLView {
 	t.e.mu.RLock()
 	port := t.e.port
+	marker := t.e.marker
 	t.e.mu.RUnlock()
 	if port == nil {
 		return nil
@@ -112,7 +113,7 @@ func (t telegramServices) PnL() []telegram.PnLView {
 			Asset:    string(a),
 			Realized: port.Realized(a).String(),
 			Fees:     port.FeesPaid(a).String(),
-			Loss:     port.DailyLoss(a).String(),
+			Loss:     port.DailyLoss(a, marker).String(),
 			Drawdown: port.CurrentDrawdown(a).StringFixed(4),
 		})
 	}

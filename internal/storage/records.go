@@ -171,19 +171,29 @@ func (s *Store) InsertCycle(ctx context.Context, sessionID string, res *executio
 	// SlippageBps (planned return − realized return, both per unit of
 	// input actually deployed) is only meaningful for cycles that
 	// converted back to the start asset; other outcomes store NULL.
-	var slippage any
+	var slippage, plannedBps, actualBps any
 	if slippageMeasurable(res.Outcome) {
 		slippage = res.SlippageBps
+		plannedBps = res.PlannedReturnBps
+		actualBps = res.ActualReturnBps
 	}
+	// pnl_amount stays the marked total for readers that predate the
+	// breakdown; realized_pnl (cash basis) and exposure_mark are the two
+	// components, persisted separately so a mark-to-market estimate can
+	// never be summed as if it were realized.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO paper_cycles (
 			id, session_id, opportunity_id, outcome, pnl_amount, pnl_asset,
-			fees, slippage_bps, exposure, started_at, settled_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			fees, slippage_bps, exposure, started_at, settled_at,
+			realized_pnl, exposure_mark, input_consumed, final_amount,
+			planned_return_bps, actual_return_bps
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT (id) DO NOTHING`,
 		res.CycleID, sessionID, nullStr(res.OpportunityID), string(res.Outcome),
 		res.TotalPnL, string(res.StartAsset), fees, slippage, exposure,
-		res.StartedAt, res.SettledAt); err != nil {
+		res.StartedAt, res.SettledAt,
+		res.RealizedPnL, res.ExposureMark, res.InputConsumed, res.FinalAmount,
+		plannedBps, actualBps); err != nil {
 		return fmt.Errorf("storage: cycle: %w", err)
 	}
 	for _, o := range res.Orders {

@@ -221,15 +221,55 @@ func (p *Portfolio) FeesPaid(asset exchange.Asset) decimal.Decimal {
 	return p.fees[asset]
 }
 
-// DailyLoss reports the current loss magnitude vs initial for the risk
-// engine (0 when flat/profitable). Computed on realized only — marked
-// exposure swings are drawdown's business.
-func (p *Portfolio) DailyLoss(start exchange.Asset) decimal.Decimal {
+// ExposureMark values the stranded exposure in one start asset with the
+// given marker. Unmarkable assets contribute nothing and are returned so
+// the caller can say so; a nil marker marks nothing.
+func (p *Portfolio) ExposureMark(start exchange.Asset, marker Marker) (decimal.Decimal, []exchange.Asset) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	r := p.realized[start]
-	if r.IsNegative() {
-		return r.Neg()
+	return p.exposureMarkLocked(start, marker)
+}
+
+func (p *Portfolio) exposureMarkLocked(start exchange.Asset, marker Marker) (decimal.Decimal, []exchange.Asset) {
+	var mark decimal.Decimal
+	var unmarked []exchange.Asset
+	for asset, amt := range p.exposure {
+		if amt.IsZero() {
+			continue
+		}
+		if marker != nil {
+			if v, ok := marker.Mark(asset, amt, start); ok {
+				mark = mark.Add(v)
+				continue
+			}
+		}
+		unmarked = append(unmarked, asset)
+	}
+	return mark, unmarked
+}
+
+// NetPnL is the session's realized (cash-basis) PnL plus the current mark
+// of stranded exposure, per start asset. Realized alone treats a
+// mid-cycle failure as a total loss of the deployed input even though the
+// intermediate asset is still held; the marked figure is the economic
+// position. Unmarkable exposure is valued at zero (the conservative
+// side) and listed.
+func (p *Portfolio) NetPnL(start exchange.Asset, marker Marker) (net decimal.Decimal, unmarked []exchange.Asset) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	mark, unmarked := p.exposureMarkLocked(start, marker)
+	return p.realized[start].Add(mark), unmarked
+}
+
+// DailyLoss reports the current loss magnitude for the risk engine and
+// the console (0 when flat or profitable): the negative part of NetPnL,
+// so stranded exposure counts at its mark rather than as a total loss.
+// A nil marker degrades to the cash basis, which over-states the loss —
+// the safe direction for a limit.
+func (p *Portfolio) DailyLoss(start exchange.Asset, marker Marker) decimal.Decimal {
+	net, _ := p.NetPnL(start, marker)
+	if net.IsNegative() {
+		return net.Neg()
 	}
 	return decimal.Zero
 }
