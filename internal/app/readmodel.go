@@ -172,6 +172,18 @@ func (r readModel) Health() any {
 	if st.Paper != nil {
 		out["paper"] = st.Paper
 	}
+	// P1-8: the venue clock offset the RISK_CLOCK_UNSAFE gate reads.
+	// healthy is false until the first successful probe.
+	if clock := r.e.currentClock(); clock != nil {
+		clockView := map[string]any{
+			"healthy":   clock.Healthy(),
+			"offset_ms": float64(clock.Offset().Microseconds()) / 1000,
+		}
+		if err := clock.LastError(); err != nil {
+			clockView["last_error"] = err.Error()
+		}
+		out["clock"] = clockView
+	}
 	// BL-18: queue depths (outbox persistence, paper's inbound event
 	// channel) — the engine-derived half; recorder queue depth and
 	// process/DB stats are assembled at the API layer, which has no

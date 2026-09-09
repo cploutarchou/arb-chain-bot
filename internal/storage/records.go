@@ -14,12 +14,13 @@ import (
 // Record is one outbox item. Kind selects the writer; payloads are the
 // domain structs (already immutable evidence).
 type Record struct {
-	Kind        string // "opportunity" | "cycle" | "risk_event"
+	Kind        string // "opportunity" | "cycle" | "risk_event" | "ledger_snapshot"
 	Opportunity *opportunity.Opportunity
 	Decision    *risk.Decision
 	Cycle       *execution.CycleResult
 	SessionID   string
 	RiskEvent   *RiskEvent
+	Ledger      *LedgerSnapshot
 }
 
 // RiskEvent is one persisted risk-engine event (BL-31): a circuit-breaker

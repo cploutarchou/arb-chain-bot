@@ -111,6 +111,7 @@ type Engine struct {
 	starts    []exchange.Asset  // this run's starting assets (E4 accessor source)
 	catalog   []exchange.Market // full bootstrap metadata slice, retained for Catalog() (E2)
 	marker    portfolio.BookMarker
+	clock     *marketdata.ClockMonitor // this run's venue clock monitor (P1-8)
 	ready     bool
 	sessionID string          // current paper/persistence session id; rotated by ResetPaper (BL-10)
 	outbox    *storage.Outbox // this run's outbox, nil without persistence (BL-18 queue depth)
@@ -502,6 +503,14 @@ func (e *Engine) currentReservation() *reservation.Manager {
 	return e.resv
 }
 
+// currentClock exposes this run's venue clock monitor (nil before Run
+// reaches it or after it returns).
+func (e *Engine) currentClock() *marketdata.ClockMonitor {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.clock
+}
+
 func (e *Engine) currentBreakers() *risk.Registry {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -635,7 +644,15 @@ func (e *Engine) ResetPaper(ctx context.Context) error {
 	if err := pap.Reset(initial); err != nil {
 		return err
 	}
+	previous := e.currentSessionID()
 	e.setSessionID(newSession)
+	// The reset session is finished: end it so a later restart resumes
+	// the new one, never the ledger the operator just discarded.
+	if e.Store != nil && previous != "" {
+		if err := e.Store.EndPaperSession(ctx, previous, time.Now()); err != nil {
+			e.log.Warn("ending reset paper session failed", "session", previous, "error", err)
+		}
+	}
 	return nil
 }
 
@@ -646,6 +663,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.mu.Lock()
 	e.scn, e.topo, e.pap, e.rctl, e.port = nil, nil, nil, nil, nil
 	e.feed, e.resv, e.brk, e.books, e.starts, e.catalog = nil, nil, nil, nil, nil, nil
+	e.clock = nil
 	e.marker = portfolio.BookMarker{}
 	e.ready = false
 	e.outbox = nil
@@ -821,6 +839,24 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 		initial[exchange.Asset(asset)] = v
 	}
+	// P1-6: a restart continues the open paper session's ledger when the
+	// configured starting balances still match it, so a restart can never
+	// reset a loss, a drawdown or stranded exposure. The snapshot's cash
+	// becomes the reservation ledger's baseline; the portfolio state is
+	// restored once the portfolio exists (below).
+	configuredInitial := cloneAssets(initial)
+	resume, resumed := e.resumeLedger(runCtx, mode, configuredInitial)
+	if resumed {
+		sessionID = resume.SessionID
+		e.setSessionID(sessionID)
+		initial = cloneAssets(resume.Balances)
+		for a, v := range resume.FoldedReserved {
+			e.log.Warn("paper ledger resumed with capital still reserved by the previous process; released to available",
+				"asset", string(a), "amount", v.String())
+		}
+		e.log.Info("paper session resumed", "session", sessionID, "snapshot_at", resume.At,
+			"cycles", resume.Portfolio.Cycles)
+	}
 	resv := reservation.New(initial, newULID, time.Now)
 
 	wsHost := e.WSHost
@@ -922,7 +958,15 @@ func (e *Engine) Run(ctx context.Context) error {
 		},
 		Out: make(chan scanner.Event, 256),
 	}
-	scn.ClockHealthy.Store(true)
+	// P1-8: the clock monitor polls the venue's server time and the gate
+	// reads it every tick. Until its first successful probe the clock is
+	// unverified, which the risk engine reports as RISK_CLOCK_UNSAFE —
+	// qualification starts only once the offset has been measured.
+	clock := marketdata.NewClockMonitor(rest)
+	scn.ClockHealthy.Store(clock.Healthy())
+	e.mu.Lock()
+	e.clock = clock
+	e.mu.Unlock()
 	e.attachRunObservers(scn, feed)
 	if e.Strategy != nil {
 		// E6: register the hot-swap callback ONCE across the engine's
@@ -958,11 +1002,14 @@ func (e *Engine) Run(ctx context.Context) error {
 	var paperEng *paper.Engine
 	var paperIn chan scanner.Event
 	var marker portfolio.BookMarker // set in PAPER mode; the ledger refresh runs only then
-	port := portfolio.New(resv, initial)
+	port := portfolio.New(resv, configuredInitial)
+	if resumed {
+		port.Restore(resume.Portfolio)
+	}
 	if mode == config.ModePaper {
 		if e.Store != nil {
 			balances := map[string]string{}
-			for a, v := range initial {
+			for a, v := range configuredInitial {
 				balances[string(a)] = v.String()
 			}
 			if err := e.Store.EnsurePaperSession(runCtx, sessionID, string(mode), balances, 1, e.cfg.Seed); err != nil {
@@ -1039,6 +1086,10 @@ func (e *Engine) Run(ctx context.Context) error {
 				// the next evaluation gates on them and a breached limit
 				// opens its breaker at once, not on the next tick.
 				ledger.refresh(time.Now(), port, marker, starts, scn.CurrentLimits(), breakers)
+				if outbox != nil {
+					snap := buildLedgerSnapshot(e.currentSessionID(), string(binance.ID), time.Now(), resv, port, marker, starts)
+					outbox.Enqueue(storage.Record{Kind: "ledger_snapshot", Ledger: &snap})
+				}
 				if e.Metrics != nil && res.Outcome == execution.OutcomeAllFilled {
 					e.Metrics.ObserveSlippage(string(binance.ID), res.SlippageBps.InexactFloat64())
 				}
@@ -1177,6 +1228,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	spawn(&producers, runCtx, feed.Run)
 	spawn(&producers, runCtx, scn.Run)
+	spawn(&producers, runCtx, clock.Run)
 	spawn(&producers, runCtx, func(c context.Context) error { return e.consumeEvents(c, scn, paperIn, outbox) })
 	if paperEng != nil {
 		spawn(&producers, runCtx, paperEng.Run)
@@ -1218,6 +1270,7 @@ loop:
 			// steal part of the delta window from one another.
 			e.msgRate.sample(now, feed.Stats.Frames.Load())
 			feedPol.tick(now)
+			scn.ClockHealthy.Store(clock.Healthy())
 			if paperEng != nil {
 				ledger.refresh(now, port, marker, starts, scn.CurrentLimits(), breakers)
 			}

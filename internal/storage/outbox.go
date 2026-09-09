@@ -19,6 +19,7 @@ type RecordWriter interface {
 	InsertOpportunity(ctx context.Context, op *opportunity.Opportunity, dec *risk.Decision) error
 	InsertCycle(ctx context.Context, sessionID string, res *execution.CycleResult) error
 	InsertRiskEvent(ctx context.Context, e RiskEvent) error
+	InsertLedgerSnapshot(ctx context.Context, snap *LedgerSnapshot) error
 	Ping(ctx context.Context) error
 }
 
@@ -211,6 +212,8 @@ func (o *Outbox) write(ctx context.Context, rec Record) {
 		if rec.RiskEvent != nil {
 			err = o.Store.InsertRiskEvent(ctx, *rec.RiskEvent)
 		}
+	case "ledger_snapshot":
+		err = o.Store.InsertLedgerSnapshot(ctx, rec.Ledger)
 	default:
 		o.dropped.Add(1)
 		o.Log.Warn("outbox: unknown record kind dropped", "kind", rec.Kind)

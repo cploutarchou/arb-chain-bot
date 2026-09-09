@@ -52,19 +52,33 @@ func testStore(t *testing.T) *Store {
 	if _, err := s.Pool.Exec(context.Background(), "UPDATE organisations SET referred_by = NULL WHERE referred_by IS NOT NULL"); err != nil {
 		t.Fatalf("clear organisations.referred_by: %v", err)
 	}
+	// audit_events and risk_events are append-only (migration 000018: a
+	// BEFORE UPDATE OR DELETE trigger raises SQLSTATE P0001 on either —
+	// see TestAuditAndRiskEventsAreImmutable). TRUNCATE does not fire
+	// row-level triggers, so it is the only way this fixture can still
+	// reset those two tables between runs; every other table below keeps
+	// using DELETE. Neither table is referenced by a foreign key, so
+	// truncating them here (instead of in FK order with the loop) is safe.
+	if _, err := s.Pool.Exec(context.Background(), "TRUNCATE audit_events, risk_events"); err != nil {
+		t.Fatalf("truncate immutable tables: %v", err)
+	}
 	for _, table := range []string{"fills", "orders", "paper_cycles", "paper_sessions",
-		"opportunities", "triangles", "markets", "sessions",
+		"opportunities", "triangles", "markets",
+		// exchange_health FK-references exchanges(id) with no cascade:
+		// deleted before "exchanges" below (retention_test.go is the
+		// first fixture to populate this table).
+		"exchange_health", "sessions",
 		"strategy_configs", "platform_settings",
 		// screener_settings/_rules FK-reference users(id) with no cascade
 		// (same as platform_settings above): deleted before "users" below.
 		"screener_reports", "screener_paper_executions", "screener_paper_positions", "screener_paper_balances",
 		"screener_templates", "funding_history", "screener_events", "screener_rules", "screener_settings",
-		"audit_events", "ai_recommendations", "ai_analyses",
+		"ai_recommendations", "ai_analyses",
 		"affiliate_ledger", "affiliate_accounts", "paddle_events", "subscriptions", "billing_prices",
 		// api_keys FK-references users(id) with no cascade (T-086): deleted
 		// before "users" below, same reasoning as screener_settings above.
 		"api_keys",
-		"memberships", "alerts", "secrets", "users", "exchanges", "campaign_runs", "replay_runs", "risk_events", "reports"} {
+		"memberships", "alerts", "secrets", "users", "exchanges", "campaign_runs", "replay_runs", "reports"} {
 		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("clean %s: %v", table, err)
 		}
@@ -491,5 +505,74 @@ func TestInsertCycleSurvivesMissingOpportunityRow(t *testing.T) {
 	rows, err := s.ListCycles(ctx, "sess-unlinked", 10)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("ListCycles = %+v err=%v", rows, err)
+	}
+}
+
+// A ledger snapshot round-trips through the three ledger tables and the
+// latest one is what a restart resumes from; a session that was ended
+// is never offered for resumption.
+func TestLedgerSnapshotRoundTripAndResumableSession(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.EnsurePaperSession(ctx, "sess-ledger", "PAPER", map[string]string{"USDT": "10000"}, 1, 42); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.LatestLedgerSnapshot(ctx, "sess-ledger"); err != nil || ok {
+		t.Fatalf("empty session: ok=%v err=%v", ok, err)
+	}
+	first := &LedgerSnapshot{
+		SessionID: "sess-ledger", ExchangeID: "binance", At: t0,
+		Balances:   map[string]LedgerBalance{"USDT": {Available: "9900", Reserved: "0"}},
+		MarkValues: map[string]string{"USDT": "95.5"},
+		Realized:   map[string]string{"USDT": "-100"},
+		Peak:       map[string]string{"USDT": "10000"},
+		Drawdown:   map[string]string{"USDT": "0.01"},
+		Fees:       map[string]string{"BTC": "0.00001"},
+		Exposure:   map[string]string{"BTC": "0.001"},
+		Cycles:     1, Failed: 1,
+	}
+	if err := s.InsertLedgerSnapshot(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := *first
+	second.At = t0.Add(time.Minute)
+	second.Balances = map[string]LedgerBalance{"USDT": {Available: "9904", Reserved: "0"}}
+	second.Realized = map[string]string{"USDT": "-96"}
+	second.Cycles, second.Completed = 2, 1
+	if err := s.InsertLedgerSnapshot(ctx, &second); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := s.LatestLedgerSnapshot(ctx, "sess-ledger")
+	if err != nil || !ok {
+		t.Fatalf("latest: ok=%v err=%v", ok, err)
+	}
+	if !got.At.Equal(second.At) || got.Balances["USDT"].Available != "9904" || got.Realized["USDT"] != "-96" {
+		t.Fatalf("latest snapshot = %+v", got)
+	}
+	if got.Peak["USDT"] != "10000" || got.Drawdown["USDT"] != "0.01" || got.Fees["BTC"] != "0.00001" ||
+		got.Exposure["BTC"] != "0.001" || got.MarkValues["USDT"] != "95.5" || got.ExchangeID != "binance" {
+		t.Fatalf("detail lost: %+v", got)
+	}
+	if got.Cycles != 2 || got.Completed != 1 || got.Failed != 1 {
+		t.Fatalf("counters = %d/%d/%d", got.Cycles, got.Completed, got.Failed)
+	}
+	var avail decimal.Decimal
+	if err := s.Pool.QueryRow(ctx, `SELECT available FROM virtual_balances WHERE session_id = 'sess-ledger' AND asset = 'USDT'`).Scan(&avail); err != nil {
+		t.Fatal(err)
+	}
+	if !avail.Equal(d("9904")) {
+		t.Fatalf("virtual_balances not upserted: %s", avail)
+	}
+
+	open, ok, err := s.LatestOpenPaperSession(ctx, "PAPER")
+	if err != nil || !ok || open.ID != "sess-ledger" || open.StartingBalances["USDT"] != "10000" {
+		t.Fatalf("open session = %+v ok=%v err=%v", open, ok, err)
+	}
+	if err := s.EndPaperSession(ctx, "sess-ledger", t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.LatestOpenPaperSession(ctx, "PAPER"); err != nil || ok {
+		t.Fatalf("ended session offered for resumption: ok=%v err=%v", ok, err)
 	}
 }
