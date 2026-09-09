@@ -371,8 +371,13 @@ func (s *Scanner) EvaluateTriangle(tri graph.Triangle) {
 	// The exact search: candidate sizes come from the books' own depth
 	// breakpoints (every level boundary on every leg mapped back to the
 	// start asset), so a profitable window narrower than any sampling
-	// grid cannot be skipped (audit T1).
-	res, ok := cfg.Search.FindCycle(tri, data, s.Fees, minIn, maxIn)
+	// grid cannot be skipped (audit T1). The gate's size-dependent limits
+	// shape the objective (audit T2): the search returns the most
+	// profitable size the gate will accept, not the maximum-profit size
+	// it would reject for price impact; when nothing is feasible the
+	// unconstrained optimum flows to the gate so the rejection reason is
+	// the real one.
+	res, ok := cfg.Search.FindCycleConstrained(tri, data, s.Fees, minIn, maxIn, gateFeasible(eff, cfg.Buffers))
 	if !ok {
 		return // no viable size at all (dust/min-notional floor above depth ceiling)
 	}
@@ -410,6 +415,32 @@ func (s *Scanner) EvaluateTriangle(tri graph.Triangle) {
 	case s.Out <- Event{Opportunity: op, Decision: decision}:
 	default:
 		s.Stats.DroppedEvts.Add(1)
+	}
+}
+
+// gateFeasible mirrors the risk gate's size-dependent checks — worst-leg
+// price impact, minimum net edge after buffers, minimum expected profit
+// — as a predicate over a sized quote. Size-independent checks (books,
+// clock, breakers, capital) stay with the gate.
+func gateFeasible(eff risk.Limits, b opportunity.Buffers) func(pricing.CycleQuote) bool {
+	return func(q pricing.CycleQuote) bool {
+		if eff.MaxPriceImpactBps.IsPositive() {
+			for _, l := range q.Legs {
+				if l.PriceImpactBps.GreaterThan(eff.MaxPriceImpactBps) {
+					return false
+				}
+			}
+		}
+		if !q.InputConsumed.IsPositive() {
+			return false
+		}
+		bufferAmt := q.InputConsumed.Mul(b.LatencyBps.Add(b.RiskBps)).Div(decimal.NewFromInt(10_000))
+		netProfit := q.FinalAmount.Sub(bufferAmt).Sub(q.InputConsumed)
+		if eff.MinExpectedProfit.IsPositive() && netProfit.LessThan(eff.MinExpectedProfit) {
+			return false
+		}
+		netBps := netProfit.Div(q.InputConsumed).Mul(decimal.NewFromInt(10_000))
+		return !netBps.LessThan(eff.MinNetEdgeBps)
 	}
 }
 
