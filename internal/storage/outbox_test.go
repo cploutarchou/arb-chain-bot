@@ -107,16 +107,18 @@ func TestOutboxCountsWriteFailuresAndReportsRecovery(t *testing.T) {
 	if !o.Enqueue(cycleRecord("c1")) {
 		t.Fatal("enqueue refused on an empty queue")
 	}
-	eventually(t, "write failure", func() bool { return o.WriteFailures() == 1 })
-	if errs.Load() != 1 || !o.Failing() || o.Written() != 0 {
-		t.Fatalf("after failure: errs=%d failing=%v written=%d", errs.Load(), o.Failing(), o.Written())
+	// The hook is the last step of the failure path (after the counter and
+	// the failing flag), so it is the condition to wait on.
+	eventually(t, "write failure reported", func() bool { return o.WriteFailures() == 1 && errs.Load() == 1 })
+	if !o.Failing() || o.Written() != 0 {
+		t.Fatalf("after failure: failing=%v written=%d", o.Failing(), o.Written())
 	}
 
 	w.down.Store(false)
 	o.Enqueue(cycleRecord("c2"))
-	eventually(t, "successful write", func() bool { return o.Written() == 1 })
-	if recoveries.Load() != 1 || o.Failing() {
-		t.Fatalf("after recovery: recoveries=%d failing=%v", recoveries.Load(), o.Failing())
+	eventually(t, "recovery reported", func() bool { return o.Written() == 1 && recoveries.Load() == 1 })
+	if o.Failing() {
+		t.Fatal("still failing after a successful write")
 	}
 	o.Enqueue(cycleRecord("c3"))
 	eventually(t, "second write", func() bool { return o.Written() == 2 })
