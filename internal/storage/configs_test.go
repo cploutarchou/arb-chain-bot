@@ -23,7 +23,11 @@ func TestStrategyConfigsRoundTrip(t *testing.T) {
 	if _, err := s.Pool.Exec(ctx, "DELETE FROM strategy_configs"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Pool.Exec(ctx, "DELETE FROM audit_events"); err != nil {
+	// audit_events is append-only (migration 000018); testStore already
+	// truncates it, but this test re-clears it explicitly before counting
+	// its own audit row below, so TRUNCATE (not DELETE, which the
+	// immutability trigger now rejects) is required here too.
+	if _, err := s.Pool.Exec(ctx, "TRUNCATE audit_events"); err != nil {
 		t.Fatal(err)
 	}
 	cs := s.StrategyConfigs()
