@@ -916,6 +916,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	faults := newFaultWindow(feedFaultWindow)
 	books.OnTransition(feedFaultObserver(breakers, faults, time.Now))
 	feedPol := &feedPolicy{reg: breakers, faults: faults, scope: feedScope}
+	slipPol := &slippagePolicy{}
 	ledger := newSessionLedger()
 
 	if outbox != nil {
@@ -1047,6 +1048,10 @@ func (e *Engine) Run(ctx context.Context) error {
 			In:        paperIn,
 			Clock:     time.Now,
 			IDGen:     newULID,
+			// The operator's max_concurrent_simulations, not a literal
+			// (audit F11); the risk gate reads the live value, this cap
+			// backs it at the next restart.
+			MaxConcurrent: scn.CurrentLimits().MaxConcurrentSimulations,
 			// Pre-execution revalidation and the ledger invariant check
 			// are the paper engine's two guards around a cycle; the
 			// scanner owns the first, the reservation ledger the second.
@@ -1086,6 +1091,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				// the next evaluation gates on them and a breached limit
 				// opens its breaker at once, not on the next tick.
 				ledger.refresh(time.Now(), port, marker, starts, scn.CurrentLimits(), breakers)
+				slipPol.observe(res, scn.CurrentLimits(), breakers, time.Now())
 				if outbox != nil {
 					snap := buildLedgerSnapshot(e.currentSessionID(), string(binance.ID), time.Now(), resv, port, marker, starts)
 					outbox.Enqueue(storage.Record{Kind: "ledger_snapshot", Ledger: &snap})

@@ -43,7 +43,10 @@ type Engine struct {
 	IDGen     func() string
 
 	// MaxConcurrent bounds simultaneous simulations (risk's concurrency
-	// check reads Active()).
+	// check reads Active()). Live wiring sets it from the strategy's
+	// max_concurrent_simulations at assembly; Run sizes its semaphore
+	// once, so a hot-swapped value applies at the next restart while the
+	// risk gate honours it immediately.
 	MaxConcurrent int
 
 	// OnResult receives every settled result (hub publish, persistence).
@@ -258,10 +261,8 @@ func (e *Engine) runCycle(ctx context.Context, ev scanner.Event) {
 	}
 	res, err := e.Resv.Reserve(op.ID, op.Start, op.Quote.InputConsumed, op.TriangleID, conflicts)
 	if err != nil {
-		if !errors.Is(err, reservation.ErrConflict) && !errors.Is(err, reservation.ErrInsufficientFunds) {
-			e.bump(func(s *Stats) { s.Skipped++ })
-			return
-		}
+		// Conflicting hold, insufficient capital, or the same opportunity
+		// already executing under this key (ErrDuplicateActive): skip.
 		e.bump(func(s *Stats) { s.Skipped++ })
 		return
 	}

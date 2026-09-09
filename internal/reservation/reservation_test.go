@@ -58,9 +58,12 @@ func TestReserveSettleFlow(t *testing.T) {
 func TestIdempotentReserve(t *testing.T) {
 	m := newMgr("1000")
 	r1, _ := m.Reserve("op-1", "USDT", d("400"), "tri-A", nil)
+	// Same key while the original is still active: the original comes
+	// back for inspection, with ErrDuplicateActive so the caller never
+	// acts on it (audit F10).
 	r2, err := m.Reserve("op-1", "USDT", d("999"), "tri-B", nil) // different args, same key
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrDuplicateActive) {
+		t.Fatalf("duplicate while active: err = %v", err)
 	}
 	if r1.ID != r2.ID || !r2.Amount.Equal(d("400")) {
 		t.Fatalf("idempotency broken: %+v vs %+v", r1, r2)
@@ -178,26 +181,37 @@ func TestConcurrentStormInvariants(t *testing.T) {
 
 // Duplicate-key race: N goroutines race the same idempotency key; exactly
 // one reservation must exist.
+// Sixteen concurrent callers with one key: exactly one holds the
+// reservation, every other caller gets the same reservation back with
+// ErrDuplicateActive, and the ledger is debited once.
 func TestConcurrentDuplicateKey(t *testing.T) {
 	m := newMgr("1000")
 	var wg sync.WaitGroup
 	ids := make([]string, 16)
+	errs := make([]error, 16)
 	for i := range ids {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			r, err := m.Reserve("same-key", "USDT", d("10"), "t", nil)
-			if err == nil {
-				ids[i] = r.ID
-			}
+			ids[i], errs[i] = r.ID, err
 		}(i)
 	}
 	wg.Wait()
-	first := ids[0]
-	for _, id := range ids {
-		if id != first {
+	holders := 0
+	for i := range ids {
+		if ids[i] != ids[0] {
 			t.Fatalf("distinct reservations under one key: %v", ids)
 		}
+		switch {
+		case errs[i] == nil:
+			holders++
+		case !errors.Is(errs[i], ErrDuplicateActive):
+			t.Fatalf("caller %d: unexpected error %v", i, errs[i])
+		}
+	}
+	if holders != 1 {
+		t.Fatalf("%d callers were told they hold the reservation, want exactly 1", holders)
 	}
 	if avail, _ := m.Balance("USDT"); !avail.Equal(d("990")) {
 		t.Fatalf("double spend: available = %s", avail)
@@ -254,5 +268,33 @@ func TestResetRebuildsLedger(t *testing.T) {
 	availUSDC, _ := m.Balance("USDC")
 	if !availUSDC.Equal(d("2000")) {
 		t.Fatalf("new asset balance = %s", availUSDC)
+	}
+}
+
+// A duplicate key while the original is ACTIVE is refused with the
+// original attached; once the original has settled, the replay returns
+// it with no error and the caller skips on its state.
+func TestDuplicateKeyWhileActiveIsRefused(t *testing.T) {
+	m := newMgr("1000")
+	r1, err := m.Reserve("op-1", "USDT", d("400"), "tri-A", []string{"mkt:BTCUSDT:buy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dup, err := m.Reserve("op-1", "USDT", d("400"), "tri-A", []string{"mkt:BTCUSDT:buy"})
+	if !errors.Is(err, ErrDuplicateActive) || dup.ID != r1.ID {
+		t.Fatalf("duplicate while active: err=%v id=%s (want %s)", err, dup.ID, r1.ID)
+	}
+	if avail, reserved := m.Balance("USDT"); !avail.Equal(d("600")) || !reserved.Equal(d("400")) {
+		t.Fatalf("duplicate changed the ledger: %s/%s", avail, reserved)
+	}
+	if err := m.Settle(r1.ID, d("400")); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := m.Reserve("op-1", "USDT", d("400"), "tri-A", nil)
+	if err != nil || replay.ID != r1.ID || replay.State != StateSettled {
+		t.Fatalf("settled replay: err=%v %+v", err, replay)
+	}
+	if err := m.CheckInvariants(); err != nil {
+		t.Fatal(err)
 	}
 }
