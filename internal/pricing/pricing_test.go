@@ -420,3 +420,24 @@ func BenchmarkSizeSearch50Levels(b *testing.B) {
 		}
 	}
 }
+
+// A sell into thinner depth than the submitted quantity is a partial
+// fill — validated as submitted, dust stranded — not a rule violation
+// (audit T6); a submitted quantity below the minimum still is one.
+func TestSellLegValidatesSubmittedQuantity(t *testing.T) {
+	leg := mkLeg("ETHUSDT", "ETH", "USDT", "ETH", "USDT", exchange.SideSell)
+	md := mdWith([]orderbook.Level{lv("2000", "0.5")}, nil, "0.001")
+	md.Rules.MinQty = d("1")
+	sched := schedReceived(t, "0.001")
+
+	q, err := QuoteLeg(leg, md, sched, d("10"))
+	if err != nil {
+		t.Fatalf("depth-limited sell rejected: %v", err)
+	}
+	if !q.OrderQty.Equal(d("0.5")) || !q.DepthExhausted || !q.Dust.Equal(d("9.5")) {
+		t.Fatalf("partial = qty %s exhausted %v dust %s", q.OrderQty, q.DepthExhausted, q.Dust)
+	}
+	if _, err := QuoteLeg(leg, md, sched, d("0.7")); err == nil {
+		t.Fatal("submitted quantity below the minimum accepted")
+	}
+}
