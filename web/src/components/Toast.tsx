@@ -1,11 +1,13 @@
 "use client";
 
-// ToastProvider: a minimal, self-contained toast stack. Its one producer
-// today is errorBus's entitlement_exceeded event (packages.md §3.2 — any
-// mutating request can 403 entitlement_exceeded with {key, limit}); the
-// toast names the breached key/limit verbatim from the backend and links
-// to /billing, never inventing its own limit copy (design-system.md
-// §2.4: package gating is a sales surface, not a dead end).
+// ToastProvider: a minimal, self-contained toast stack. Its original
+// producer is errorBus's entitlement_exceeded event (packages.md §3.2 —
+// any mutating request can 403 entitlement_exceeded with {key, limit});
+// that toast names the breached key/limit verbatim from the backend and
+// links to /billing, never inventing its own limit copy (design-system.md
+// §2.4: package gating is a sales surface, not a dead end). Shell-level
+// controls (e.g. the paper pause/resume control) also push here directly
+// via useToast() for success/failure feedback that survives a navigation.
 
 import {
   createContext,
@@ -20,11 +22,17 @@ import Link from "next/link";
 import { onEntitlementExceeded } from "@/lib/errorBus";
 import { CloseIcon } from "@/components/icons";
 
+// tone picks the border/text colour; "warn" (amber) is the original,
+// still-default look for the entitlement toast. "ok"/"bad" let a direct
+// useToast() caller report a clear success/failure (e.g. paper control).
+type ToastTone = "warn" | "ok" | "bad";
+
 interface ToastItem {
   id: number;
   text: string;
   href?: string;
   linkLabel?: string;
+  tone?: ToastTone;
 }
 
 interface ToastContextValue {
@@ -75,6 +83,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         text: `Included in your package: ${entitlementLabel(detail.key)}${limitText}. ${detail.message}`,
         href: "/billing",
         linkLabel: "Upgrade",
+        tone: "warn",
       });
     });
   }, [push]);
@@ -89,7 +98,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((t) => (
           <div
             key={t.id}
-            className="pointer-events-auto flex items-start gap-2 rounded border border-[var(--warn)] bg-[var(--bg-panel)] p-3 text-[12px] text-[var(--text)] shadow-lg"
+            className={`pointer-events-auto flex items-start gap-2 rounded border bg-[var(--bg-panel)] p-3 text-[12px] text-[var(--text)] shadow-lg ${
+              t.tone === "ok"
+                ? "border-[var(--ok)]"
+                : t.tone === "bad"
+                  ? "border-[var(--critical)]"
+                  : "border-[var(--warn)]"
+            }`}
           >
             <span className="flex-1">
               {t.text}

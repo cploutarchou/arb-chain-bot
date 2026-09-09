@@ -21,7 +21,8 @@ export default function TrianglesPage() {
         <Await state={status} what="topology">
           {(s) => (
             <p className="text-sm text-[var(--text-dim)]">
-              {s.triangles} triangles across {s.markets.length} markets: {s.markets.join(", ")}
+              {s.triangles} triangles across {(s.markets ?? []).length} markets
+              {s.markets && s.markets.length > 0 ? `: ${s.markets.join(", ")}` : ""}
             </p>
           )}
         </Await>

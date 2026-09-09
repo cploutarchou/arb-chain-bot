@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { api, ApiError, type OrderRow } from "@/lib/api/client";
-import { usePoll } from "@/lib/usePoll";
+import { usePoll, type PollState } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { PaperControl } from "@/components/PaperControl";
+import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { Await, Badge, Button, ConfirmDialog, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
 
 export default function PaperPage() {
@@ -14,21 +16,17 @@ export default function PaperPage() {
   const systemStatus = usePoll(() => api.system.status(), 10000);
   const [cyclesRefresh, setCyclesRefresh] = useState(0);
   const cycles = usePoll(() => api.paper.cycles(50), 8000, [cyclesRefresh]);
-  const [orders, setOrders] = useState<{ cycle: string; rows: OrderRow[] } | null>(null);
-  const [controlErr, setControlErr] = useState("");
+  // ordersCycle/ordersState split the same way usePoll does (loading/
+  // error/ready) so a failed fetch renders ErrorBox instead of the empty
+  // state a swallowed exception used to produce (audit F7) — a settled
+  // cycle whose orders fetch 500s must never read as "no orders placed".
+  const [ordersCycle, setOrdersCycle] = useState<string | null>(null);
+  const [ordersState, setOrdersState] = useState<PollState<OrderRow[]>>({ kind: "loading" });
+  const [ordersLoadingID, setOrdersLoadingID] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetTyped, setResetTyped] = useState("");
   const [resetMsg, setResetMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
-
-  const control = async (fn: () => Promise<{ running: boolean }>) => {
-    setControlErr("");
-    try {
-      await fn();
-    } catch {
-      setControlErr("Control action failed (role or mode).");
-    }
-  };
 
   const mayReset = can(role, "paper:reset");
 
@@ -60,15 +58,23 @@ export default function PaperPage() {
   };
 
   const showOrders = async (cycleID: string) => {
+    setOrdersCycle(cycleID);
+    setOrdersState({ kind: "loading" });
+    setOrdersLoadingID(cycleID);
     try {
       const res = await api.paper.orders(cycleID);
-      setOrders({ cycle: cycleID, rows: res.orders ?? [] });
-    } catch {
-      setOrders({ cycle: cycleID, rows: [] });
+      setOrdersState({ kind: "ready", data: res.orders ?? [] });
+    } catch (err: unknown) {
+      setOrdersState(
+        err instanceof ApiError
+          ? { kind: "error", message: err.message, status: err.status, code: err.apiError?.code }
+          : { kind: "error", message: "Backend unreachable" },
+      );
+    } finally {
+      setOrdersLoadingID(null);
     }
   };
 
-  const mayControl = can(role, "paper:control");
   const paperPresent = status.kind === "ready" && !!status.data.paper;
   const paperRunning = status.kind === "ready" ? status.data.paper?.running : undefined;
   const resetButtonDisabled = !mayReset || !paperPresent || paperRunning !== false;
@@ -89,20 +95,9 @@ export default function PaperPage() {
                   <Stat label="Failed" value={s.paper.failed} tone={s.paper.failed > 0 ? "warn" : undefined} />
                   <Stat label="Skipped" value={s.paper.skipped} />
                 </div>
-                <div className="mt-3 flex gap-2">
-                  <Button onClick={() => control(api.paper.pause)} disabled={!mayControl} danger>
-                    Pause
-                  </Button>
-                  <Button onClick={() => control(api.paper.resume)} disabled={!mayControl}>
-                    Resume
-                  </Button>
-                  {!mayControl && (
-                    <span className="self-center text-[12px] text-[var(--text-dim)]">
-                      controls require OPERATOR
-                    </span>
-                  )}
+                <div className="mt-3">
+                  <PaperControl status={status} role={role} hideStateLabel />
                 </div>
-                {controlErr && <p className="mt-2 text-[12px] text-[var(--critical)]">{controlErr}</p>}
               </div>
             ) : (
               <p className="text-sm text-[var(--text-dim)]">
@@ -158,32 +153,42 @@ export default function PaperPage() {
               empty="persisted cycles yet. Persistence needs a database connection — see docs/deployment.md if this deployment doesn't have one configured"
               rows={(c.cycles ?? []).map((row) => [
                 fmtTime(row.started_at),
-                <Badge key="o" tone={row.outcome === "ALL_FILLED" ? "ok" : "warn"}>{row.outcome}</Badge>,
+                <OutcomeBadge key="o" code={row.outcome} />,
                 row.pnl_amount ? `${row.pnl_amount} ${row.pnl_asset ?? ""}` : "—",
                 row.slippage_bps ?? "—",
                 <span key="id" className="text-[var(--text-dim)]">{row.id}</span>,
-                <Button key="b" onClick={() => showOrders(row.id)}>orders</Button>,
+                <Button
+                  key="b"
+                  onClick={() => showOrders(row.id)}
+                  disabled={ordersLoadingID === row.id}
+                >
+                  {ordersLoadingID === row.id ? "loading…" : "orders"}
+                </Button>,
               ])}
             />
           )}
         </Await>
       </Section>
-      {orders && (
-        <Section title={`Orders — cycle ${orders.cycle}`}>
-          <Table
-            head={["Leg", "Market", "Side", "Status", "Requested", "Filled", "Avg price", "Fee"]}
-            empty="orders for this cycle"
-            rows={orders.rows.map((o) => [
-              o.leg_no,
-              o.market_id,
-              o.side,
-              <Badge key="s" tone={o.status === "FILLED" ? "ok" : "dim"}>{o.status}</Badge>,
-              o.qty ?? "—",
-              o.filled_qty ?? "—",
-              o.avg_price ?? "—",
-              o.fee ? `${o.fee} ${o.fee_asset ?? ""}` : "—",
-            ])}
-          />
+      {ordersCycle && (
+        <Section title={`Orders — cycle ${ordersCycle}`}>
+          <Await state={ordersState} what={`orders for cycle ${ordersCycle}`}>
+            {(rows) => (
+              <Table
+                head={["Leg", "Market", "Side", "Status", "Requested", "Filled", "Avg price", "Fee"]}
+                empty="orders for this cycle"
+                rows={rows.map((o) => [
+                  o.leg_no,
+                  o.market_id,
+                  o.side,
+                  <Badge key="s" tone={o.status === "FILLED" ? "ok" : "dim"}>{o.status}</Badge>,
+                  o.qty ?? "—",
+                  o.filled_qty ?? "—",
+                  o.avg_price ?? "—",
+                  o.fee ? `${o.fee} ${o.fee_asset ?? ""}` : "—",
+                ])}
+              />
+            )}
+          </Await>
         </Section>
       )}
       {resetOpen && (
