@@ -65,13 +65,24 @@ func reportSources(e *Engine, stratSvc *strategy.Service, center *notification.C
 			if port == nil {
 				return nil
 			}
+			e.mu.RLock()
+			marker := e.marker
+			e.mu.RUnlock()
 			var out []reporting.AssetSection
 			for _, a := range e.startAssets() {
+				// Fees valued in the start asset (every fee asset through
+				// the book marker), with the raw per-asset map beside it.
+				feesMarked, byAsset, _ := port.FeesMark(a, marker)
+				raw := make(map[string]string, len(byAsset))
+				for fa, v := range byAsset {
+					raw[string(fa)] = v.String()
+				}
 				out = append(out, reporting.AssetSection{
-					Asset:    string(a),
-					Realized: port.Realized(a).String(),
-					Fees:     port.FeesPaid(a).String(),
-					Drawdown: port.CurrentDrawdown(a).StringFixed(4),
+					Asset:       string(a),
+					Realized:    port.Realized(a).String(),
+					Fees:        feesMarked.String(),
+					FeesByAsset: raw,
+					Drawdown:    port.CurrentDrawdown(a).StringFixed(4),
 				})
 			}
 			return out

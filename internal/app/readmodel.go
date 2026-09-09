@@ -83,6 +83,18 @@ func (r readModel) PnL() (any, bool) {
 		if unmarked == nil {
 			unmarked = []exchange.Asset{}
 		}
+		// fees is the slice charged in the start asset itself (kept for
+		// readers that predate the valuation); fees_marked values every
+		// fee asset in the start asset, fees_by_asset is the raw map, and
+		// fees_unmarked lists fee assets no book can value.
+		feesMarked, feesByAsset, feesUnmarked := port.FeesMark(a, marker)
+		byAsset := make(map[string]string, len(feesByAsset))
+		for fa, v := range feesByAsset {
+			byAsset[string(fa)] = v.String()
+		}
+		if feesUnmarked == nil {
+			feesUnmarked = []exchange.Asset{}
+		}
 		rows = append(rows, map[string]any{
 			"asset":         string(a),
 			"realized":      port.Realized(a).String(),
@@ -90,6 +102,9 @@ func (r readModel) PnL() (any, bool) {
 			"net_pnl":       net.String(),
 			"unmarked":      unmarked,
 			"fees":          port.FeesPaid(a).String(),
+			"fees_marked":   feesMarked.String(),
+			"fees_by_asset": byAsset,
+			"fees_unmarked": feesUnmarked,
 			"daily_loss":    port.DailyLoss(a, marker).String(),
 			"drawdown":      port.CurrentDrawdown(a).StringFixed(4),
 		})

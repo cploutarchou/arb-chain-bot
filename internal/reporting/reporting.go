@@ -100,8 +100,10 @@ type CycleSection struct {
 type AssetSection struct {
 	Asset    string `json:"asset"`
 	Realized string `json:"realized"`
-	Fees     string `json:"fees"`
-	Drawdown string `json:"drawdown"`
+	Fees     string `json:"fees"` // every fee asset valued in the start asset
+	// FeesByAsset is the raw fee map behind Fees (fee asset → quantity).
+	FeesByAsset map[string]string `json:"fees_by_asset,omitempty"`
+	Drawdown    string            `json:"drawdown"`
 }
 
 type SlippageSection struct {

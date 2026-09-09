@@ -385,3 +385,29 @@ func TestBookMarkerLiquidationValue(t *testing.T) {
 		t.Fatalf("dust mark = %s %v", v, ok)
 	}
 }
+
+// Fees charged in intermediate assets are valued in the start asset;
+// the raw map stays visible and unmarkable fee assets are listed.
+func TestFeesMarkValuesEveryFeeAsset(t *testing.T) {
+	p := New(newResv("10000"), map[exchange.Asset]decimal.Decimal{"USDT": d("10000")})
+	res := completedCycle("c1", "1000", "1002")
+	res.Fees = map[exchange.Asset]decimal.Decimal{"BTC": d("0.00001"), "ETH": d("0.001"), "USDT": d("1.02"), "DOGE": d("5")}
+	if err := p.ApplyCycle(res, false); err != nil {
+		t.Fatal(err)
+	}
+	total, byAsset, unmarked := p.FeesMark("USDT", fakeMarker{"BTC": d("100000"), "ETH": d("2000")})
+	// 0.00001 BTC = 1, 0.001 ETH = 2, USDT 1.02 itself; DOGE unmarkable.
+	if !total.Equal(d("4.02")) {
+		t.Fatalf("fees marked = %s, want 4.02", total)
+	}
+	if !byAsset["DOGE"].Equal(d("5")) || len(byAsset) != 4 {
+		t.Fatalf("raw fee map = %v", byAsset)
+	}
+	if len(unmarked) != 1 || unmarked[0] != "DOGE" {
+		t.Fatalf("unmarked = %v", unmarked)
+	}
+	// Without a marker only the start asset's own slice is valued.
+	if total, _, unmarked := p.FeesMark("USDT", nil); !total.Equal(d("1.02")) || len(unmarked) != 3 {
+		t.Fatalf("nil marker: total=%s unmarked=%v", total, unmarked)
+	}
+}
