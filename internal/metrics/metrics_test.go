@@ -71,6 +71,14 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 	m.ObserveMessageLatency("binance", 18)
 	m.ObserveQualifiedEdge("binance", 12)
 	m.ObserveSlippage("binance", -1.5)
+	m.ObserveOrderLatency("binance", "submit_ack", 21)
+	m.ObserveOrderLatency("binance", "ack_fill", 40)
+	m.ObserveCycleDuration("binance", 180)
+	m.CountRejection("binance", "qualification", "RISK_MIN_EDGE")
+	m.CountRejection("binance", "qualification", "RISK_MIN_EDGE")
+	m.CountRejection("binance", "revalidation", "RISK_BREAKER_OPEN")
+	m.CountCycleOutcome("binance", "LEG1_PARTIAL")
+	m.CountOrderStatus("binance", "PARTIALLY_FILLED")
 
 	page := scrape(t, m)
 	for _, name := range []string{
@@ -114,6 +122,11 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		"paper_queue_dropped_total",
 		"opportunities_revalidated_total",
 		"opportunities_revalidation_rejected_total",
+		"order_latency_ms_bucket",
+		"cycle_duration_ms_bucket",
+		"risk_rejections_total",
+		"paper_cycle_outcomes_total",
+		"order_outcomes_total",
 	} {
 		if !strings.Contains(page, name) {
 			t.Errorf("exposition missing %s", name)
@@ -127,6 +140,12 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		`websocket_clients 7`,
 		`outbox_write_failures_total 2`,
 		`paper_queue_dropped_total 5`,
+		`risk_rejections_total{exchange="binance",reason="RISK_MIN_EDGE",stage="qualification"} 2`,
+		`risk_rejections_total{exchange="binance",reason="RISK_BREAKER_OPEN",stage="revalidation"} 1`,
+		`paper_cycle_outcomes_total{exchange="binance",outcome="LEG1_PARTIAL"} 1`,
+		`order_outcomes_total{exchange="binance",status="PARTIALLY_FILLED"} 1`,
+		`order_latency_ms_count{exchange="binance",stage="submit_ack"} 1`,
+		`cycle_duration_ms_count{exchange="binance"} 1`,
 	} {
 		if !strings.Contains(page, frag) {
 			t.Errorf("exposition missing series %q", frag)

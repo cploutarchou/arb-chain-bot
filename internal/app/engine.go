@@ -1006,6 +1006,9 @@ func (e *Engine) Run(ctx context.Context) error {
 			Revalidate: scn.Revalidate,
 			OnRevalidationReject: func(op opportunity.Opportunity, dec risk.Decision) {
 				e.countReject(dec.ReasonCode)
+				if e.Metrics != nil {
+					e.Metrics.CountRejection(string(op.Exchange), "revalidation", dec.ReasonCode)
+				}
 				e.log.Info("opportunity refused at revalidation",
 					"opportunity_id", op.ID, "triangle_id", op.TriangleID, "reason", dec.ReasonCode)
 				if outbox != nil && e.shouldPersistRiskReject(op.TriangleID, "revalidation:"+dec.ReasonCode, time.Now()) {
@@ -1039,6 +1042,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				if e.Metrics != nil && res.Outcome == execution.OutcomeAllFilled {
 					e.Metrics.ObserveSlippage(string(binance.ID), res.SlippageBps.InexactFloat64())
 				}
+				e.observeCycle(string(binance.ID), res)
 				if res.Outcome != execution.OutcomeAllFilled {
 					e.notify(notification.SeverityWarning, "paper:cycle_failed",
 						"Paper cycle "+string(res.Outcome),
@@ -1280,6 +1284,9 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 			}
 			if ev.Opportunity.Status == opportunity.StatusRejected {
 				e.countReject(ev.Decision.ReasonCode)
+				if e.Metrics != nil {
+					e.Metrics.CountRejection(string(ev.Opportunity.Exchange), "qualification", ev.Decision.ReasonCode)
+				}
 				// BL-31: persist the rejection so the Risk Center's
 				// timeline survives a restart (today only the in-memory
 				// reject_reason_counts histogram did) — but only the
