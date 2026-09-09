@@ -368,10 +368,11 @@ func (s *Scanner) EvaluateTriangle(tri graph.Triangle) {
 	if !minIn.IsPositive() {
 		minIn = decimal.NewFromInt(1)
 	}
-	quote := func(in decimal.Decimal) (pricing.CycleQuote, error) {
-		return pricing.QuoteCycle(tri, data, s.Fees, in)
-	}
-	res, ok := cfg.Search.Find(quote, minIn, maxIn)
+	// The exact search: candidate sizes come from the books' own depth
+	// breakpoints (every level boundary on every leg mapped back to the
+	// start asset), so a profitable window narrower than any sampling
+	// grid cannot be skipped (audit T1).
+	res, ok := cfg.Search.FindCycle(tri, data, s.Fees, minIn, maxIn)
 	if !ok {
 		return // no viable size at all (dust/min-notional floor above depth ceiling)
 	}
