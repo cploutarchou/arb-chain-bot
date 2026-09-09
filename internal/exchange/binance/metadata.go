@@ -124,6 +124,27 @@ func parseFilters(filters []json.RawMessage) (exchange.InstrumentRules, error) {
 					return r, fmt.Errorf("maxQty: %w", err)
 				}
 			}
+		case "MARKET_LOT_SIZE":
+			var f lotSizeFilter
+			if err := json.Unmarshal(raw, &f); err != nil {
+				return r, err
+			}
+			var err error
+			if f.StepSize != "" {
+				if r.MarketQtyStep, err = decimal.NewFromString(f.StepSize); err != nil {
+					return r, fmt.Errorf("market stepSize: %w", err)
+				}
+			}
+			if f.MinQty != "" {
+				if r.MarketMinQty, err = decimal.NewFromString(f.MinQty); err != nil {
+					return r, fmt.Errorf("market minQty: %w", err)
+				}
+			}
+			if f.MaxQty != "" {
+				if r.MarketMaxQty, err = decimal.NewFromString(f.MaxQty); err != nil {
+					return r, fmt.Errorf("market maxQty: %w", err)
+				}
+			}
 		case "NOTIONAL", "MIN_NOTIONAL": // MIN_NOTIONAL is the legacy shape
 			var f notionalFilter
 			if err := json.Unmarshal(raw, &f); err != nil {

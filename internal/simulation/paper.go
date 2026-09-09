@@ -300,6 +300,12 @@ func (e *Engine) fillLeg(leg graph.Leg, planned pricing.LegQuote, input decimal.
 	if !ok {
 		return pricing.LegQuote{}, fmt.Errorf("no instrument rules for %s", leg.Market)
 	}
+	if e.cfg.MarketOrders {
+		// MARKET orders are validated against the venue's market-order
+		// quantity filter, which is volume-derived and usually far
+		// tighter than the limit-order one (audit T4).
+		rules = rules.ForMarketOrders()
+	}
 	if !e.cfg.MarketOrders {
 		limit := limitPrice(planned.AvgPrice, e.cfg.LimitToleranceBps, leg.Side)
 		// The venue accepts prices on its tick only; rounding toward the

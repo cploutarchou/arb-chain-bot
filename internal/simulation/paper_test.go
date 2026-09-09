@@ -610,3 +610,35 @@ func TestLimitPriceIsTickQuantized(t *testing.T) {
 		t.Fatalf("leg-1 limit = %s, want 100 on a 0.5 tick", res.Orders[0].LimitPrice)
 	}
 }
+
+// MARKET orders are validated against the venue's market-order quantity
+// filter (audit T4): a size the limit filter allows but the market
+// filter refuses is rejected before anything is deployed.
+func TestMarketOrdersUseTheMarketLotSizeFilter(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1, MarketOrders: true})
+	tight := stepRules()
+	tight.MaxQty = d("100")
+	tight.MarketMaxQty = d("5") // the plan buys ~9.99 BTC on leg 1
+	e.rules = fakeRules{mBTCUSDT: tight, mETHBTC: stepRules(), mETHUSDT: stepRules()}
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeRejected || !strings.Contains(res.Reason, "maximum") {
+		t.Fatalf("outcome = %s (%s), want REJECTED by the market filter", res.Outcome, res.Reason)
+	}
+
+	// The same rules in limit mode fill: the limit filter allows 100.
+	e = engine(t, books, clock, Config{Seed: 1})
+	e.rules = fakeRules{mBTCUSDT: tight, mETHBTC: stepRules(), mETHUSDT: stepRules()}
+	res, err = e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAllFilled {
+		t.Fatalf("limit mode outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+}
