@@ -354,3 +354,132 @@ func TestResetRequiresIdleEngine(t *testing.T) {
 		t.Fatalf("post-reset stats = %+v, want zero", st)
 	}
 }
+
+// --- pre-execution revalidation and ledger invariants ------------------------
+
+// A plan the revalidation refuses is skipped before any capital is
+// reserved and never reaches the executor; the reject hook fires.
+func TestRevalidationRejectSkipsWithoutReserving(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, resv, _ := harness(t, exec)
+	var rejected atomic.Int32
+	var reason atomic.Value
+	e.Revalidate = func(op opportunity.Opportunity) (opportunity.Opportunity, risk.Decision, bool) {
+		return op, risk.Decision{ReasonCode: risk.ReasonMinEdge}, true
+	}
+	e.OnRevalidationReject = func(_ opportunity.Opportunity, dec risk.Decision) {
+		rejected.Add(1)
+		reason.Store(dec.ReasonCode)
+	}
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().RevalidationRejected == 1 })
+	cancel()
+	wait()
+
+	st := e.Snapshot()
+	if st.Started != 0 || st.Skipped != 1 || st.Revalidated != 1 {
+		t.Fatalf("stats = %+v", st)
+	}
+	if avail, reserved := resv.Balance("USDT"); !avail.Equal(d("10000")) || !reserved.IsZero() {
+		t.Fatalf("ledger touched: available=%s reserved=%s", avail, reserved)
+	}
+	if exec.peak.Load() != 0 {
+		t.Fatal("executor ran a refused plan")
+	}
+	if rejected.Load() != 1 || reason.Load() != risk.ReasonMinEdge {
+		t.Fatalf("reject hook: calls=%d reason=%v", rejected.Load(), reason.Load())
+	}
+}
+
+// The executor receives the re-priced plan, and the ledger settles on
+// the re-priced input.
+func TestRevalidationRefreshesThePlan(t *testing.T) {
+	var seen atomic.Value
+	exec := &scriptedExecutor{result: func(plan execution.CyclePlan) execution.CycleResult {
+		seen.Store(plan.Opportunity.Quote.InputConsumed.String())
+		return completed(plan)
+	}}
+	e, in, resv, _ := harness(t, exec)
+	e.Revalidate = func(op opportunity.Opportunity) (opportunity.Opportunity, risk.Decision, bool) {
+		fresh := op
+		fresh.Quote.InputConsumed = d("900")
+		fresh.Quote.FinalAmount = d("904")
+		return fresh, risk.Decision{Allowed: true}, true
+	}
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+	cancel()
+	wait()
+
+	if seen.Load() != "900" {
+		t.Fatalf("executor saw input %v, want the re-priced 900", seen.Load())
+	}
+	// completed() returns input + 4: 10000 - 900 + 904.
+	if avail, _ := resv.Balance("USDT"); !avail.Equal(d("10004")) {
+		t.Fatalf("available = %s, want 10004", avail)
+	}
+}
+
+// A revalidation that cannot run (unknown triangle, missing book) is a
+// rejection, never a pass.
+func TestRevalidationUnavailableIsARejection(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, _, _ := harness(t, exec)
+	var reason atomic.Value
+	e.Revalidate = func(op opportunity.Opportunity) (opportunity.Opportunity, risk.Decision, bool) {
+		return op, risk.Decision{}, false
+	}
+	e.OnRevalidationReject = func(_ opportunity.Opportunity, dec risk.Decision) { reason.Store(dec.ReasonCode) }
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().RevalidationRejected == 1 })
+	cancel()
+	wait()
+	if exec.peak.Load() != 0 || reason.Load() != risk.ReasonRevalidation {
+		t.Fatalf("executor ran=%v reason=%v", exec.peak.Load() != 0, reason.Load())
+	}
+}
+
+// A ledger invariant failure after a settlement pauses the engine before
+// another cycle can start and reports through the hook.
+func TestInvariantViolationPausesEngine(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, _, _ := harness(t, exec)
+	var got atomic.Value
+	e.Invariants = func() error { return errors.New("conservation broken") }
+	e.OnInvariantViolation = func(err error) { got.Store(err.Error()) }
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().InvariantViolations == 1 })
+	if e.Running() {
+		t.Fatal("engine still running after an invariant violation")
+	}
+	in <- qualifiedEvent("op-2", "1000")
+	waitFor(t, func() bool { return e.Snapshot().Received == 2 })
+	cancel()
+	wait()
+
+	st := e.Snapshot()
+	if st.Started != 1 || st.Skipped != 1 {
+		t.Fatalf("second cycle ran on a broken ledger: %+v", st)
+	}
+	if got.Load() != "conservation broken" {
+		t.Fatalf("hook = %v", got.Load())
+	}
+}
+
+// The default check is the ledger's own; a healthy settlement passes it.
+func TestDefaultInvariantCheckPassesOnHealthySettlement(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, _, _ := harness(t, exec)
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+	cancel()
+	wait()
+	if st := e.Snapshot(); st.InvariantViolations != 0 || !e.Running() {
+		t.Fatalf("healthy settlement flagged: %+v running=%v", st, e.Running())
+	}
+}

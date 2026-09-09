@@ -141,6 +141,8 @@ func (m *Metrics) ObserveSlippage(exchangeID string, bps float64) {
 // ScannerStats is one cumulative counter snapshot.
 type ScannerStats struct {
 	Evaluations, Qualified, Rejected, SkippedBooks, DroppedEvents int64
+	Revalidations                                                 int64
+	RevalidationRejects                                           int64
 }
 
 // FeedStats are cumulative per-exchange transport counters.
@@ -287,6 +289,8 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		pqDepth    = i64g("paper_queue_depth", "paper engine inbound events queued")
 		pqCap      = i64g("paper_queue_capacity", "paper engine inbound queue capacity")
 		pqDropped  = i64c("paper_queue_dropped", "qualified opportunities refused by a full paper queue")
+		revals     = i64c("opportunities_revalidated", "qualified opportunities re-checked before execution")
+		revalRej   = i64c("opportunities_revalidation_rejected", "qualified opportunities refused at revalidation")
 	)
 	if err := errors.Join(errs...); err != nil {
 		return err
@@ -297,6 +301,7 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		capAvail, capResv, breaker, papRecv, papOK, papFail, papActive, papPnL,
 		feesTotal, recWritten, recDropped, papRecvd, papSkip,
 		obDepth, obCap, obDropped, obFailed, obWritten, pqDepth, pqCap, pqDropped,
+		revals, revalRej,
 	}
 	_, err := meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
 		if src.Scanner != nil {
@@ -307,6 +312,8 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 			o.ObserveInt64(rejected, s.Rejected)
 			o.ObserveInt64(skipped, s.SkippedBooks)
 			o.ObserveInt64(dropped, s.DroppedEvents)
+			o.ObserveInt64(revals, s.Revalidations)
+			o.ObserveInt64(revalRej, s.RevalidationRejects)
 		}
 		if src.Triangles != nil {
 			o.ObserveInt64(triangles, src.Triangles())

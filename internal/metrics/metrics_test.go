@@ -112,6 +112,8 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		"paper_queue_depth",
 		"paper_queue_capacity",
 		"paper_queue_dropped_total",
+		"opportunities_revalidated_total",
+		"opportunities_revalidation_rejected_total",
 	} {
 		if !strings.Contains(page, name) {
 			t.Errorf("exposition missing %s", name)

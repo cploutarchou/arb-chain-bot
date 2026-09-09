@@ -85,6 +85,11 @@ type Config struct {
 	MarketOrders      bool            // true: ignore limit, eat available depth
 	Depth             int             // book view depth (0 = full)
 	Seed              int64           // determinism root; per-cycle RNG derives from it
+	// MaxBookAge, when positive, fails a leg whose fill-time book is older
+	// than this (a HEALTHY state is always required). Live paper sets it
+	// to the scanner's age budget; replay and backtests leave it zero and
+	// rely on the state alone.
+	MaxBookAge time.Duration
 }
 
 // Engine is the simulated executor core.
@@ -275,6 +280,21 @@ func (e *Engine) fillLeg(leg graph.Leg, planned pricing.LegQuote, input decimal.
 	view, ok := e.books.View(leg.Market, e.cfg.Depth)
 	if !ok {
 		return pricing.LegQuote{}, fmt.Errorf("no book for %s", leg.Market)
+	}
+	// Fill-time health: the plan was priced on a HEALTHY book, but the
+	// fill happens tens of milliseconds later. A book that has since gone
+	// STALE, CORRUPTED, DISCONNECTED or back to SYNCING carries no
+	// knowable price, and filling against its last levels would invent an
+	// execution. The leg fails instead — REJECTED before anything is
+	// deployed, stranded exposure afterwards — which is the honest
+	// outcome for a system that cannot see the market.
+	if view.State != orderbook.StateHealthy {
+		return pricing.LegQuote{}, fmt.Errorf("book %s is %s at fill time", leg.Market, view.State)
+	}
+	if e.cfg.MaxBookAge > 0 {
+		if age := view.Age(e.clock.Now()); age > e.cfg.MaxBookAge {
+			return pricing.LegQuote{}, fmt.Errorf("book %s is %s old at fill time (max %s)", leg.Market, age, e.cfg.MaxBookAge)
+		}
 	}
 	rules, ok := e.rules.Rules(leg.Market)
 	if !ok {

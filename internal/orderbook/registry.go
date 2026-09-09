@@ -14,6 +14,11 @@ import (
 type Set struct {
 	mu    sync.RWMutex
 	books map[exchange.MarketID]*Book
+	// observer, when set, is installed on every book added afterwards
+	// (breaker policies, metrics). Books are created by the feed as
+	// snapshots arrive — long after the registry exists — so the hook has
+	// to live at the registry level to reach them.
+	observer func(id exchange.MarketID, from, to State, reason string)
 
 	dirtyMu sync.Mutex
 	dirty   map[exchange.MarketID]struct{}
@@ -28,11 +33,25 @@ func NewSet() *Set {
 	}
 }
 
+// OnTransition registers a registry-wide state-transition observer that
+// Add installs on each book before publishing it. Set it before the feed
+// runs: Book.OnTransition itself is not synchronised, so the installation
+// has to happen while the book is still private to the adding goroutine.
+func (s *Set) OnTransition(fn func(id exchange.MarketID, from, to State, reason string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observer = fn
+}
+
 // Add registers a book. Adding the same market twice replaces the entry
 // (resubscription after resync creates a fresh book).
 func (s *Set) Add(b *Book) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.observer != nil {
+		id, fn := b.ID(), s.observer
+		b.OnTransition(func(from, to State, reason string) { fn(id, from, to, reason) })
+	}
 	s.books[b.ID()] = b
 }
 

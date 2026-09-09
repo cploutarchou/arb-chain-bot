@@ -21,6 +21,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/opportunity"
 	"github.com/cploutarchou/arb-chain-bot/internal/portfolio"
 	"github.com/cploutarchou/arb-chain-bot/internal/reservation"
+	"github.com/cploutarchou/arb-chain-bot/internal/risk"
 	"github.com/cploutarchou/arb-chain-bot/internal/scanner"
 )
 
@@ -48,6 +49,29 @@ type Engine struct {
 	// OnResult receives every settled result (hub publish, persistence).
 	OnResult func(execution.CycleResult)
 
+	// Revalidate, when set, re-prices and re-gates a qualified opportunity
+	// immediately before capital is reserved (scanner.Revalidate in live
+	// wiring): books, capital, breakers and the clock all move between
+	// qualification and execution, and the plan the scanner emitted may
+	// no longer be executable or no longer clear the limits. ok=false
+	// means the check could not run (unknown triangle, missing book) and
+	// is treated as a rejection. A nil hook executes the plan as
+	// qualified.
+	Revalidate func(op opportunity.Opportunity) (fresh opportunity.Opportunity, dec risk.Decision, ok bool)
+	// OnRevalidationReject receives every opportunity the revalidation
+	// refused (reject counts, persistence, alerts).
+	OnRevalidationReject func(op opportunity.Opportunity, dec risk.Decision)
+
+	// Invariants, when set, replaces the ledger's own CheckInvariants
+	// (tests inject failures); the default checks Resv after every
+	// settlement and release.
+	Invariants func() error
+	// OnInvariantViolation receives a ledger invariant failure detected
+	// after a settlement (docs/risk.md §4: simulation-inconsistency
+	// breaker + CRITICAL alert). The engine pauses itself before calling
+	// it: a ledger that no longer conserves capital must not run.
+	OnInvariantViolation func(err error)
+
 	running atomic.Bool
 	active  atomic.Int32
 
@@ -59,9 +83,16 @@ type Engine struct {
 type Stats struct {
 	Received  int64
 	Started   int64
-	Skipped   int64 // paused, expired, reservation conflicts, capital
+	Skipped   int64 // paused, expired, reservation conflicts, capital, revalidation
 	Completed int64
 	Failed    int64
+	// Revalidated counts opportunities re-checked before execution;
+	// RevalidationRejected those refused the second time (a subset of
+	// Skipped). InvariantViolations counts ledger conservation failures;
+	// any non-zero value means the engine paused itself.
+	Revalidated          int64
+	RevalidationRejected int64
+	InvariantViolations  int64
 }
 
 func (e *Engine) Name() string { return "paper" }
@@ -126,6 +157,26 @@ func (e *Engine) bump(f func(*Stats)) {
 	e.statsMu.Unlock()
 }
 
+// checkInvariants verifies the ledger's conservation laws after every
+// mutation this engine makes. A violation pauses the engine first — no
+// further cycle may start on a ledger that has stopped conserving
+// capital — and then reports (docs/risk.md §4).
+func (e *Engine) checkInvariants() {
+	check := e.Invariants
+	if check == nil {
+		check = e.Resv.CheckInvariants
+	}
+	err := check()
+	if err == nil {
+		return
+	}
+	e.Pause()
+	e.bump(func(s *Stats) { s.InvariantViolations++ })
+	if e.OnInvariantViolation != nil {
+		e.OnInvariantViolation(err)
+	}
+}
+
 // Run consumes events until ctx cancels. Started paused=false by default:
 // the caller decides the initial state before Run.
 func (e *Engine) Run(ctx context.Context) error {
@@ -180,6 +231,24 @@ func (e *Engine) runCycle(ctx context.Context, ev scanner.Event) {
 		return
 	}
 
+	// Revalidate before committing capital: the books, the ledger and the
+	// breakers have all moved since the scanner qualified this plan.
+	if e.Revalidate != nil {
+		fresh, dec, ok := e.Revalidate(op)
+		e.bump(func(s *Stats) { s.Revalidated++ })
+		if !ok || !dec.Allowed {
+			e.bump(func(s *Stats) { s.Skipped++; s.RevalidationRejected++ })
+			if !ok && dec.ReasonCode == "" {
+				dec.ReasonCode = risk.ReasonRevalidation
+			}
+			if e.OnRevalidationReject != nil {
+				e.OnRevalidationReject(op, dec)
+			}
+			return
+		}
+		op = fresh
+	}
+
 	// Reserve with per-market-side conflict keys: two triangles must not
 	// simulate consuming the same displayed depth simultaneously
 	// (docs/risk.md §4).
@@ -224,6 +293,7 @@ func (e *Engine) runCycle(ctx context.Context, ev scanner.Event) {
 		_ = e.Resv.Release(res.ID)
 		_ = op.Transition(opportunity.StatusFailed, string(result.Outcome))
 		e.bump(func(s *Stats) { s.Skipped++ })
+		e.checkInvariants()
 	default:
 		if err := e.Resv.Settle(res.ID, result.InputConsumed); err == nil {
 			if result.FinalAmount.IsPositive() {
@@ -231,6 +301,7 @@ func (e *Engine) runCycle(ctx context.Context, ev scanner.Event) {
 			}
 		}
 		_ = e.Portfolio.ApplyCycle(result, false)
+		e.checkInvariants()
 		if result.Outcome.Complete() {
 			_ = op.Transition(opportunity.StatusCompleted, "")
 			e.bump(func(s *Stats) { s.Started++; s.Completed++ })
