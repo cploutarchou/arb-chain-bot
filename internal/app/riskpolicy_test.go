@@ -175,3 +175,37 @@ func TestSessionLedgerOpensLossBreakerAtLimit(t *testing.T) {
 	// A nil portfolio (profile without paper) is a no-op.
 	ledger.refresh(policyT0, nil, nil, starts, risk.Limits{}, reg)
 }
+
+// Three consecutive completed cycles past max_slippage_bps open the
+// slippage breaker; a cycle within the limit resets the streak, and
+// cycles that never returned to the start asset neither count nor reset.
+func TestSlippagePolicyOpensAfterConsecutiveBreaches(t *testing.T) {
+	reg := risk.NewRegistry(nil)
+	pol := &slippagePolicy{}
+	lim := risk.Limits{MaxSlippageBps: dec("50")}
+	cycle := func(outcome execution.Outcome, slip string) execution.CycleResult {
+		return execution.CycleResult{CycleID: "c", Outcome: outcome, SlippageBps: dec(slip)}
+	}
+	pol.observe(cycle(execution.OutcomeAllFilled, "80"), lim, reg, policyT0)
+	pol.observe(cycle(execution.OutcomeAllFilled, "80"), lim, reg, policyT0)
+	pol.observe(cycle(execution.OutcomeLeg1FilledLeg2Failed, "0"), lim, reg, policyT0) // not measurable: ignored
+	pol.observe(cycle(execution.OutcomeAllFilled, "10"), lim, reg, policyT0)           // resets
+	pol.observe(cycle(execution.OutcomeAllFilled, "80"), lim, reg, policyT0)
+	pol.observe(cycle(execution.OutcomeAllFilled, "80"), lim, reg, policyT0)
+	if reg.AnyOpen() {
+		t.Fatal("breaker opened before three consecutive breaches")
+	}
+	pol.observe(cycle(execution.OutcomeLeg1Partial, "51"), lim, reg, policyT0)
+	if st, _ := breakerState(reg, breakerSlippage, ""); st != risk.BreakerOpen {
+		t.Fatalf("slippage breaker = %s after three consecutive breaches", st)
+	}
+	// A zero limit disables the policy.
+	reg2 := risk.NewRegistry(nil)
+	pol2 := &slippagePolicy{}
+	for i := 0; i < 5; i++ {
+		pol2.observe(cycle(execution.OutcomeAllFilled, "500"), risk.Limits{}, reg2, policyT0)
+	}
+	if reg2.AnyOpen() {
+		t.Fatal("policy active without a limit")
+	}
+}

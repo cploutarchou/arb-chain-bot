@@ -483,3 +483,33 @@ func TestDefaultInvariantCheckPassesOnHealthySettlement(t *testing.T) {
 		t.Fatalf("healthy settlement flagged: %+v running=%v", st, e.Running())
 	}
 }
+
+// Two events with one opportunity id arriving while the first is still
+// executing: the second must not run (audit F10). The reservation
+// refuses the duplicate key while the original hold is active.
+func TestConcurrentDuplicateRunsOnce(t *testing.T) {
+	exec := &scriptedExecutor{result: completed, block: make(chan struct{})}
+	e, in, resv, _ := harness(t, exec)
+	var results atomic.Int32
+	e.OnResult = func(execution.CycleResult) { results.Add(1) }
+	cancel, wait := runEngine(t, e)
+
+	in <- qualifiedEvent("op-dup", "500")
+	waitFor(t, func() bool { return exec.inFlight.Load() == 1 })
+	in <- qualifiedEvent("op-dup", "500")
+	waitFor(t, func() bool { return e.Snapshot().Skipped == 1 })
+	close(exec.block)
+	waitFor(t, func() bool { return results.Load() == 1 })
+	cancel()
+	wait()
+
+	if exec.peak.Load() != 1 || results.Load() != 1 {
+		t.Fatalf("duplicate executed: peak=%d results=%d", exec.peak.Load(), results.Load())
+	}
+	if avail, reserved := resv.Balance("USDT"); !avail.Equal(d("10004")) || !reserved.IsZero() {
+		t.Fatalf("ledger = %s/%s", avail, reserved)
+	}
+	if err := resv.CheckInvariants(); err != nil {
+		t.Fatal(err)
+	}
+}

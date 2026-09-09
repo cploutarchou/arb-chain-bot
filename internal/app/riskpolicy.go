@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
+	"github.com/cploutarchou/arb-chain-bot/internal/execution"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/portfolio"
 	"github.com/cploutarchou/arb-chain-bot/internal/risk"
@@ -22,7 +23,15 @@ const (
 	breakerDailyLoss     = "daily_loss"               // session loss at the limit; operator-closed
 	breakerDrawdown      = "drawdown"                 // peak-to-trough at the limit; operator-closed
 	breakerFeed          = "feed_instability"         // repeated book faults; probes and closes itself
+	breakerSlippage      = "slippage"                 // realized slippage past the limit; operator-closed
 )
+
+// slippageBreaches is how many consecutive completed cycles must realize
+// more slippage than max_slippage_bps before the slippage breaker opens:
+// one outlier is a market event, three in a row say the execution model
+// no longer describes the market (docs/risk.md §3, "large unexpected
+// slippage, measured vs modelled").
+const slippageBreaches = 3
 
 // Feed-instability policy: a book fault is a transition to CORRUPTED
 // (sequence gap, integrity loss) or DISCONNECTED (transport lost). One
@@ -216,4 +225,30 @@ func cloneAssets(m map[exchange.Asset]decimal.Decimal) map[exchange.Asset]decima
 		out[k] = v
 	}
 	return out
+}
+
+// slippagePolicy compares realized cycle slippage with the strategy's
+// max_slippage_bps at every settlement. Only cycles that returned to the
+// start asset carry a measurable slippage; the others neither count nor
+// reset the streak.
+type slippagePolicy struct {
+	mu     sync.Mutex
+	streak int
+}
+
+func (p *slippagePolicy) observe(res execution.CycleResult, lim risk.Limits, reg *risk.Registry, now time.Time) {
+	if !res.Outcome.Complete() || !lim.MaxSlippageBps.IsPositive() {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if res.SlippageBps.LessThanOrEqual(lim.MaxSlippageBps) {
+		p.streak = 0
+		return
+	}
+	p.streak++
+	if p.streak >= slippageBreaches && reg != nil {
+		reg.Trip(breakerSlippage, "", fmt.Sprintf("%d consecutive cycles realized more than %s bps of slippage (latest %s bps, cycle %s)",
+			p.streak, lim.MaxSlippageBps.String(), res.SlippageBps.StringFixed(2), res.CycleID), now)
+	}
 }

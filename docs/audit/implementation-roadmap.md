@@ -82,6 +82,10 @@ observability → architecture → UX → polish → performance).
 - `paper.Stats.Received/Skipped` not exported (observability O6); slippage unpanelled (O7); queue depths not exported (O8); no realization ratio (O9); screener venue health unpanelled (O10); no spans (O11).
 - Console: no data-age indicator on polled tables (ui F9); opportunities list gaps (F10); strategy parameters without units/defaults (F11); Risk Center gaps (F12); no cycle detail route (F13); Scanner net bps always green (F14); accessibility (F15); tooltips hiding decision text (F16); navigation dead ends (F17); duplicated helpers and one contrast failure (F18).
 
+### P2 status
+
+- Fixed: F10 (`reservation.Reserve` refuses a duplicate key while the original hold is ACTIVE with `ErrDuplicateActive`; the paper engine skips it — concurrent duplicate test added), F11 (`paper.Engine.MaxConcurrent` comes from the strategy's `max_concurrent_simulations` at assembly), F12 (realized cycle slippage past `max_slippage_bps` on three consecutive completed cycles opens the operator-closed `slippage` breaker), F14 (planned and actual return persisted with P0-1), O6 (`paper_cycles_received_total`, `paper_cycles_skipped_total`), O8 (queue depths exported with P0-3).
+
 ## P3 — Low
 
 - Trading precision cluster (T12): min-notional on exact cost, `NOTIONAL.applyMinToMarket`, `Usable()` without a `NOTIONAL` filter, `DepthExhausted` from the budget walk, dead `fees.Bps`, discount refusal location, 1e-28 clamp.

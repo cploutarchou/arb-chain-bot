@@ -65,6 +65,7 @@ registry itself is policy-free):
 | `simulation_inconsistency` | global | a reservation-ledger invariant fails after a settlement (the paper engine pauses itself first) | operator |
 | `daily_loss` | global | a start asset's session loss (realized plus marked exposure) reaches `max_daily_loss` | operator |
 | `drawdown` | global | a start asset's peak-to-trough drawdown reaches `max_drawdown` | operator |
+| `slippage` | global | three consecutive completed cycles realize more slippage than `max_slippage_bps` (measured against the un-buffered plan) | operator |
 
 The scanner gate consults the global scope plus `exchange:`, `triangle:`
 and each leg's `market:` scope; HALF_OPEN does not gate.
