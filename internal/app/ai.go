@@ -54,7 +54,7 @@ func (e *Engine) AIInput(kind ai.AnalysisKind) ai.Input {
 			in.PnL = append(in.PnL, ai.AssetSummary{
 				Asset:    string(a),
 				Realized: port.Realized(a).String(),
-				Fees:     port.FeesPaid(a).String(),
+				Fees:     feesMarked(port, a, marker),
 				Loss:     port.DailyLoss(a, marker).String(),
 				Drawdown: port.CurrentDrawdown(a).StringFixed(4),
 			})

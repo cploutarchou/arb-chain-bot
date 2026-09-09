@@ -269,6 +269,36 @@ func (p *Portfolio) FeesPaid(asset exchange.Asset) decimal.Decimal {
 	return p.fees[asset]
 }
 
+// FeesMark values every fee asset's cumulative fees in one start asset
+// through the marker (identity for the start asset itself). Legs 1 and
+// 2 of a cycle charge their fee in the intermediate assets under a
+// fee-in-received convention, so the start asset's own slice understates
+// the cost of trading by most of it (audit F13). Unmarkable fee assets
+// are listed and contribute nothing; the raw per-asset map is returned
+// beside the total so nothing is hidden behind the valuation.
+func (p *Portfolio) FeesMark(start exchange.Asset, marker Marker) (total decimal.Decimal, byAsset map[exchange.Asset]decimal.Decimal, unmarked []exchange.Asset) {
+	p.mu.Lock()
+	byAsset = cloneMap(p.fees)
+	p.mu.Unlock()
+	for asset, amt := range byAsset {
+		if amt.IsZero() {
+			continue
+		}
+		if asset == start {
+			total = total.Add(amt)
+			continue
+		}
+		if marker != nil {
+			if v, ok := marker.Mark(asset, amt, start); ok {
+				total = total.Add(v)
+				continue
+			}
+		}
+		unmarked = append(unmarked, asset)
+	}
+	return total, byAsset, unmarked
+}
+
 // ExposureMark values the stranded exposure in one start asset with the
 // given marker. Unmarkable assets contribute nothing and are returned so
 // the caller can say so; a nil marker marks nothing.
