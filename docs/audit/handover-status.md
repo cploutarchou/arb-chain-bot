@@ -13,17 +13,20 @@ this branch since the test-database cleanup fix; the secret scan is green.
 - **P1** — fixed: P1-1 … P1-9, P1-10 … P1-14, P1-16, P1-17, P1-18 … P1-23;
   P1-15 partly (the restore drill fails closed and the managed-database
   backup options are documented; provider automation is an operator
-  decision). P1-24 (console) is in progress: F1, F2, F3, F4, F7, F8 are
-  implemented on the branch as a snapshot that typechecks and lints;
-  F5 (overview five-second test) and F6 (Paper page as a live-cycle
+  decision). P1-24 (console): F1, F2, F3, F4, F7, F8 are implemented
+  (lint, typecheck and `next build` pass; the Playwright suite passes
+  41 of 43 against a real backend, the two failures being pre-existing
+  and bound to an environment without exchange network egress); F5
+  (overview five-second test) and F6 (Paper page as a live-cycle
   monitor) are not started.
 - **P2 pulled forward** — F10, F11, F12, F13, F14, F16, M3, M4, M5, O6, O8,
   T2, T4, T5, T6 (see "P2 status" in the roadmap).
 
 ## What remains
 
-1. Console (P1-24): run `npm run build` in `web/`, review the snapshot
-   against `docs/audit/ui-ux-audit.md` F1–F8, then implement F5 and F6.
+1. Console (P1-24): implement F5 and F6 from `docs/audit/ui-ux-audit.md`
+   (F1–F8 are done; `web/src/lib/outcomes.ts`, `PaperControl.tsx`,
+   `OutcomeBadge.tsx` and `web/src/lib/decimal.ts` are the shared pieces).
    The backend now exposes `ABORTED` as a cycle outcome, `queues.paper.dropped`,
    `queues.outbox.write_failures`/`failing`/`unlinked_cycles`, `clock.*`
    in `GET /api/v1/system/health`, `fees_marked` / `fees_by_asset` /
