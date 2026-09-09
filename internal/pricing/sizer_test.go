@@ -927,3 +927,57 @@ func findCandidate(t *testing.T, tri graph.Triangle, data [3]MarketData, sched *
 	t.Fatalf("no candidate within %s of %s; candidates: %v", tol, want, ladder.candidates(minIn, maxIn))
 	return decimal.Zero
 }
+
+// The constrained search lands on the most profitable size the gate will
+// accept (audit T2). Leg 1 has a cheap level and a 1% worse one; both
+// are profitable, so the unconstrained optimum eats the whole second
+// level at ~98 bps of impact, while a 50 bps cap admits only ~0.02 BTC of
+// it (VWAP 50 250): the feasible frontier is at 1000 + 1010 = 2010 USDT.
+func TestFindCycleConstrainedPrefersFeasibleSize(t *testing.T) {
+	tri := triUSDT()
+	sched := schedReceived(t, "0.001")
+	data := [3]MarketData{
+		mdWith(nil, []orderbook.Level{lv("50000", "0.02"), lv("50500", "1")}, "0.00001"),
+		mdWith(nil, []orderbook.Level{lv("0.05", "10000")}, "0.0001"),
+		mdWith([]orderbook.Level{lv("2560", "100000")}, nil, "0.0001"),
+	}
+	minIn, maxIn := d("10"), d("100000")
+	cap50 := d("50")
+	feasible := func(q CycleQuote) bool {
+		for _, l := range q.Legs {
+			if l.PriceImpactBps.GreaterThan(cap50) {
+				return false
+			}
+		}
+		return true
+	}
+
+	free, ok := DefaultSizeSearch.FindCycle(tri, data, sched, minIn, maxIn)
+	if !ok {
+		t.Fatal("unconstrained: no viable size")
+	}
+	if free.Constrained || !free.Best.Legs[0].PriceImpactBps.GreaterThan(cap50) || free.Best.InputConsumed.LessThan(d("50000")) {
+		t.Fatalf("fixture: unconstrained optimum must breach the cap at full depth: %+v", free.Best.Legs[0])
+	}
+
+	res, ok := DefaultSizeSearch.FindCycleConstrained(tri, data, sched, minIn, maxIn, feasible)
+	if !ok || !res.Constrained {
+		t.Fatalf("constrained search: ok=%v constrained=%v", ok, res.Constrained)
+	}
+	if !feasible(res.Best) {
+		t.Fatalf("returned size breaches the cap: %+v", res.Best.Legs[0])
+	}
+	if res.Best.InputConsumed.LessThan(d("1900")) || res.Best.InputConsumed.GreaterThan(d("2010.5")) {
+		t.Fatalf("constrained size = %s, want within the refinement resolution of the 2010 frontier", res.Best.InputConsumed)
+	}
+	if !res.Best.GrossProfit.IsPositive() || res.Evaluations > DefaultSizeSearch.MaxCandidates+DefaultSizeSearch.RefineIters+2 {
+		t.Fatalf("profit %s evaluations %d", res.Best.GrossProfit, res.Evaluations)
+	}
+
+	// Nothing feasible: the unconstrained optimum comes back flagged, so
+	// the gate rejects it with the real reason.
+	none, ok := DefaultSizeSearch.FindCycleConstrained(tri, data, sched, minIn, maxIn, func(CycleQuote) bool { return false })
+	if !ok || none.Constrained || !none.Best.InputConsumed.Equal(free.Best.InputConsumed) {
+		t.Fatalf("infeasible everywhere: ok=%v constrained=%v size=%s (unconstrained %s)", ok, none.Constrained, none.Best.InputConsumed, free.Best.InputConsumed)
+	}
+}

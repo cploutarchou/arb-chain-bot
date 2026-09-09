@@ -207,3 +207,56 @@ func TestLedgerLossAndDrawdownGateQualification(t *testing.T) {
 		}
 	}
 }
+
+// The size search honours the gate's size-dependent limits (audit T2):
+// with a tight impact cap the triangle qualifies at a smaller size that
+// passes instead of being rejected at the maximum-profit size.
+func TestConstrainedSizingRespectsImpactCap(t *testing.T) {
+	// Deepen ETHBTC so leg 1's second level (101) is the binding
+	// breakpoint: eating into it is still profitable (10.2 / 10.1), so the
+	// unconstrained optimum carries price impact.
+	deepen := func(s *Scanner, books *orderbook.Set) {
+		resnapshot(t, books, "ETHBTC", []orderbook.Level{lv("0.099", "1000")}, []orderbook.Level{lv("0.1", "1000")}, 5)
+	}
+	unconstrained, ubooks := harness(t)
+	deepen(unconstrained, ubooks)
+	big := qualify(t, unconstrained)
+	worst := decimal.Zero
+	for _, l := range big.Quote.Legs {
+		if l.PriceImpactBps.GreaterThan(worst) {
+			worst = l.PriceImpactBps
+		}
+	}
+	if !worst.IsPositive() {
+		t.Fatalf("fixture: the unconstrained optimum must eat into a second level (impact %s)", worst)
+	}
+
+	s, books := harness(t)
+	deepen(s, books)
+	s.Resolver.Global.MaxPriceImpactBps = d("1")
+	s.EvaluateMarket(btcusdt)
+	var qualified *opportunity.Opportunity
+	var reasons []string
+	for _, ev := range drain(s) {
+		if ev.Opportunity.Status == opportunity.StatusQualified {
+			op := ev.Opportunity
+			qualified = &op
+		} else {
+			reasons = append(reasons, ev.Decision.ReasonCode)
+		}
+	}
+	if qualified == nil {
+		t.Fatalf("nothing qualified under the impact cap; rejections: %v", reasons)
+	}
+	for _, l := range qualified.Quote.Legs {
+		if l.PriceImpactBps.GreaterThan(d("1")) {
+			t.Fatalf("qualified size breaches the cap: impact %s", l.PriceImpactBps)
+		}
+	}
+	if !qualified.Quote.InputConsumed.LessThan(big.Quote.InputConsumed) {
+		t.Fatalf("constrained size %s not below the unconstrained %s", qualified.Quote.InputConsumed, big.Quote.InputConsumed)
+	}
+	if !qualified.NetProfit.IsPositive() {
+		t.Fatalf("constrained optimum not profitable: %s", qualified.NetProfit)
+	}
+}

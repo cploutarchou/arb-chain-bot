@@ -66,6 +66,11 @@ type SizeResult struct {
 	Best        CycleQuote
 	Evaluations int // QuoteCycle calls spent
 	Candidates  int // depth breakpoints considered (FindCycle only)
+	// Constrained reports that Best satisfies the feasibility predicate
+	// given to FindCycleConstrained. False with a predicate means no
+	// evaluated size was feasible and Best is the unconstrained optimum,
+	// returned so the risk gate can reject it with its own reason.
+	Constrained bool
 }
 
 func (s SizeSearch) normalized() SizeSearch {
@@ -106,6 +111,19 @@ func (s SizeSearch) Find(quote func(decimal.Decimal) (CycleQuote, error), minIn,
 // candidates from are the books it quotes, which is why it builds the
 // closure itself.
 func (s SizeSearch) FindCycle(tri graph.Triangle, data [3]MarketData, sched *fees.Schedule, minIn, maxIn decimal.Decimal) (SizeResult, bool) {
+	return s.FindCycleConstrained(tri, data, sched, minIn, maxIn, nil)
+}
+
+// FindCycleConstrained is FindCycle with the risk gate's size-dependent
+// limits folded into the objective (audit T2): feasible reports whether a
+// quote would pass them (worst-leg price impact, minimum edge after
+// buffers). Sizes that fail rank below every feasible size, so the
+// search lands on the most profitable size that the gate will accept
+// instead of on the unconstrained maximum that it would reject; when no
+// evaluated size is feasible the unconstrained optimum is returned with
+// Constrained=false, so the rejection stays explainable. A nil predicate
+// is the plain search.
+func (s SizeSearch) FindCycleConstrained(tri graph.Triangle, data [3]MarketData, sched *fees.Schedule, minIn, maxIn decimal.Decimal, feasible func(CycleQuote) bool) (SizeResult, bool) {
 	s = s.normalized()
 	quote := func(in decimal.Decimal) (CycleQuote, error) {
 		return QuoteCycle(tri, data, sched, in)
@@ -126,7 +144,7 @@ func (s SizeSearch) FindCycle(tri graph.Triangle, data [3]MarketData, sched *fee
 		maxIn = capIn
 	}
 
-	ev := &sizeEval{quote: quote, budget: s.MaxCandidates + s.RefineIters + 2, res: &res}
+	ev := &sizeEval{quote: quote, budget: s.MaxCandidates + s.RefineIters + 2, res: &res, feasible: feasible}
 	cands := ladder.candidates(minIn, maxIn)
 	res.Candidates = len(cands)
 	bounds := newCandidateBounds(ladder, cands)
@@ -141,19 +159,17 @@ func (s SizeSearch) FindCycle(tri graph.Triangle, data [3]MarketData, sched *fee
 	}
 	if !ev.best.valid {
 		// Every breakpoint is unquotable (dust or min-notional at the low
-		// end, a rule violation at the high end): fall back to sweeping
-		// the range with whatever budget is left.
+		// end, a rule violation at the high end) or infeasible: fall back
+		// to sweeping the range with whatever budget is left.
 		s.golden(ev, minIn, maxIn)
 		if !ev.best.valid {
-			return res, false
+			return ev.finish()
 		}
-		res.Best = ev.best.quote
-		return res, true
+		return ev.finish()
 	}
 	winner, _ := slices.BinarySearchFunc(cands, ev.best.size, func(a, b decimal.Decimal) int { return a.Cmp(b) })
 	s.refineBetween(ev, bounds, winner)
-	res.Best = ev.best.quote
-	return res, true
+	return ev.finish()
 }
 
 // priceOutwards prices candidates from the ceiling's peak outwards. The
@@ -324,38 +340,56 @@ func (s SizeSearch) golden(ev *sizeEval, lo, hi decimal.Decimal) {
 	}
 }
 
-// sizePoint is one priced size.
+// sizePoint is one priced size. valid means quotable and feasible;
+// infeasible means quotable but refused by the feasibility predicate.
 type sizePoint struct {
-	size   decimal.Decimal
-	profit decimal.Decimal
-	quote  CycleQuote
-	valid  bool
+	size       decimal.Decimal
+	profit     decimal.Decimal
+	quote      CycleQuote
+	valid      bool
+	infeasible bool
 }
 
 // better ranks two priced sizes: more profit wins; on an exact tie the
 // smaller size wins, because the same profit on less deployed capital is
-// the better trade. An unquotable size loses to every quotable one.
+// the better trade. A size that is not valid loses to every valid one.
+// Between two invalid sizes the ranking encodes where each kind of
+// invalidity lives so a bracket walks toward the feasible region instead
+// of away from it: infeasible sizes (impact and edge limits bind as size
+// grows) prefer the smaller, unquotable ones (dust and notional floors
+// bind as size shrinks) prefer the larger, and quotable beats unquotable.
 func better(a, b sizePoint) bool {
-	if !a.valid {
-		return false
-	}
-	if !b.valid {
+	switch {
+	case a.valid && b.valid:
+		if cmp := a.profit.Cmp(b.profit); cmp != 0 {
+			return cmp > 0
+		}
+		return a.size.LessThan(b.size)
+	case a.valid:
 		return true
+	case b.valid:
+		return false
+	case a.infeasible && b.infeasible:
+		return a.size.LessThan(b.size)
+	case a.infeasible != b.infeasible:
+		return a.infeasible
+	default:
+		return a.size.GreaterThan(b.size)
 	}
-	if cmp := a.profit.Cmp(b.profit); cmp != 0 {
-		return cmp > 0
-	}
-	return a.size.LessThan(b.size)
 }
 
 // sizeEval prices sizes against a fixed evaluation budget and remembers
 // the best result. Evaluations are counted even when the quote fails, so
-// an untradeable triangle cannot spin the hot path.
+// an untradeable triangle cannot spin the hot path. With a feasibility
+// predicate, best is the best feasible size and bestAny the best
+// quotable one regardless of feasibility.
 type sizeEval struct {
-	quote  func(decimal.Decimal) (CycleQuote, error)
-	budget int
-	res    *SizeResult
-	best   sizePoint
+	quote    func(decimal.Decimal) (CycleQuote, error)
+	feasible func(CycleQuote) bool
+	budget   int
+	res      *SizeResult
+	best     sizePoint
+	bestAny  sizePoint
 }
 
 func (e *sizeEval) spent() bool { return e.res.Evaluations >= e.budget }
@@ -370,10 +404,36 @@ func (e *sizeEval) at(size decimal.Decimal) sizePoint {
 		return sizePoint{size: size}
 	}
 	p := sizePoint{size: size, profit: cq.GrossProfit, quote: cq, valid: true}
+	if better(p, e.bestAny) {
+		e.bestAny = p
+	}
+	if e.feasible != nil && !e.feasible(cq) {
+		// Infeasible sizes rank below every feasible one: the search
+		// steers away from them and never returns one while a feasible
+		// size exists.
+		p.valid, p.infeasible = false, true
+		return p
+	}
 	if better(p, e.best) {
 		e.best = p
 	}
 	return p
+}
+
+// finish fills the result: the best feasible size, else the best quotable
+// one (Constrained=false), else nothing.
+func (e *sizeEval) finish() (SizeResult, bool) {
+	switch {
+	case e.best.valid:
+		e.res.Best = e.best.quote
+		e.res.Constrained = e.feasible != nil
+		return *e.res, true
+	case e.bestAny.valid:
+		e.res.Best = e.bestAny.quote
+		return *e.res, true
+	default:
+		return *e.res, false
+	}
 }
 
 func searchable(minIn, maxIn decimal.Decimal) bool {
