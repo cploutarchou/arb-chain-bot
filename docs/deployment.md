@@ -196,6 +196,18 @@ install and are ignored afterward. Open **Settings** in the console:
   campaign run is in progress or a recording is active without
   `stop_recording`, and while a restart is already under way.
 
+- **The paper ledger survives a restart.** After every settled cycle the
+  engine writes a ledger snapshot (cash per start asset, realized PnL,
+  equity peak, drawdown, fees, stranded exposure, cycle counters) through
+  the outbox into `virtual_balances`, `balance_snapshots` and
+  `pnl_snapshots`. A restart — console-driven or a process restart —
+  resumes the latest open paper session from that snapshot when the
+  configured starting balances still match it, so a restart can never
+  reset a loss, a drawdown or an exposure; capital the old process still
+  had reserved is released to available and logged. Changing the paper
+  balances in **Settings** or using **Reset paper** ends the session and
+  starts a fresh one.
+
 ## 3d. Operating mode, AI advisor, log level, origin and secrets (T-059..T-061)
 
 The same versioned document (`platform_settings`) now also carries the
@@ -322,6 +334,38 @@ Postgres stays on loopback with the password from `.env`.
 - Postgres is the source of truth for market metadata (instrument
   rules), the recording catalog, and the stream table the campaign
   needs — keep the `pgdata` volume alongside the `recordings` volume.
+
+### Circuit breakers
+
+The engine manages six breakers (`docs/risk.md` §3): `persistence`
+(opens on a failed database write, closes when a write or the outbox's
+probe succeeds), `feed_instability` (five coalesced book faults in a
+minute; probes and closes itself), and four that stay open until an
+operator acts — `daily_loss`, `drawdown`, `slippage` and
+`simulation_inconsistency`. Any OPEN breaker pauses qualification. The
+Risk Center and `GET /api/v1/risk` show the board; transitions are
+CRITICAL alerts and `risk_events` rows. An engine restart rebuilds the
+registry (closing the operator-acknowledged breakers), but the
+ledger-based limits keep rejecting through the risk gate because the
+session loss and drawdown are resumed with the ledger; a
+`simulation_inconsistency` or `slippage` breaker cleared by a restart
+should be treated as an incident to investigate, not as recovery.
+
+### Retention worker
+
+`cmd/worker` runs a nightly retention sweep (`RETENTION_RUN_AT_UTC`,
+default `03:00`) over telemetry-class tables only: qualified and
+rejected opportunities no cycle references
+(`RETENTION_OPPORTUNITIES_QUALIFIED` 90d, `RETENTION_OPPORTUNITIES_REJECTED`
+14d), `exchange_health` (30d), `system_events` (30d), `funding_history`
+(180d), expired sessions (30d) and closed recording metadata
+(`RETENTION_RECORDING_METADATA`, disabled by default). Deletes run in
+batches of `RETENTION_BATCH_SIZE` (500) with `RETENTION_BATCH_SLEEP`
+(200ms) between them under `RETENTION_STATEMENT_TIMEOUT` (5s);
+`RETENTION_DRY_RUN=true` only reports counts. Cycles, orders, fills,
+paper sessions, ledger snapshots, audit and risk events have no
+retention setting at all, and `audit_events`/`risk_events` refuse
+UPDATE and DELETE at the database level (migration 000018).
 
 ## 6. Environments
 
