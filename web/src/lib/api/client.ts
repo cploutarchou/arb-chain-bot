@@ -350,7 +350,11 @@ export interface PaperStatus {
 export interface ScannerStatus {
   ready: boolean;
   triangles: number;
-  markets: string[];
+  // Nullable: the engine's own zero value before the topology is built
+  // (internal/app/engine.go's EngineStatus starts Markets nil and only
+  // appends once e.topo is non-nil) marshals as JSON null, not `[]` —
+  // callers must not assume an array.
+  markets: string[] | null;
   evaluations: number;
   qualified: number;
   rejected: number;
@@ -1508,10 +1512,13 @@ export interface ScreenerPerpsResponse {
 export interface ScreenerPerpsQuery {
   venue?: string;
   base?: string;
-  // Fraction, e.g. 0.10 for 10% APR (internal/screener/basis.go
-  // PerpFilters.MinCarryAPR) — callers taking a percent input from the
-  // operator must divide by 100 before passing it here.
-  min_carry_apr?: number;
+  // Exact decimal fraction as a string, e.g. "0.10" for 10% APR
+  // (internal/screener/basis.go PerpFilters.MinCarryAPR, parsed
+  // server-side with decimal.NewFromString — never a JSON number).
+  // Callers taking a percent input from the operator must convert with
+  // lib/decimal's percentToFractionStr, never `Number(percent) / 100`
+  // (that division reliably leaves float noise in the querystring).
+  min_carry_apr?: string;
   limit?: number;
 }
 

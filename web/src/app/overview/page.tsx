@@ -160,7 +160,7 @@ export default function OverviewPage() {
                 value={s.paper?.active_simulations ?? "—"}
               />
               <Stat label="Triangles" value={s.triangles} />
-              <Stat label="Markets" value={s.markets.length} />
+              <Stat label="Markets" value={(s.markets ?? []).length} />
             </div>
           )}
         </Await>

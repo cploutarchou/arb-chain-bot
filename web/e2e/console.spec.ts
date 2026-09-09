@@ -39,7 +39,40 @@ test("bad credentials fail without an oracle", async ({ page }) => {
 test("login reaches overview with live system status", async ({ page }) => {
   await login(page);
   await expect(page.getByText("Mode", { exact: true })).toBeVisible();
-  await expect(page.getByText("PAPER", { exact: true })).toBeVisible();
+  // Scoped to the page body: the shell chrome (sidebar/top bar) also
+  // renders the mode word now (F1), so an unscoped exact match would
+  // ambiguously resolve between that and this page's own "Mode" stat.
+  await expect(
+    page.locator("main").getByText("PAPER", { exact: true }),
+  ).toBeVisible();
+});
+
+test("mode banner announces the mode on mobile without opening the menu (F1)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  const menuButton = page.getByRole("button", { name: "Open navigation" });
+  for (const path of ["/overview", "/paper", "/portfolio"]) {
+    await page.goto(path);
+    // Never opened: the compact banner must already be on screen.
+    await expect(menuButton).toBeVisible();
+    await expect(page.getByTitle(/PAPER TRADING ONLY/)).toBeVisible();
+  }
+
+  // A mocked REPLAY mode renders the same way — the compact banner is
+  // driven by the real status poll, not hard-coded to PAPER.
+  await page.route("**/api/v1/system/status", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { data?: { mode?: string } };
+    if (body.data) body.data.mode = "REPLAY";
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/overview");
+  await expect(menuButton).toBeVisible();
+  await expect(
+    page.getByTitle(/REPLAY — replaying recorded data, not live/),
+  ).toBeVisible();
 });
 
 test("every nav page renders content or an honest state", async ({ page }) => {
@@ -342,6 +375,79 @@ test("paper reset is disabled with a hint while the engine is running", async ({
   await expect(
     page.getByText(/pause the engine before resetting/),
   ).toBeVisible();
+});
+
+// mockPaperRunning overlays a deterministic `paper` block onto the real
+// scanner-status response (every other field — ready, triangles,
+// markets… — stays whatever the live engine currently reports). This
+// e2e harness's engine has no exchange egress to become fully ready
+// against (screener.md/replay's own "market-data bootstrap is expected
+// to be retrying" comment), so `paper` can legitimately be absent for a
+// long time — the control's own correctness here does not depend on
+// racing that; it depends on what the control renders once the status
+// IS `{running}`, which this pins down exactly.
+async function mockPaperRunning(page: Page, running: boolean) {
+  await page.route("**/api/v1/scanner/status", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      data?: { paper?: unknown } | null;
+    };
+    if (body.data) {
+      body.data.paper = {
+        running,
+        active_simulations: running ? 1 : 0,
+        received: 10,
+        completed: 8,
+        failed: 1,
+        skipped: 1,
+      };
+    }
+    await route.fulfill({ response, json: body });
+  });
+}
+
+test("shell pause control reaches Paper Trading in one click from an unrelated page, confirms once, and reports the backend's own failure (F2)", async ({
+  page,
+}) => {
+  await login(page);
+  await mockPaperRunning(page, true);
+  await page.goto("/alerts");
+  // Scoped to the sidebar (the one <aside role="complementary"> while the
+  // mobile overlay is closed) — the mobile top bar mounts the same
+  // control too (CSS-hidden at this viewport, still in the DOM), so an
+  // unscoped role query would be ambiguous.
+  const sidebar = page.getByRole("complementary");
+  const pauseButton = sidebar.getByRole("button", {
+    name: "Pause paper trading",
+  });
+  await expect(pauseButton).toBeVisible({ timeout: 10_000 });
+
+  await pauseButton.click();
+  const dialog = page.getByRole("dialog", { name: "Pause paper trading?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(/in-flight simulations/i);
+
+  // Mock the failure so the toast must carry the backend's own status and
+  // message verbatim — and so the shared e2e backend, which other tests
+  // rely on staying RUNNING, is never actually paused.
+  await page.route("**/api/v1/paper/pause", async (route) => {
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: null,
+        error: { code: "paper_busy", message: "a simulation is still settling" },
+      }),
+    });
+  });
+  await dialog.getByRole("button", { name: "Pause paper trading" }).click();
+  await expect(
+    page.getByText(
+      "Pause failed (HTTP 409): a simulation is still settling",
+    ),
+  ).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(pauseButton).toBeEnabled();
 });
 
 test("settings Markets & assets renders the real platform-settings document", async ({
@@ -772,6 +878,24 @@ test("nav gating is visible for a VIEWER (role-restricted, not just hidden)", as
   await expect(gated).toBeVisible();
   await expect(gated).toHaveAttribute("aria-disabled", "true");
   await expect(gated).toContainText("Audit Log");
+});
+
+test("shell paper control shows a VIEWER the live state but never the pause/resume button (F2 RBAC)", async ({
+  page,
+}) => {
+  const viewer = await ensureViewerAccount(page);
+  await login(page, viewer.email, viewer.password);
+  await mockPaperRunning(page, false);
+  await page.goto("/overview");
+  const sidebar = page.getByRole("complementary");
+  await expect(sidebar.getByText(/PAPER (RUNNING|PAUSED)/)).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(
+    sidebar.getByRole("button", {
+      name: /Pause paper trading|Resume paper trading/,
+    }),
+  ).toHaveCount(0);
 });
 
 // ---- Scanner Suite (T-065..T-072) -----------------------------------------
