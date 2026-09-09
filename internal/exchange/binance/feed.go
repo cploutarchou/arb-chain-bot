@@ -212,10 +212,17 @@ func (f *Feed) session(ctx context.Context) error {
 	f.syncers = fresh
 	f.syncMu.Unlock()
 
+	// Everything this session spawns — snapshot priming and gap resyncs —
+	// ends with it (audit M5): a resync still retrying for a dead session
+	// would contend the shared REST weight gate against the new session's
+	// own resyncs, exactly during a reconnect storm.
+	sctx, cancelSession := context.WithCancel(ctx)
+	defer cancelSession()
+
 	// Snapshot fetches run beside the read loop; depthSnapshot meters
 	// them against the REST weight budget.
 	snapErr := make(chan error, 1)
-	go f.fetchSnapshots(ctx, snapErr)
+	go f.fetchSnapshots(sctx, snapErr)
 
 	preempt := time.NewTimer(f.PreemptAfter)
 	defer preempt.Stop()
@@ -232,7 +239,7 @@ func (f *Feed) session(ctx context.Context) error {
 			resetDeadline()
 			select {
 			case frames <- frame:
-			case <-ctx.Done():
+			case <-sctx.Done():
 				return
 			}
 		}
@@ -251,7 +258,7 @@ func (f *Feed) session(ctx context.Context) error {
 				return err
 			}
 		case frame := <-frames:
-			f.handleFrame(ctx, frame)
+			f.handleFrame(sctx, frame)
 		}
 	}
 }

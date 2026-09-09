@@ -155,3 +155,50 @@ func TestReadMissingSegment(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A market that stops receiving frames degrades to STALE during replay
+// on the recorded clock (audit M3); a later frame restores HEALTHY, and a
+// replayer without an age budget never sweeps.
+func TestReplayerSweepsStaleness(t *testing.T) {
+	streams := map[uint16]exchange.Symbol{1: "BTCUSDT", 2: "ETHUSDT"}
+	r := NewReplayer(streams)
+	r.MaxBookAge = 2 * time.Second
+	btc := exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"}
+	eth := exchange.MarketID{Exchange: "binance", Symbol: "ETHUSDT"}
+	frames := []Frame{
+		{Recv: t0, Dir: DirREST, StreamID: 1, Payload: restBody(100)},
+		{Recv: t0, Dir: DirREST, StreamID: 2, Payload: restBody(100)},
+		{Recv: t0.Add(time.Second), Dir: DirWS, StreamID: 1, Payload: wsFrame("BTCUSDT", 101, 102, `["100.5","3"]`)},
+		// ETHUSDT goes quiet; BTCUSDT keeps ticking past the age budget.
+		{Recv: t0.Add(3 * time.Second), Dir: DirWS, StreamID: 1, Payload: wsFrame("BTCUSDT", 103, 104, `["100.6","3"]`)},
+	}
+	for _, fr := range frames {
+		if err := r.Apply(fr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, _ := r.Books.View(eth, 1); v.State != orderbook.StateStale {
+		t.Fatalf("quiet market state = %s, want STALE", v.State)
+	}
+	if v, _ := r.Books.View(btc, 1); v.State != orderbook.StateHealthy {
+		t.Fatalf("ticking market state = %s, want HEALTHY", v.State)
+	}
+	// A frame for the quiet market restores it.
+	if err := r.Apply(Frame{Recv: t0.Add(4 * time.Second), Dir: DirWS, StreamID: 2, Payload: wsFrame("ETHUSDT", 101, 102, `["100.5","3"]`)}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := r.Books.View(eth, 1); v.State != orderbook.StateHealthy {
+		t.Fatalf("restored market state = %s", v.State)
+	}
+
+	// No budget: the previous behaviour, HEALTHY forever.
+	r2 := NewReplayer(streams)
+	for _, fr := range frames {
+		if err := r2.Apply(fr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, _ := r2.Books.View(eth, 1); v.State != orderbook.StateHealthy {
+		t.Fatalf("without a budget state = %s", v.State)
+	}
+}
