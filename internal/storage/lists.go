@@ -54,7 +54,10 @@ func (s *Store) ListOpportunities(ctx context.Context, status string, limit int)
 	return out, rows.Err()
 }
 
-// CycleRow is the list view of one settled paper cycle.
+// CycleRow is the list view of one settled paper cycle. PnLAmount is the
+// marked total (realized plus the exposure mark at settlement);
+// RealizedPnL and ExposureMark are its two components and are absent on
+// rows written before migration 000016.
 type CycleRow struct {
 	ID            string     `json:"id"`
 	SessionID     string     `json:"session_id"`
@@ -62,9 +65,26 @@ type CycleRow struct {
 	Outcome       string     `json:"outcome"`
 	PnLAmount     *string    `json:"pnl_amount,omitempty"`
 	PnLAsset      *string    `json:"pnl_asset,omitempty"`
+	RealizedPnL   *string    `json:"realized_pnl,omitempty"`
+	ExposureMark  *string    `json:"exposure_mark,omitempty"`
+	InputConsumed *string    `json:"input_consumed,omitempty"`
+	FinalAmount   *string    `json:"final_amount,omitempty"`
 	SlippageBps   *string    `json:"slippage_bps,omitempty"`
 	StartedAt     time.Time  `json:"started_at"`
 	SettledAt     *time.Time `json:"settled_at,omitempty"`
+}
+
+const cycleRowColumns = `id, session_id, opportunity_id, outcome,
+		       pnl_amount::text, pnl_asset, realized_pnl::text, exposure_mark::text,
+		       input_consumed::text, final_amount::text, slippage_bps::text,
+		       started_at, settled_at`
+
+func scanCycleRow(rows interface{ Scan(dest ...any) error }) (CycleRow, error) {
+	var r CycleRow
+	err := rows.Scan(&r.ID, &r.SessionID, &r.OpportunityID, &r.Outcome,
+		&r.PnLAmount, &r.PnLAsset, &r.RealizedPnL, &r.ExposureMark,
+		&r.InputConsumed, &r.FinalAmount, &r.SlippageBps, &r.StartedAt, &r.SettledAt)
+	return r, err
 }
 
 // ListCycles returns paper cycles newest-first ("" session = all).
@@ -73,9 +93,7 @@ func (s *Store) ListCycles(ctx context.Context, sessionID string, limit int) ([]
 		limit = 100
 	}
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id, session_id, opportunity_id, outcome,
-		       pnl_amount::text, pnl_asset, slippage_bps::text,
-		       started_at, settled_at
+		SELECT `+cycleRowColumns+`
 		FROM paper_cycles
 		WHERE ($1 = '' OR session_id = $1)
 		ORDER BY started_at DESC LIMIT $2`, sessionID, limit)
@@ -85,9 +103,8 @@ func (s *Store) ListCycles(ctx context.Context, sessionID string, limit int) ([]
 	defer rows.Close()
 	var out []CycleRow
 	for rows.Next() {
-		var r CycleRow
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.OpportunityID, &r.Outcome,
-			&r.PnLAmount, &r.PnLAsset, &r.SlippageBps, &r.StartedAt, &r.SettledAt); err != nil {
+		r, err := scanCycleRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -103,7 +120,8 @@ func (s *Store) ListCyclesByTriangle(ctx context.Context, triangleID string, lim
 	}
 	rows, err := s.Pool.Query(ctx, `
 		SELECT c.id, c.session_id, c.opportunity_id, c.outcome,
-		       c.pnl_amount::text, c.pnl_asset, c.slippage_bps::text,
+		       c.pnl_amount::text, c.pnl_asset, c.realized_pnl::text, c.exposure_mark::text,
+		       c.input_consumed::text, c.final_amount::text, c.slippage_bps::text,
 		       c.started_at, c.settled_at
 		FROM paper_cycles c
 		JOIN opportunities o ON o.id = c.opportunity_id
@@ -115,9 +133,8 @@ func (s *Store) ListCyclesByTriangle(ctx context.Context, triangleID string, lim
 	defer rows.Close()
 	var out []CycleRow
 	for rows.Next() {
-		var r CycleRow
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.OpportunityID, &r.Outcome,
-			&r.PnLAmount, &r.PnLAsset, &r.SlippageBps, &r.StartedAt, &r.SettledAt); err != nil {
+		r, err := scanCycleRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -163,14 +163,55 @@ func TestDailyLossOnlyCountsLosses(t *testing.T) {
 	p := New(resv, map[exchange.Asset]decimal.Decimal{"USDT": d("1000")})
 	win := completedCycle("c1", "100", "110")
 	_ = p.ApplyCycle(win, false)
-	if !p.DailyLoss("USDT").IsZero() {
-		t.Fatalf("profit counted as loss: %s", p.DailyLoss("USDT"))
+	if !p.DailyLoss("USDT", nil).IsZero() {
+		t.Fatalf("profit counted as loss: %s", p.DailyLoss("USDT", nil))
 	}
 	loss := completedCycle("c2", "100", "70")
 	_ = p.ApplyCycle(loss, false)
 	// Net realized = +10 - 30 = -20 → loss magnitude 20.
-	if !p.DailyLoss("USDT").Equal(d("20")) {
-		t.Fatalf("daily loss = %s", p.DailyLoss("USDT"))
+	if !p.DailyLoss("USDT", nil).Equal(d("20")) {
+		t.Fatalf("daily loss = %s", p.DailyLoss("USDT", nil))
+	}
+}
+
+// A mid-cycle failure strands the deployed input in an intermediate
+// asset. Cash-basis realized books the whole input as a loss; the loss a
+// risk limit and the console should see is the marked one — the input
+// minus what the stranded asset is worth. Unmarkable exposure stays at
+// zero, which is the conservative side.
+func TestDailyLossNetsMarkedExposure(t *testing.T) {
+	p := New(newResv("1000"), map[exchange.Asset]decimal.Decimal{"USDT": d("1000")})
+	failed := execution.CycleResult{
+		CycleID: "f1", Outcome: execution.OutcomeLeg1FilledLeg2Failed, StartAsset: "USDT",
+		InputConsumed: d("100"), FinalAmount: decimal.Zero,
+		Exposure: map[exchange.Asset]decimal.Decimal{"BTC": d("0.001")},
+		Fees:     map[exchange.Asset]decimal.Decimal{},
+	}
+	failed.RealizedPnL = failed.FinalAmount.Sub(failed.InputConsumed)
+	_ = p.ApplyCycle(failed, false)
+
+	// Cash basis: the full 100 left the start asset.
+	if !p.Realized("USDT").Equal(d("-100")) || !p.DailyLoss("USDT", nil).Equal(d("100")) {
+		t.Fatalf("cash basis: realized %s loss %s", p.Realized("USDT"), p.DailyLoss("USDT", nil))
+	}
+	// Marked: 0.001 BTC is worth 99 USDT, so the economic loss is 1.
+	marker := fakeMarker{"BTC": d("99000")}
+	mark, unmarked := p.ExposureMark("USDT", marker)
+	if !mark.Equal(d("99")) || len(unmarked) != 0 {
+		t.Fatalf("mark = %s unmarked = %v", mark, unmarked)
+	}
+	net, _ := p.NetPnL("USDT", marker)
+	if !net.Equal(d("-1")) || !p.DailyLoss("USDT", marker).Equal(d("1")) {
+		t.Fatalf("net = %s loss = %s", net, p.DailyLoss("USDT", marker))
+	}
+	// A marker that cannot value BTC reports it and falls back to the
+	// cash-basis loss.
+	mark, unmarked = p.ExposureMark("USDT", fakeMarker{})
+	if !mark.IsZero() || len(unmarked) != 1 || unmarked[0] != "BTC" {
+		t.Fatalf("unmarkable: mark = %s unmarked = %v", mark, unmarked)
+	}
+	if !p.DailyLoss("USDT", fakeMarker{}).Equal(d("100")) {
+		t.Fatalf("unmarkable loss = %s", p.DailyLoss("USDT", fakeMarker{}))
 	}
 }
 
@@ -249,4 +290,16 @@ func TestResetRestartsSession(t *testing.T) {
 	if dd := snap.Drawdown["USDT"]; !dd.IsZero() {
 		t.Fatalf("fabricated drawdown after reset: %s", dd)
 	}
+}
+
+// fakeMarker values an asset in the start asset at a fixed rate; assets
+// absent from the map are unmarkable.
+type fakeMarker map[exchange.Asset]decimal.Decimal
+
+func (f fakeMarker) Mark(asset exchange.Asset, amount decimal.Decimal, _ exchange.Asset) (decimal.Decimal, bool) {
+	rate, ok := f[asset]
+	if !ok {
+		return decimal.Zero, false
+	}
+	return amount.Mul(rate), true
 }

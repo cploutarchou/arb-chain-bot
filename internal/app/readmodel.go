@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
@@ -66,18 +67,31 @@ func (r readModel) Portfolio() (any, bool) {
 func (r readModel) PnL() (any, bool) {
 	r.e.mu.RLock()
 	port := r.e.port
+	marker := r.e.marker
 	r.e.mu.RUnlock()
 	if port == nil {
 		return nil, false
 	}
-	rows := make([]map[string]string, 0, 2)
+	rows := make([]map[string]any, 0, 2)
 	for _, a := range r.e.startAssets() {
-		rows = append(rows, map[string]string{
-			"asset":      string(a),
-			"realized":   port.Realized(a).String(),
-			"fees":       port.FeesPaid(a).String(),
-			"daily_loss": port.DailyLoss(a).String(),
-			"drawdown":   port.CurrentDrawdown(a).StringFixed(4),
+		// realized is cash basis (what came back minus what was deployed);
+		// exposure_mark values the intermediate assets still held; net_pnl
+		// is their sum and the figure daily_loss is measured on. unmarked
+		// lists exposure assets no book can value (counted at zero).
+		mark, unmarked := port.ExposureMark(a, marker)
+		net, _ := port.NetPnL(a, marker)
+		if unmarked == nil {
+			unmarked = []exchange.Asset{}
+		}
+		rows = append(rows, map[string]any{
+			"asset":         string(a),
+			"realized":      port.Realized(a).String(),
+			"exposure_mark": mark.String(),
+			"net_pnl":       net.String(),
+			"unmarked":      unmarked,
+			"fees":          port.FeesPaid(a).String(),
+			"daily_loss":    port.DailyLoss(a, marker).String(),
+			"drawdown":      port.CurrentDrawdown(a).StringFixed(4),
 		})
 	}
 	return map[string]any{"assets": rows}, true

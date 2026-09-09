@@ -47,12 +47,15 @@ func (e *Engine) AIInput(kind ai.AnalysisKind) ai.Input {
 		}
 	}
 	if port != nil {
+		e.mu.RLock()
+		marker := e.marker
+		e.mu.RUnlock()
 		for _, a := range e.startAssets() {
 			in.PnL = append(in.PnL, ai.AssetSummary{
 				Asset:    string(a),
 				Realized: port.Realized(a).String(),
 				Fees:     port.FeesPaid(a).String(),
-				Loss:     port.DailyLoss(a).String(),
+				Loss:     port.DailyLoss(a, marker).String(),
 				Drawdown: port.CurrentDrawdown(a).StringFixed(4),
 			})
 		}
