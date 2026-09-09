@@ -343,6 +343,8 @@ export interface PaperStatus {
   completed: number;
   failed: number;
   skipped: number;
+  /** Qualified opportunities refused by a full paper queue, never simulated. */
+  dropped?: number;
 }
 
 export interface ScannerStatus {
@@ -825,6 +827,12 @@ export interface QueueDepth {
   capacity: number;
   dropped?: number;
   written?: number;
+  /** Records the database refused (outbox only). */
+  write_failures?: number;
+  /** The last write failed and nothing has succeeded since (outbox only). */
+  failing?: boolean;
+  /** Cycles persisted without their opportunity row (outbox only). */
+  unlinked_cycles?: number;
 }
 
 export interface PoolStat {

@@ -177,6 +177,26 @@ func (s *Store) InsertCycle(ctx context.Context, sessionID string, res *executio
 		plannedBps = res.PlannedReturnBps
 		actualBps = res.ActualReturnBps
 	}
+	// The opportunity row may never have landed (dropped by a full
+	// outbox, refused by the database, lost at shutdown). Letting the FK
+	// fail the cycle insert would lose the cycle's own orders and fills
+	// too — the record of money moving — so the cycle is written
+	// unlinked (NULL opportunity_id), counted, and logged.
+	oppRef := nullStr(res.OpportunityID)
+	if res.OpportunityID != "" {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM opportunities WHERE id = $1)`,
+			res.OpportunityID).Scan(&exists); err != nil {
+			return fmt.Errorf("storage: opportunity lookup: %w", err)
+		}
+		if !exists {
+			oppRef = nil
+			s.unlinkedCycles.Add(1)
+			s.logger().Warn("storage: cycle persisted without its opportunity row",
+				"cycle_id", res.CycleID, "opportunity_id", res.OpportunityID,
+				"unlinked_total", s.unlinkedCycles.Load())
+		}
+	}
 	// pnl_amount stays the marked total for readers that predate the
 	// breakdown; realized_pnl (cash basis) and exposure_mark are the two
 	// components, persisted separately so a mark-to-market estimate can
@@ -189,7 +209,7 @@ func (s *Store) InsertCycle(ctx context.Context, sessionID string, res *executio
 			planned_return_bps, actual_return_bps
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT (id) DO NOTHING`,
-		res.CycleID, sessionID, nullStr(res.OpportunityID), string(res.Outcome),
+		res.CycleID, sessionID, oppRef, string(res.Outcome),
 		res.TotalPnL, string(res.StartAsset), fees, slippage, exposure,
 		res.StartedAt, res.SettledAt,
 		res.RealizedPnL, res.ExposureMark, res.InputConsumed, res.FinalAmount,

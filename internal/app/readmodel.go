@@ -175,18 +175,30 @@ func (r readModel) Health() any {
 	// channel) — the engine-derived half; recorder queue depth and
 	// process/DB stats are assembled at the API layer, which has no
 	// engine dependency to reach them.
+	// P0-3: every way a financial record can fail to land is a number
+	// here — refused at the queue (dropped), refused by the database
+	// (write_failures), persisted without its opportunity row
+	// (unlinked_cycles) — plus whether the writer is currently failing.
 	queues := map[string]any{}
 	if ob := r.e.currentOutbox(); ob != nil {
-		queues["outbox"] = map[string]any{
+		outbox := map[string]any{
 			"depth": ob.Depth(), "capacity": ob.Capacity(),
 			"dropped": ob.Dropped(), "written": ob.Written(),
+			"write_failures": ob.WriteFailures(), "failing": ob.Failing(),
 		}
+		if r.e.Store != nil {
+			outbox["unlinked_cycles"] = r.e.Store.UnlinkedCycles()
+		}
+		queues["outbox"] = outbox
 	}
 	r.e.mu.RLock()
 	pap := r.e.pap
 	r.e.mu.RUnlock()
 	if pap != nil {
-		queues["paper"] = map[string]any{"depth": pap.QueueDepth(), "capacity": pap.QueueCapacity()}
+		queues["paper"] = map[string]any{
+			"depth": pap.QueueDepth(), "capacity": pap.QueueCapacity(),
+			"dropped": r.e.paperDropped.Load(),
+		}
 	}
 	if len(queues) > 0 {
 		out["queues"] = queues

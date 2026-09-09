@@ -179,6 +179,17 @@ type PaperStats struct {
 	Active                                        int64
 }
 
+// QueueStats are one bounded queue's backlog and loss counters (P0-3).
+// Dropped counts enqueue attempts refused (queue full, or closed at
+// shutdown); WriteFailures counts dequeued records the sink refused
+// (outbox only); Written counts records the sink accepted.
+type QueueStats struct {
+	Depth, Capacity int64
+	Dropped         int64
+	WriteFailures   int64
+	Written         int64
+}
+
 // AssetPnL is one start asset's session economics (floats for
 // exposition only).
 type AssetPnL struct {
@@ -198,6 +209,10 @@ type EngineSources struct {
 	Paper     func() *PaperStats
 	PnL       func() []AssetPnL
 	Recorder  func() (written, dropped int64)
+	// Outbox and PaperQueue expose the persistence and paper inbound
+	// queues; nil while the profile runs without them.
+	Outbox     func() *QueueStats
+	PaperQueue func() *QueueStats
 }
 
 // RegisterEngine wires the engine's atomic counters into observable
@@ -262,6 +277,16 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		feesTotal  = f64c("fees", "cumulative simulated fees per start asset (display-only float)")
 		recWritten = i64c("recorder_frames_written", "recorded frames written")
 		recDropped = i64c("recorder_frames_dropped", "recorded frames dropped on overflow")
+		papRecvd   = i64c("paper_cycles_received", "qualified opportunities received by the paper engine")
+		papSkip    = i64c("paper_cycles_skipped", "paper opportunities skipped (paused, expired, reservation conflict, capital)")
+		obDepth    = i64g("outbox_queue_depth", "persistence outbox records queued")
+		obCap      = i64g("outbox_queue_capacity", "persistence outbox capacity")
+		obDropped  = i64c("outbox_records_dropped", "persistence records refused at the queue (full or closed) or lost at the drain deadline")
+		obFailed   = i64c("outbox_write_failures", "persistence records the database refused")
+		obWritten  = i64c("outbox_records_written", "persistence records the database accepted")
+		pqDepth    = i64g("paper_queue_depth", "paper engine inbound events queued")
+		pqCap      = i64g("paper_queue_capacity", "paper engine inbound queue capacity")
+		pqDropped  = i64c("paper_queue_dropped", "qualified opportunities refused by a full paper queue")
 	)
 	if err := errors.Join(errs...); err != nil {
 		return err
@@ -270,7 +295,8 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		evals, detected, qualified, rejected, skipped, dropped, triangles,
 		frames, reconnects, apiErrors, resyncs, seqErrors, bookAge, bookState,
 		capAvail, capResv, breaker, papRecv, papOK, papFail, papActive, papPnL,
-		feesTotal, recWritten, recDropped,
+		feesTotal, recWritten, recDropped, papRecvd, papSkip,
+		obDepth, obCap, obDropped, obFailed, obWritten, pqDepth, pqCap, pqDropped,
 	}
 	_, err := meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
 		if src.Scanner != nil {
@@ -323,6 +349,24 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 				o.ObserveInt64(papOK, p.Completed)
 				o.ObserveInt64(papFail, p.Failed)
 				o.ObserveInt64(papActive, p.Active)
+				o.ObserveInt64(papRecvd, p.Received)
+				o.ObserveInt64(papSkip, p.Skipped)
+			}
+		}
+		if src.Outbox != nil {
+			if q := src.Outbox(); q != nil {
+				o.ObserveInt64(obDepth, q.Depth)
+				o.ObserveInt64(obCap, q.Capacity)
+				o.ObserveInt64(obDropped, q.Dropped)
+				o.ObserveInt64(obFailed, q.WriteFailures)
+				o.ObserveInt64(obWritten, q.Written)
+			}
+		}
+		if src.PaperQueue != nil {
+			if q := src.PaperQueue(); q != nil {
+				o.ObserveInt64(pqDepth, q.Depth)
+				o.ObserveInt64(pqCap, q.Capacity)
+				o.ObserveInt64(pqDropped, q.Dropped)
 			}
 		}
 		if src.PnL != nil {

@@ -383,7 +383,10 @@ func (w *cancelAfterWaiter) Wait(ctx context.Context, dur time.Duration) error {
 	return nil
 }
 
-func TestTimeoutMidCycleTracksExposure(t *testing.T) {
+// Cancellation mid-cycle (engine shutdown or restart) settles as ABORTED
+// with the leg-1 proceeds as exposure: a controlled stop is not an
+// exchange timing failure, but the stranded position is just as real.
+func TestCancelMidCycleAbortsWithExposure(t *testing.T) {
 	books := planBooks()
 	clock := NewVirtualClock(t0)
 	e := engine(t, books, clock, Config{Seed: 1})
@@ -396,11 +399,76 @@ func TestTimeoutMidCycleTracksExposure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if res.Outcome != execution.OutcomeAborted {
+		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+	if res.Outcome.Complete() {
+		t.Fatal("ABORTED must not count as a completed cycle")
+	}
+	if !res.Exposure["BTC"].Equal(d("9.99")) {
+		t.Fatalf("exposure = %v", res.Exposure)
+	}
+	if !res.FinalAmount.IsZero() || !res.InputConsumed.IsPositive() {
+		t.Fatalf("aborted cycle must show deployed input and no return: consumed=%s final=%s", res.InputConsumed, res.FinalAmount)
+	}
+	if len(res.Orders) != 2 || res.Orders[1].Status != execution.OrderExpired {
+		t.Fatalf("orders = %+v", res.Orders)
+	}
+}
+
+// deadlineWaiter fails the nth wait with a deadline, the way a per-cycle
+// timeout would.
+type deadlineWaiter struct {
+	inner Waiter
+	left  int
+}
+
+func (w *deadlineWaiter) Wait(ctx context.Context, dur time.Duration) error {
+	w.left--
+	if w.left == 0 {
+		return context.DeadlineExceeded
+	}
+	return w.inner.Wait(ctx, dur)
+}
+
+// A deadline, unlike a cancellation, is a TIMEOUT.
+func TestDeadlineMidCycleIsTimeout(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+	e.wait = &deadlineWaiter{inner: VirtualWaiter{Clock: clock}, left: 3}
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res.Outcome != execution.OutcomeTimeout {
 		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
 	}
 	if !res.Exposure["BTC"].Equal(d("9.99")) {
 		t.Fatalf("exposure = %v", res.Exposure)
+	}
+}
+
+// Cancellation before leg 1 is acknowledged deploys nothing: ABORTED with
+// no exposure, no input consumed, so the paper engine's settle releases
+// the whole reservation.
+func TestCancelBeforeLeg1DeploysNothing(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := e.ExecuteCycle(ctx, plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAborted {
+		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+	if len(res.Exposure) != 0 || !res.InputConsumed.IsZero() {
+		t.Fatalf("nothing should be deployed: exposure=%v consumed=%s", res.Exposure, res.InputConsumed)
 	}
 }
 

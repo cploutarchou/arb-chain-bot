@@ -423,3 +423,73 @@ func TestOutboxConcurrentEnqueueRaceFree(t *testing.T) {
 		t.Fatalf("queued = %d, want %d (records lost to a second channel?)", got, producers*each)
 	}
 }
+
+// A cycle whose opportunity row never landed (dropped by a full outbox,
+// refused by the database, lost at shutdown) must still be persisted
+// with its orders and fills — unlinked and counted, never rejected by the
+// FK and lost with them (audit P0-3).
+func TestInsertCycleSurvivesMissingOpportunityRow(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.EnsurePaperSession(ctx, "sess-unlinked", "PAPER",
+		map[string]string{"USDT": "10000"}, 1, 42); err != nil {
+		t.Fatal(err)
+	}
+	mkt := exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"}
+	res := execution.CycleResult{
+		CycleID: "cyc-unlinked", OpportunityID: "op-never-persisted",
+		Outcome: execution.OutcomeAborted, StartAsset: "USDT",
+		InputConsumed: d("1000"), RealizedPnL: d("-1000"), TotalPnL: d("-1000"),
+		Exposure: map[exchange.Asset]decimal.Decimal{"BTC": d("0.0099")},
+		Fees:     map[exchange.Asset]decimal.Decimal{"BTC": d("0.00001")},
+		Orders: []execution.SimOrder{{
+			ID: "ord-unlinked", LegNo: 1, Market: mkt, Side: exchange.SideBuy, Type: "LIMIT_IOC",
+			QtyRequested: d("0.01"), QtyFilled: d("0.01"), LimitPrice: d("100200"),
+			AvgPrice: d("100000"), FeeAmount: d("0.00001"), FeeAsset: "BTC",
+			CreatedAt: t0, AckedAt: t0.Add(20 * time.Millisecond), FilledAt: t0.Add(50 * time.Millisecond),
+			Status: execution.OrderFilled,
+			Fills: []execution.SimFill{{
+				ID: "fill-unlinked", Price: d("100000"), Qty: d("0.01"),
+				FeeAmount: d("0.00001"), FeeAsset: "BTC", BookVersion: 9, At: t0.Add(50 * time.Millisecond),
+			}},
+		}},
+		StartedAt: t0, SettledAt: t0.Add(80 * time.Millisecond),
+		Reason: "submit wait: context canceled",
+	}
+	if err := s.InsertCycle(ctx, "sess-unlinked", &res); err != nil {
+		t.Fatalf("InsertCycle with a missing opportunity row: %v", err)
+	}
+	var oppID *string
+	var outcome string
+	if err := s.Pool.QueryRow(ctx,
+		`SELECT opportunity_id, outcome FROM paper_cycles WHERE id = 'cyc-unlinked'`).Scan(&oppID, &outcome); err != nil {
+		t.Fatalf("cycle row missing: %v", err)
+	}
+	if oppID != nil {
+		t.Fatalf("opportunity_id = %q, want NULL for a missing opportunity row", *oppID)
+	}
+	if outcome != string(execution.OutcomeAborted) {
+		t.Fatalf("outcome = %s", outcome)
+	}
+	var orders, fills int
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM orders WHERE cycle_id = 'cyc-unlinked'`).Scan(&orders); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM fills f JOIN orders o ON o.id = f.order_id
+		WHERE o.cycle_id = 'cyc-unlinked'`).Scan(&fills); err != nil {
+		t.Fatal(err)
+	}
+	if orders != 1 || fills != 1 {
+		t.Fatalf("orders=%d fills=%d, want 1/1 persisted alongside the unlinked cycle", orders, fills)
+	}
+	if s.UnlinkedCycles() != 1 {
+		t.Fatalf("UnlinkedCycles = %d, want 1", s.UnlinkedCycles())
+	}
+	// The session list still shows the cycle; only the triangle-scoped
+	// list, which is defined by the opportunity join, omits it.
+	rows, err := s.ListCycles(ctx, "sess-unlinked", 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListCycles = %+v err=%v", rows, err)
+	}
+}

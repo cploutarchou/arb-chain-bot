@@ -13,6 +13,7 @@ package simulation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math/rand"
@@ -187,14 +188,14 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 		}
 
 		if err := e.wait.Wait(ctx, e.cfg.Latency.submit(rng)); err != nil {
-			return e.timeout(res, order, cur, leg, i, "submit wait: "+err.Error()), nil
+			return e.interrupted(res, order, cur, leg, i, "submit wait", err), nil
 		}
 		order.AckedAt = e.clock.Now()
 		order.Status = execution.OrderAcked
 
 		lq, ferr := e.fillLeg(leg, planned, cur, &order)
 		if err := e.wait.Wait(ctx, e.cfg.Latency.fill(rng)); err != nil {
-			return e.timeout(res, order, cur, leg, i, "fill wait: "+err.Error()), nil
+			return e.interrupted(res, order, cur, leg, i, "fill wait", err), nil
 		}
 		now := e.clock.Now()
 
@@ -303,11 +304,20 @@ func (e *Engine) legFailure(res execution.CycleResult, held decimal.Decimal, leg
 	return res
 }
 
-func (e *Engine) timeout(res execution.CycleResult, order execution.SimOrder, held decimal.Decimal, leg graph.Leg, legIdx int, reason string) execution.CycleResult {
+// interrupted settles a cycle whose latency wait ended with an error.
+// A deadline is a TIMEOUT; a cancellation is the engine stopping
+// (shutdown, restart) and settles as ABORTED, so the ledger and the
+// cycle history never read a controlled stop as an exchange timing
+// failure. Either way whatever leg 1 deployed is exposure.
+func (e *Engine) interrupted(res execution.CycleResult, order execution.SimOrder, held decimal.Decimal, leg graph.Leg, legIdx int, stage string, cause error) execution.CycleResult {
+	reason := stage + ": " + cause.Error()
 	order.Status = execution.OrderExpired
 	order.Reason = reason
 	res.Orders = append(res.Orders, order)
 	res.Outcome = execution.OutcomeTimeout
+	if errors.Is(cause, context.Canceled) {
+		res.Outcome = execution.OutcomeAborted
+	}
 	res.Reason = reason
 	if legIdx > 0 {
 		res.Exposure[leg.From] = res.Exposure[leg.From].Add(held)

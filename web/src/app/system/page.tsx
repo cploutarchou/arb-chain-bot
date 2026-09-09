@@ -135,6 +135,7 @@ export default function SystemHealthPage() {
                   <Stat label="Completed" value={h.paper.completed} />
                   <Stat label="Failed" value={h.paper.failed} tone={h.paper.failed > 0 ? "warn" : undefined} />
                   <Stat label="Skipped" value={h.paper.skipped} />
+                  <Stat label="Dropped (queue full)" value={h.paper.dropped ?? 0} tone={(h.paper.dropped ?? 0) > 0 ? "warn" : undefined} />
                 </div>
               </Section>
             )}
@@ -142,7 +143,7 @@ export default function SystemHealthPage() {
             {h.queues && (
               <Section title="Queue depths">
                 <Table
-                  head={["Queue", "Depth", "Capacity", "Dropped", "Written"]}
+                  head={["Queue", "Depth", "Capacity", "Dropped", "Written", "Write failures", "Unlinked cycles"]}
                   empty="queues"
                   rows={[
                     { name: "outbox", q: h.queues.outbox },
@@ -150,7 +151,15 @@ export default function SystemHealthPage() {
                     { name: "recorder", q: h.queues.recorder },
                   ]
                     .filter((row) => row.q !== undefined)
-                    .map(({ name, q }) => [name, q!.depth, q!.capacity, q!.dropped ?? "—", q!.written ?? "—"])}
+                    .map(({ name, q }) => [
+                      q!.failing ? `${name} (writes failing)` : name,
+                      q!.depth,
+                      q!.capacity,
+                      q!.dropped ?? "—",
+                      q!.written ?? "—",
+                      q!.write_failures ?? "—",
+                      q!.unlinked_cycles ?? "—",
+                    ])}
                 />
               </Section>
             )}
