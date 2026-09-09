@@ -302,6 +302,12 @@ func (e *Engine) fillLeg(leg graph.Leg, planned pricing.LegQuote, input decimal.
 	}
 	if !e.cfg.MarketOrders {
 		limit := limitPrice(planned.AvgPrice, e.cfg.LimitToleranceBps, leg.Side)
+		// The venue accepts prices on its tick only; rounding toward the
+		// planned price (down for a buy, up for a sell) keeps the limit
+		// inside the tolerance rather than a fraction of a tick beyond it.
+		if q, err := quantizeLimit(rules, limit, leg.Side); err == nil {
+			limit = q
+		}
 		order.LimitPrice = limit
 		view = filterByLimit(view, leg.Side, limit)
 	}
@@ -392,6 +398,15 @@ func limitPrice(plannedVWAP, tolBps decimal.Decimal, side exchange.Side) decimal
 		return plannedVWAP.Mul(decimal.NewFromInt(1).Add(frac))
 	}
 	return plannedVWAP.Mul(decimal.NewFromInt(1).Sub(frac))
+}
+
+// quantizeLimit snaps a limit price to the instrument's tick on the
+// conservative side of the tolerance (audit T5).
+func quantizeLimit(rules exchange.InstrumentRules, limit decimal.Decimal, side exchange.Side) (decimal.Decimal, error) {
+	if side == exchange.SideBuy {
+		return rules.QuantizePriceDown(limit)
+	}
+	return rules.QuantizePriceUp(limit)
 }
 
 // filterByLimit trims the consumable side to levels within the limit.

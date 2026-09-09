@@ -11,6 +11,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/execution"
+	"github.com/cploutarchou/arb-chain-bot/internal/fees"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/reservation"
 )
@@ -340,5 +341,47 @@ func TestStateRestoreRoundTrip(t *testing.T) {
 	st.Realized["USDT"] = d("0")
 	if !q.Realized("USDT").Equal(d("-1000")) {
 		t.Fatal("State returned a shared map")
+	}
+}
+
+// With a fee schedule the mark is a liquidation value: the position is
+// walked through the depth net of the taker fee, and depth the book
+// does not show counts for nothing (audit F16).
+func TestBookMarkerLiquidationValue(t *testing.T) {
+	books := orderbook.NewSet()
+	id := exchange.MarketID{Exchange: "binance", Symbol: "ETHUSDT"}
+	b := orderbook.New(id, 0)
+	b.ApplySnapshot(orderbook.DepthEvent{Market: id, IsSnapshot: true, FinalUpdateID: 1,
+		Bids: []orderbook.Level{{Price: d("100"), Qty: d("1")}, {Price: d("99"), Qty: d("1")}},
+		Asks: []orderbook.Level{{Price: d("101"), Qty: d("1")}}})
+	books.Add(b)
+	sched, err := fees.NewSchedule("binance", exchange.FeeInReceived, fees.Rate{Maker: d("0.001"), Taker: d("0.001")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := exchange.InstrumentRules{QtyMode: exchange.PrecisionStep, QtyStep: d("0.001"),
+		PriceMode: exchange.PrecisionStep, PriceTick: d("0.01")}
+	markets := []exchange.Market{{ID: id, Base: "ETH", Quote: "USDT", Rules: rules}}
+
+	top := BookMarker{Books: books, Markets: markets}
+	if v, ok := top.Mark("ETH", d("2"), "USDT"); !ok || !v.Equal(d("200")) {
+		t.Fatalf("top-of-book mark = %s %v", v, ok)
+	}
+	liq := BookMarker{Books: books, Markets: markets, Fees: sched}
+	// 1 ETH at 100 + 1 ETH at 99 = 199 USDT, minus the 0.1% taker fee.
+	if v, ok := liq.Mark("ETH", d("2"), "USDT"); !ok || !v.Equal(d("198.801")) {
+		t.Fatalf("liquidation mark = %s %v, want 198.801", v, ok)
+	}
+	// Beyond the visible depth only the fillable part is valued.
+	if v, ok := liq.Mark("ETH", d("5"), "USDT"); !ok || !v.Equal(d("198.801")) {
+		t.Fatalf("mark past depth = %s %v, want 198.801", v, ok)
+	}
+	// Inverse pair: 202 USDT buys 2 ETH at 101, fee in ETH.
+	if v, ok := liq.Mark("USDT", d("101"), "ETH"); !ok || !v.Equal(d("0.999")) {
+		t.Fatalf("inverse liquidation mark = %s %v, want 0.999", v, ok)
+	}
+	// Dust the quantity step cannot express falls back to the top level.
+	if v, ok := liq.Mark("ETH", d("0.0001"), "USDT"); !ok || !v.Equal(d("0.01")) {
+		t.Fatalf("dust mark = %s %v", v, ok)
 	}
 }

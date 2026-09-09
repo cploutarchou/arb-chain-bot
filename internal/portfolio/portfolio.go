@@ -14,7 +14,10 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/execution"
+	"github.com/cploutarchou/arb-chain-bot/internal/fees"
+	"github.com/cploutarchou/arb-chain-bot/internal/graph"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
+	"github.com/cploutarchou/arb-chain-bot/internal/pricing"
 )
 
 // CashView is the reservation manager's read surface.
@@ -335,13 +338,22 @@ func cloneMap(m map[exchange.Asset]decimal.Decimal) map[exchange.Asset]decimal.D
 }
 
 // BookMarker marks assets through direct markets against the target
-// asset: base=asset/quote=target uses the best bid; base=target/
-// quote=asset uses the best ask (inverse). No multi-hop paths — an
+// asset: base=asset/quote=target sells into the bids; base=target/
+// quote=asset buys from the asks (inverse). No multi-hop paths — an
 // unmarkable asset is reported, not guessed
 // (resources/execution-simulation.md).
+//
+// With Fees set the mark is a liquidation value: the position is walked
+// through the book's depth as a taker order with the venue's fee, so a
+// stranded position larger than the top level is valued at what
+// unwinding it would actually return, and depth the book does not show
+// counts for nothing. Without Fees the mark is the top-of-book price,
+// which is optimistic for anything but dust (audit F16).
 type BookMarker struct {
 	Books   *orderbook.Set
 	Markets []exchange.Market // instrument metadata for pair lookup
+	Fees    *fees.Schedule    // optional: depth- and fee-aware liquidation marks
+	Depth   int               // book depth for the liquidation walk (0 = full)
 }
 
 func (m BookMarker) Mark(asset exchange.Asset, amount decimal.Decimal, in exchange.Asset) (decimal.Decimal, bool) {
@@ -349,20 +361,52 @@ func (m BookMarker) Mark(asset exchange.Asset, amount decimal.Decimal, in exchan
 		return amount, true
 	}
 	for _, mk := range m.Markets {
+		var leg graph.Leg
 		switch {
 		case mk.Base == asset && mk.Quote == in:
-			if v, ok := m.Books.View(mk.ID, 1); ok {
-				if bid, has := v.BestBid(); has {
-					return amount.Mul(bid.Price), true
-				}
-			}
+			leg = graph.Leg{Market: mk.ID, Base: mk.Base, Quote: mk.Quote, From: asset, To: in, Side: exchange.SideSell}
 		case mk.Base == in && mk.Quote == asset:
-			if v, ok := m.Books.View(mk.ID, 1); ok {
-				if ask, has := v.BestAsk(); has && ask.Price.IsPositive() {
-					return amount.Div(ask.Price), true
-				}
+			leg = graph.Leg{Market: mk.ID, Base: mk.Base, Quote: mk.Quote, From: asset, To: in, Side: exchange.SideBuy}
+		default:
+			continue
+		}
+		view, ok := m.Books.View(mk.ID, m.Depth)
+		if !ok {
+			continue
+		}
+		if m.Fees != nil && mk.Rules.Usable() {
+			if v, ok := liquidationMark(leg, view, mk.Rules, m.Fees, amount); ok {
+				return v, true
 			}
 		}
+		if v, ok := topOfBookMark(leg.Side, view, amount); ok {
+			return v, true
+		}
+	}
+	return decimal.Zero, false
+}
+
+// liquidationMark walks the position through the book as a taker order.
+// A position the visible depth cannot absorb is valued at the fillable
+// part only — the conservative side. Amounts the venue's quantity step
+// cannot express (dust) are left to the top-of-book fallback.
+func liquidationMark(leg graph.Leg, view orderbook.View, rules exchange.InstrumentRules, sched *fees.Schedule, amount decimal.Decimal) (decimal.Decimal, bool) {
+	lq, err := pricing.QuoteLeg(leg, pricing.MarketData{View: view, Rules: rules}, sched, amount)
+	if err != nil {
+		return decimal.Zero, false
+	}
+	return lq.NetOut, true
+}
+
+func topOfBookMark(side exchange.Side, view orderbook.View, amount decimal.Decimal) (decimal.Decimal, bool) {
+	if side == exchange.SideSell {
+		if bid, has := view.BestBid(); has {
+			return amount.Mul(bid.Price), true
+		}
+		return decimal.Zero, false
+	}
+	if ask, has := view.BestAsk(); has && ask.Price.IsPositive() {
+		return amount.Div(ask.Price), true
 	}
 	return decimal.Zero, false
 }

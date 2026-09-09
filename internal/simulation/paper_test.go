@@ -580,3 +580,33 @@ func TestBookAgeAtFillTimeIsEnforced(t *testing.T) {
 		t.Fatalf("over budget: outcome = %s (%s)", res.Outcome, res.Reason)
 	}
 }
+
+// IOC limits are snapped to the instrument's tick on the conservative
+// side of the tolerance: down for a buy, up for a sell (audit T5).
+func TestLimitPriceIsTickQuantized(t *testing.T) {
+	rules := exchange.InstrumentRules{PriceMode: exchange.PrecisionStep, PriceTick: d("0.01"),
+		QtyMode: exchange.PrecisionStep, QtyStep: d("0.001")}
+	buy, err := quantizeLimit(rules, d("100.23456"), exchange.SideBuy)
+	if err != nil || !buy.Equal(d("100.23")) {
+		t.Fatalf("buy limit = %s err=%v", buy, err)
+	}
+	sell, err := quantizeLimit(rules, d("99.76543"), exchange.SideSell)
+	if err != nil || !sell.Equal(d("99.77")) {
+		t.Fatalf("sell limit = %s err=%v", sell, err)
+	}
+	// Through the executor: the planned VWAP 100 with 20 bps tolerance is
+	// 100.2, already on a 0.01 tick; with a 0.5 tick it snaps to 100.
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+	coarse := rules
+	coarse.PriceTick = d("0.5")
+	e.rules = fakeRules{mBTCUSDT: coarse, mETHBTC: stepRules(), mETHUSDT: stepRules()}
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Orders[0].LimitPrice.Equal(d("100")) {
+		t.Fatalf("leg-1 limit = %s, want 100 on a 0.5 tick", res.Orders[0].LimitPrice)
+	}
+}
