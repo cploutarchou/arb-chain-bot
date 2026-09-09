@@ -32,6 +32,13 @@ const (
 	OutcomeTimeout               Outcome = "TIMEOUT"
 	OutcomeExpired               Outcome = "EXPIRED"
 	OutcomeRejected              Outcome = "REJECTED"
+	// OutcomeAborted: the simulation was interrupted by cancellation
+	// (engine shutdown or restart), not by a deadline. Capital deployed
+	// before the interruption is exposure like any other mid-cycle
+	// failure; the result is settled and persisted like one, so a
+	// controlled stop never reads as an exchange timing failure and
+	// never leaves an unsettled reservation behind.
+	OutcomeAborted Outcome = "ABORTED"
 )
 
 // Complete reports whether the cycle returned to its start asset.

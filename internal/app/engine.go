@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -129,6 +130,11 @@ type Engine struct {
 
 	metricsOnce   sync.Once // E4: RegisterEngine wired once across restarts
 	subscribeOnce sync.Once // E6: Strategy.Subscribe registered once across restarts
+
+	// paperDropped counts qualified opportunities the paper engine never
+	// received because its inbound queue was full (P0-3): cumulative
+	// since process start, like the scanner counters.
+	paperDropped atomic.Int64
 
 	oppMu             sync.Mutex
 	recentOpps        []RecentOpportunity
@@ -302,6 +308,9 @@ type PaperStatus struct {
 	Completed int64 `json:"completed"`
 	Failed    int64 `json:"failed"`
 	Skipped   int64 `json:"skipped"`
+	// Dropped: qualified opportunities refused by a full paper queue,
+	// never simulated (cumulative since process start).
+	Dropped int64 `json:"dropped"`
 }
 
 func (e *Engine) Status() EngineStatus {
@@ -327,6 +336,7 @@ func (e *Engine) Status() EngineStatus {
 			Running: e.pap.Running(), Active: e.pap.Active(),
 			Received: ps.Received, Completed: ps.Completed,
 			Failed: ps.Failed, Skipped: ps.Skipped,
+			Dropped: e.paperDropped.Load(),
 		}
 	}
 	return st
@@ -723,7 +733,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		if err := e.Store.UpsertMarkets(runCtx, markets); err != nil {
 			e.log.Warn("market metadata sync failed", "error", err)
 		}
-		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID}
+		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID,
+			DrainTimeout: outboxDrainTimeout}
 	}
 	e.mu.Lock()
 	e.outbox = outbox
@@ -846,6 +857,23 @@ func (e *Engine) Run(ctx context.Context) error {
 			}})
 		}
 	})
+
+	if outbox != nil {
+		// P0-3: a database that refuses writes is a reason to stop
+		// qualifying — paper cycles that cannot be persisted are evidence
+		// lost, not evidence gathered. The global persistence breaker
+		// pauses qualification at the scanner gate until a write or the
+		// outbox's probe succeeds; the observer above raises the CRITICAL
+		// alert and records the transition. The reason stays generic:
+		// the outbox already logged the error, and driver errors can
+		// carry connection details that do not belong in risk_events.
+		outbox.OnPersistError = func(error) {
+			breakers.Trip("persistence", "", "database write failed; qualification paused until persistence recovers", time.Now())
+		}
+		outbox.OnPersistRecovered = func() {
+			breakers.Close("persistence", "", time.Now())
+		}
+	}
 
 	scn := &scanner.Scanner{
 		Topo:     topo,
@@ -1064,23 +1092,32 @@ func (e *Engine) Run(ctx context.Context) error {
 	// would produce two feeds, two scanners and two outboxes racing on
 	// e.scn, and the outbox's cancel-path drain (3s deadline) would never
 	// get to run before the next Run starts overwriting persisted state.
-	var wg sync.WaitGroup
+	//
+	// P0-3: the outbox is a writer, not a producer. It runs under its own
+	// context and is cancelled only after every producer has returned —
+	// the paper engine's Run waits for its in-flight cycles, which settle
+	// as ABORTED and enqueue their result — so a shutdown or restart can
+	// no longer close the writer while the records it exists to keep are
+	// still being produced (shutdownStaged below).
+	var producers, writers sync.WaitGroup
 	errCh := make(chan error, 8)
-	spawn := func(fn func(context.Context) error) {
+	persistCtx, cancelPersist := context.WithCancel(context.Background())
+	defer cancelPersist()
+	spawn := func(wg *sync.WaitGroup, c context.Context, fn func(context.Context) error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errCh <- fn(runCtx)
+			errCh <- fn(c)
 		}()
 	}
-	spawn(feed.Run)
-	spawn(scn.Run)
-	spawn(func(c context.Context) error { return e.consumeEvents(c, scn, paperIn, outbox) })
+	spawn(&producers, runCtx, feed.Run)
+	spawn(&producers, runCtx, scn.Run)
+	spawn(&producers, runCtx, func(c context.Context) error { return e.consumeEvents(c, scn, paperIn, outbox) })
 	if paperEng != nil {
-		spawn(paperEng.Run)
+		spawn(&producers, runCtx, paperEng.Run)
 	}
 	if outbox != nil {
-		spawn(outbox.Run)
+		spawn(&writers, persistCtx, outbox.Run)
 	}
 
 	// Staleness sweep: books that stop ticking degrade to STALE.
@@ -1118,15 +1155,49 @@ loop:
 		}
 	}
 	cancelRun()
+	e.shutdownStaged(&producers, &writers, cancelPersist, outboxDrainTimeout)
+	return runErr
+}
 
+// outboxDrainTimeout bounds the outbox's final flush at shutdown; the
+// writer stage of shutdownStaged always gets at least this window.
+const outboxDrainTimeout = 5 * time.Second
+
+// shutdownStaged is Run's exit sequence (P0-3): wait for the producers
+// (feed, scanner, event fan-out, paper engine with its in-flight cycles)
+// to return, then cancel the persistence context and wait for the
+// outbox to drain. Each stage is bounded so a stuck goroutine can never
+// hold a restart forever, and the writers keep at least their drain
+// window even when the producers used up the grace — cutting the
+// writer short is exactly the record loss this ordering exists to
+// prevent.
+func (e *Engine) shutdownStaged(producers, writers *sync.WaitGroup, cancelPersist context.CancelFunc, drain time.Duration) {
+	deadline := time.Now().Add(e.cfg.ShutdownGrace)
+	if !waitGroupWithin(producers, time.Until(deadline)) {
+		e.log.Error("engine: shutdown grace exceeded; producer goroutines still running",
+			"grace", e.cfg.ShutdownGrace.String())
+	}
+	cancelPersist()
+	window := time.Until(deadline)
+	if floor := drain + time.Second; window < floor {
+		window = floor
+	}
+	if !waitGroupWithin(writers, window) {
+		e.log.Error("engine: outbox did not finish draining within the shutdown window",
+			"window", window.String())
+	}
+}
+
+// waitGroupWithin waits for wg, giving up after d.
+func waitGroupWithin(wg *sync.WaitGroup, d time.Duration) bool {
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(e.cfg.ShutdownGrace):
-		e.log.Error("engine: shutdown grace exceeded; child goroutines still running", "grace", e.cfg.ShutdownGrace.String())
+		return true
+	case <-time.After(d):
+		return false
 	}
-	return runErr
 }
 
 // consumeEvents fans scanner events out: qualified opportunities go to
@@ -1192,8 +1263,13 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 					select {
 					case paperIn <- ev:
 					default:
-						e.log.Warn("paper queue full; opportunity dropped",
-							"opportunity_id", ev.Opportunity.ID)
+						// P0-3: counted (status, health, metrics), not
+						// just logged — a qualified opportunity that was
+						// never simulated is a gap in the evidence.
+						e.paperDropped.Add(1)
+						e.log.Warn("paper queue full; qualified opportunity not simulated",
+							"opportunity_id", ev.Opportunity.ID,
+							"dropped_total", e.paperDropped.Load())
 					}
 				}
 				e.log.Info("opportunity qualified",
@@ -1426,6 +1502,27 @@ func (e *Engine) registerMetricsOnce() {
 				}
 				st := c.Status()
 				return st.Written, st.Dropped
+			},
+			Outbox: func() *metrics.QueueStats {
+				ob := e.currentOutbox()
+				if ob == nil {
+					return nil
+				}
+				return &metrics.QueueStats{
+					Depth: int64(ob.Depth()), Capacity: int64(ob.Capacity()),
+					Dropped: ob.Dropped(), Written: ob.Written(),
+					WriteFailures: ob.WriteFailures(),
+				}
+			},
+			PaperQueue: func() *metrics.QueueStats {
+				pap := e.Paper()
+				if pap == nil {
+					return nil
+				}
+				return &metrics.QueueStats{
+					Depth: int64(pap.QueueDepth()), Capacity: int64(pap.QueueCapacity()),
+					Dropped: e.paperDropped.Load(),
+				}
 			},
 		}
 		if err := m.RegisterEngine(src); err != nil {

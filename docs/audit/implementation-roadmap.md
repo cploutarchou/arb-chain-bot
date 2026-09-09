@@ -14,7 +14,15 @@ observability → architecture → UX → polish → performance).
 |---|---|---|---|
 | P0-1 | Slippage is measured against the buffered estimate at the planned size; partial fills produce values in the thousands of bps; persisted and scored | execution F1, trading T3 | baseline `Quote.FinalAmount` at the deployed size; persist the size ratio separately; fix the test that pins −5 bps |
 | P0-2 | Realized and unrealized PnL conflated in opposite directions (portfolio books the full input as a loss on a mid-cycle failure; the cycle row stores the marked total as `pnl_amount`, summed as realized by the quality score) | execution F9 | persist `realized_pnl` and `exposure_mark` separately; report cash-basis and marked figures side by side; score quality on realized |
-| P0-3 | Financial records can be lost silently: outbox write failures uncounted, paper-queue drops uncounted, persistence hook never wired, shutdown cancels the outbox before in-flight cycles settle, a dropped opportunity row cascades into a lost cycle row via the FK | database D3, observability O1, execution F7/F15 | counters + metrics, wire `OnPersistError` to a breaker and CRITICAL alert, staged shutdown with an `ABORTED` outcome, stub opportunity row on cycle insert |
+| P0-3 | Financial records can be lost silently: outbox write failures uncounted, paper-queue drops uncounted, persistence hook never wired, shutdown cancels the outbox before in-flight cycles settle, a dropped opportunity row cascades into a lost cycle row via the FK | database D3, observability O1, execution F7/F15 | counters + metrics, wire `OnPersistError` to a breaker and CRITICAL alert, staged shutdown with an `ABORTED` outcome, unlinked (NULL `opportunity_id`) cycle insert when the opportunity row is missing |
+
+### P0 status
+
+| # | Status | Landed as |
+|---|---|---|
+| P0-1 | Fixed | `slippageVsPlan` in `internal/simulation/paper.go`: planned and actual returns per unit of deployed input; `planned_return_bps` / `actual_return_bps` persisted; partial fills no longer report thousands of bps |
+| P0-2 | Fixed | `realized_pnl`, `exposure_mark`, `input_consumed`, `final_amount` on `paper_cycles` (migration 000016); quality score sums realized; `Portfolio.NetPnL` / `DailyLoss` net the marked exposure; API PnL rows carry `realized`, `exposure_mark`, `net_pnl`, `unmarked` |
+| P0-3 | Fixed | `storage.Outbox`: write failures and drain-deadline losses counted, closed state after shutdown, recovery probe; global `persistence` breaker trips on a failed write and closes on recovery; paper-queue drops counted (`paper_queue_dropped_total`, health `queues.paper.dropped`); `Engine.shutdownStaged` cancels the outbox only after the producers (paper engine included) return; cancellation mid-cycle settles as `ABORTED`, deadline as `TIMEOUT`; `InsertCycle` writes an unlinked cycle (NULL `opportunity_id`, counted as `unlinked_cycles`) instead of failing the FK |
 
 ## P1 — High
 

@@ -45,8 +45,12 @@ func TestReadModelHealthIncludesQueuesAndRates(t *testing.T) {
 	if !ok {
 		t.Fatalf("queues section missing: %+v", h)
 	}
-	if _, ok := queues["paper"]; !ok {
+	paperQ, ok := queues["paper"].(map[string]any)
+	if !ok {
 		t.Fatalf("paper queue depth missing (PAPER mode): %+v", queues)
+	}
+	if _, ok := paperQ["dropped"]; !ok {
+		t.Fatalf("paper queue drop counter missing (P0-3): %+v", paperQ)
 	}
 	if _, ok := queues["outbox"]; ok {
 		t.Fatalf("outbox queue depth present without persistence: %+v", queues)

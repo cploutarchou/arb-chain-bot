@@ -55,6 +55,10 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 			return []AssetPnL{{Asset: "USDT", Realized: 12.5, Fees: 1.25}}
 		},
 		Recorder: func() (int64, int64) { return 100, 2 },
+		Outbox: func() *QueueStats {
+			return &QueueStats{Depth: 3, Capacity: 4096, Dropped: 1, WriteFailures: 2, Written: 40}
+		},
+		PaperQueue: func() *QueueStats { return &QueueStats{Depth: 1, Capacity: 128, Dropped: 5} },
 	}
 	if err := m.RegisterEngine(src); err != nil {
 		t.Fatal(err)
@@ -98,6 +102,16 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		"circuit_breaker_state",
 		"recorder_frames_written_total",
 		"recorder_frames_dropped_total",
+		"paper_cycles_received_total",
+		"paper_cycles_skipped_total",
+		"outbox_queue_depth",
+		"outbox_queue_capacity",
+		"outbox_records_dropped_total",
+		"outbox_write_failures_total",
+		"outbox_records_written_total",
+		"paper_queue_depth",
+		"paper_queue_capacity",
+		"paper_queue_dropped_total",
 	} {
 		if !strings.Contains(page, name) {
 			t.Errorf("exposition missing %s", name)
@@ -109,6 +123,8 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		`orderbook_state{exchange="binance",market="BTCUSDT"} 1`,
 		`capital_available{asset="USDT"} 9000`,
 		`websocket_clients 7`,
+		`outbox_write_failures_total 2`,
+		`paper_queue_dropped_total 5`,
 	} {
 		if !strings.Contains(page, frag) {
 			t.Errorf("exposition missing series %q", frag)
