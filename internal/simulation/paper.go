@@ -241,11 +241,31 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 	res.FinalAmount = cur
 	res.Outcome = cycleOutcome(res.Orders)
 	e.settle(&res)
-	if op.EstimatedFinal.IsPositive() && res.InputConsumed.IsPositive() {
-		res.SlippageBps = op.EstimatedFinal.Sub(res.FinalAmount).
-			Div(res.InputConsumed).Mul(decimal.NewFromInt(10_000))
-	}
+	res.PlannedReturnBps, res.ActualReturnBps, res.SlippageBps = slippageVsPlan(op.Quote, res.InputConsumed, res.FinalAmount)
 	return res, nil
+}
+
+// slippageVsPlan measures how far the cycle's realized return fell short of
+// the plan's return, in bps: planned − actual, positive = worse.
+//
+// Two things are deliberately NOT in this number. The plan's return is the
+// un-buffered quote (Quote.FinalAmount / Quote.InputConsumed): buffers are a
+// risk allowance, not a prediction, and folding them in would report a
+// cycle that filled exactly as planned as "−10 bps slippage". And both
+// returns are ratios of their own deployed input: a partial leg-1 fill
+// shrinks the cycle proportionally, and comparing the smaller final amount
+// with the full-size estimate would report thousands of bps of "slippage"
+// at byte-identical prices. Non-positive inputs (mid-cycle failures with
+// nothing returned, rejected plans) yield zeros; persistence and reports
+// additionally gate on the outcome.
+func slippageVsPlan(plan pricing.CycleQuote, inputConsumed, finalAmount decimal.Decimal) (plannedBps, actualBps, slippage decimal.Decimal) {
+	if !plan.InputConsumed.IsPositive() || !inputConsumed.IsPositive() || !finalAmount.IsPositive() {
+		return decimal.Zero, decimal.Zero, decimal.Zero
+	}
+	tenK := decimal.NewFromInt(10_000)
+	plannedBps = plan.FinalAmount.Div(plan.InputConsumed).Sub(decimal.NewFromInt(1)).Mul(tenK)
+	actualBps = finalAmount.Div(inputConsumed).Sub(decimal.NewFromInt(1)).Mul(tenK)
+	return plannedBps, actualBps, plannedBps.Sub(actualBps)
 }
 
 // fillLeg reads the fill-time book, applies limit-IOC filtering, and
