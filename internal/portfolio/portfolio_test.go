@@ -303,3 +303,42 @@ func (f fakeMarker) Mark(asset exchange.Asset, amount decimal.Decimal, _ exchang
 	}
 	return amount.Mul(rate), true
 }
+
+// Restore reproduces a session's accounting state exactly; a start asset
+// without a persisted peak keeps its initial balance as the mark.
+func TestStateRestoreRoundTrip(t *testing.T) {
+	cash := newResv("10000")
+	if r, err := cash.Reserve("op-1", "USDT", d("1000"), "tri", nil); err != nil {
+		t.Fatal(err)
+	} else if err := cash.Settle(r.ID, d("1000")); err != nil {
+		t.Fatal(err)
+	}
+	p := New(cash, map[exchange.Asset]decimal.Decimal{"USDT": d("10000")})
+	if err := p.ApplyCycle(execution.CycleResult{
+		Outcome: execution.OutcomeLeg1FilledLeg2Failed, StartAsset: "USDT",
+		InputConsumed: d("1000"), RealizedPnL: d("-1000"),
+		Exposure: map[exchange.Asset]decimal.Decimal{"BTC": d("0.01")},
+		Fees:     map[exchange.Asset]decimal.Decimal{"BTC": d("0.00001")},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	p.TakeSnapshot(time.Now(), nil)
+	st := p.State()
+	if !st.Realized["USDT"].Equal(d("-1000")) || !st.Exposure["BTC"].Equal(d("0.01")) ||
+		!st.Peak["USDT"].Equal(d("10000")) || !st.Drawdown["USDT"].Equal(d("0.1")) || st.Cycles != 1 || st.Failed != 1 {
+		t.Fatalf("state = %+v", st)
+	}
+
+	q := New(cash, map[exchange.Asset]decimal.Decimal{"USDT": d("10000"), "BTC": d("1")})
+	q.Restore(st)
+	if got := q.State(); !got.Realized["USDT"].Equal(st.Realized["USDT"]) || !got.Exposure["BTC"].Equal(st.Exposure["BTC"]) ||
+		!got.Fees["BTC"].Equal(st.Fees["BTC"]) || !got.Peak["USDT"].Equal(d("10000")) || !got.Peak["BTC"].Equal(d("1")) ||
+		!got.Drawdown["USDT"].Equal(d("0.1")) || got.Cycles != 1 || got.Failed != 1 {
+		t.Fatalf("restored = %+v", got)
+	}
+	// Mutating the returned state must not touch the portfolio.
+	st.Realized["USDT"] = d("0")
+	if !q.Realized("USDT").Equal(d("-1000")) {
+		t.Fatal("State returned a shared map")
+	}
+}

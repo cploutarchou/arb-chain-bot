@@ -54,6 +54,10 @@ func (f *fakeWriter) InsertRiskEvent(ctx context.Context, _ RiskEvent) error {
 	return f.record(ctx, "risk_event")
 }
 
+func (f *fakeWriter) InsertLedgerSnapshot(ctx context.Context, _ *LedgerSnapshot) error {
+	return f.record(ctx, "ledger_snapshot")
+}
+
 func (f *fakeWriter) Ping(context.Context) error {
 	if f.down.Load() {
 		return errStoreDown

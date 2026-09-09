@@ -175,6 +175,10 @@ type Supervisor struct {
 	// EndPaperSession closes the outgoing paper session row (E10) after
 	// a restart drains it. Optional: nil when persistence is off.
 	EndPaperSession func(ctx context.Context, sessionID string, at time.Time) error
+	// endSessionOnRestart is the pre-resumption behaviour (every restart
+	// ends the outgoing session); tests of that path set it. Production
+	// leaves it false so the next run resumes the session (P1-6).
+	endSessionOnRestart bool
 	// SessionID returns the engine's current paper session id (input to
 	// EndPaperSession). Optional; only consulted when EndPaperSession is set.
 	SessionID func() string
@@ -580,7 +584,13 @@ func (s *Supervisor) restart(parent context.Context, req RestartRequest, cancelC
 			return cancelCurrent, 0, 0, false
 		}
 	}
-	if s.EndPaperSession != nil && outgoingSession != "" {
+	// The outgoing paper session is NOT ended here any more: a restart
+	// resumes it — same session id, ledger continued from its last
+	// snapshot — unless the new settings change the starting balances,
+	// in which case the engine's own resumption step ends it (P1-6).
+	// Ending it on every restart is what made every restart a fresh
+	// ledger. EndPaperSession stays wired for the supersede path only.
+	if s.EndPaperSession != nil && outgoingSession != "" && s.endSessionOnRestart {
 		endCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := s.EndPaperSession(endCtx, outgoingSession, time.Now()); err != nil {
 			s.Log.Warn("end paper session failed", "session", outgoingSession, "error", err)

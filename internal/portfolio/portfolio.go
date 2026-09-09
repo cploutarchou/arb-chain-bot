@@ -207,6 +207,51 @@ func (p *Portfolio) Reset(initial map[exchange.Asset]decimal.Decimal) {
 	}
 }
 
+// State is the portfolio's complete accounting state, exported so a
+// restart can continue the session instead of starting the ledger over
+// (a restart must never reset a loss or a drawdown). Maps are copies.
+type State struct {
+	Realized map[exchange.Asset]decimal.Decimal // per start asset
+	Peak     map[exchange.Asset]decimal.Decimal // equity high-water mark per start asset
+	Drawdown map[exchange.Asset]decimal.Decimal // worst fraction per start asset
+	Exposure map[exchange.Asset]decimal.Decimal // stranded quantities per asset
+	Fees     map[exchange.Asset]decimal.Decimal // per fee asset
+
+	Cycles, Completed, Failed int64
+}
+
+// State snapshots the accounting state.
+func (p *Portfolio) State() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return State{
+		Realized: cloneMap(p.realized), Peak: cloneMap(p.peak), Drawdown: cloneMap(p.drawdown),
+		Exposure: cloneMap(p.exposure), Fees: cloneMap(p.fees),
+		Cycles: p.cycles, Completed: p.completed, Failed: p.failed,
+	}
+}
+
+// Restore replaces the accounting state with a persisted one (session
+// resumption). The initial balances given to New stay as the key set;
+// a start asset the state has no peak for keeps its initial balance as
+// the high-water mark, exactly as a fresh portfolio would.
+func (p *Portfolio) Restore(st State) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.realized = cloneMap(st.Realized)
+	p.exposure = cloneMap(st.Exposure)
+	p.fees = cloneMap(st.Fees)
+	p.drawdown = cloneMap(st.Drawdown)
+	p.peak = make(map[exchange.Asset]decimal.Decimal, len(p.initial))
+	for a, v := range p.initial {
+		p.peak[a] = v
+	}
+	for a, v := range st.Peak {
+		p.peak[a] = v
+	}
+	p.cycles, p.completed, p.failed = st.Cycles, st.Completed, st.Failed
+}
+
 // Realized returns the realized session PnL for one start asset.
 func (p *Portfolio) Realized(start exchange.Asset) decimal.Decimal {
 	p.mu.Lock()
