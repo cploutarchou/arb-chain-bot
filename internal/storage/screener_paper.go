@@ -18,9 +18,16 @@ import (
 // screener.EventCloser and screener.EventCounter (T-070) over
 // screener_events.
 func (c *ScreenerEvents) CloseEvent(ctx context.Context, id string, closedAt time.Time, lifetimeS int64, peakNetBps string) error {
+	return c.CloseEventWithReason(ctx, id, closedAt, lifetimeS, peakNetBps, "")
+}
+
+// CloseEventWithReason implements screener.EventCloseReasonRecorder: the
+// close reason (a signal name, HOLD_TIMEOUT, lane_gone) is stored beside
+// the close so the history says why an event ended, not only when.
+func (c *ScreenerEvents) CloseEventWithReason(ctx context.Context, id string, closedAt time.Time, lifetimeS int64, peakNetBps, reason string) error {
 	tag, err := c.s.Pool.Exec(ctx, `
-		UPDATE screener_events SET closed_at = $2, lifetime_s = $3, peak_net_bps = $4
-		WHERE id = $1`, id, closedAt, lifetimeS, peakNetBps)
+		UPDATE screener_events SET closed_at = $2, lifetime_s = $3, peak_net_bps = $4, close_reason = $5
+		WHERE id = $1`, id, closedAt, lifetimeS, peakNetBps, nullStr(reason))
 	if err != nil {
 		return err
 	}

@@ -55,5 +55,12 @@ func screenerMetricSources(svc *screener.Service, ev *alerts.Evaluator, ex *pape
 			}
 			return out
 		},
+		Lanes: func() *metrics.LaneStat {
+			ls := ev.LaneStats()
+			return &metrics.LaneStat{
+				Universe: int64(ls.Universe), Lanes: int64(ls.Lanes), Truncated: int64(ls.Truncated),
+				TruncatedTotal: ls.TruncatedTotal, Holding: int64(ls.Holding), HoldTimeoutCloses: ls.HoldTimeoutCloses,
+			}
+		},
 	}
 }

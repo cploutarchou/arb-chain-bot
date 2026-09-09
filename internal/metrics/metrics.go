@@ -573,6 +573,17 @@ type ScreenerSources struct {
 	PairsTracked    func() int64
 	Alerts          func() map[string]int64 // rule_kind → opened
 	PaperExecutions func() []PaperExecStat
+	// Lanes reports the evaluator's last tick: how much of the lane
+	// universe was actually evaluated (nil when no evaluator runs).
+	Lanes func() *LaneStat
+}
+
+// LaneStat is the alert evaluator's last-tick accounting.
+type LaneStat struct {
+	Universe, Lanes, Truncated int64 // admitted / evaluated / cut by the per-rule cap
+	TruncatedTotal             int64 // cut since start
+	Holding                    int64 // lanes on DATA_AGE hold
+	HoldTimeoutCloses          int64 // events closed by the hold timeout since start
 }
 
 // RegisterScreener wires the Scanner Suite counters:
@@ -604,6 +615,11 @@ func (m *Metrics) RegisterScreener(src ScreenerSources) error {
 		pairs       = i64g("screener_pairs_tracked", "distinct base/quote pairs in the screener book")
 		alerts      = i64c("screener_alerts", "alerts opened per rule kind")
 		paperExecs  = i64c("screener_paper_executions", "automatic PAPER executions per strategy and outcome")
+		laneUni     = i64g("screener_lane_universe", "lanes admitted by the rules' filters on the last evaluator tick")
+		laneEval    = i64g("screener_lanes_evaluated", "lanes evaluated on the last evaluator tick")
+		laneCut     = i64c("screener_lanes_truncated", "lanes cut by alerts.max_lanes_per_rule since start")
+		laneHold    = i64g("screener_lanes_holding", "lanes on DATA_AGE hold")
+		holdCloses  = i64c("screener_hold_timeout_closes", "events closed by the stale-hold timeout since start")
 	)
 	if err := errors.Join(errs...); err != nil {
 		return err
@@ -641,8 +657,17 @@ func (m *Metrics) RegisterScreener(src ScreenerSources) error {
 					attribute.String("outcome", p.Outcome)))
 			}
 		}
+		if src.Lanes != nil {
+			if l := src.Lanes(); l != nil {
+				o.ObserveInt64(laneUni, l.Universe)
+				o.ObserveInt64(laneEval, l.Lanes)
+				o.ObserveInt64(laneCut, l.TruncatedTotal)
+				o.ObserveInt64(laneHold, l.Holding)
+				o.ObserveInt64(holdCloses, l.HoldTimeoutCloses)
+			}
+		}
 		return nil
-	}, rateLimited, online, latency, pairs, alerts, paperExecs)
+	}, rateLimited, online, latency, pairs, alerts, paperExecs, laneUni, laneEval, laneCut, laneHold, holdCloses)
 	return err
 }
 

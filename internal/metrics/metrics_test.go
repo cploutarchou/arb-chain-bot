@@ -233,6 +233,9 @@ func TestScreenerAndPlatformSeries(t *testing.T) {
 			return []PaperExecStat{{Strategy: "cross_venue_spot", Outcome: "executed", Count: 4},
 				{Strategy: "cross_venue_spot", Outcome: "skipped", Count: 2}}
 		},
+		Lanes: func() *LaneStat {
+			return &LaneStat{Universe: 601, Lanes: 500, Truncated: 101, TruncatedTotal: 101, Holding: 3, HoldTimeoutCloses: 2}
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +257,11 @@ func TestScreenerAndPlatformSeries(t *testing.T) {
 		`screener_alerts_total{rule_kind="carry"} 1`,
 		`screener_paper_executions_total{outcome="executed",strategy="cross_venue_spot"} 4`,
 		`screener_paper_executions_total{outcome="skipped",strategy="cross_venue_spot"} 2`,
+		`screener_lane_universe 601`,
+		`screener_lanes_evaluated 500`,
+		`screener_lanes_truncated_total 101`,
+		`screener_lanes_holding 3`,
+		`screener_hold_timeout_closes_total 2`,
 		`db_migrations_pending 1`,
 		`campaign_runs_total{status="done"} 3`,
 		`campaign_runs_total{status="failed"} 1`,
