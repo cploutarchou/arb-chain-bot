@@ -4,7 +4,7 @@
 - Decided by (operator, legal name and role): the repository operator (product owner
   for packaging). Legal name not recorded in the material this write-up was made
   from; the operator fills it in on signing. The decision itself is evidenced by
-  commit `d315558` and the 2026-08-29 status-log entry in `docs/MASTER_PLAN.md`.
+  commit `11b2577` and the 2026-08-29 status-log entry in `docs/MASTER_PLAN.md`.
 - Counsel consulted (firm, person, date): none — not applicable. This decision
   *narrows* what is advertised and creates no new regulated activity. The
   template's legal fields exist for the production execution gate
