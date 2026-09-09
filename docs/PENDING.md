@@ -1,6 +1,6 @@
 # Pending work
 
-Generated 2026-08-31 from `docs/MASTER_PLAN.md` at `79e185d`. Every entry
+Generated 2026-08-31 from `docs/MASTER_PLAN.md` at `1f78cfc`. Every entry
 below is a task that is **not** DONE in the plan. Tasks that are DONE,
 FIXED or CLOSED are omitted — see MASTER_PLAN for the full history.
 

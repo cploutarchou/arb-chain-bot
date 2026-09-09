@@ -2,7 +2,7 @@
 
 Status: ANALYSIS 2026-08-29. Owner: product manager. Scope: answers
 "what is still missing to replicate arbitragescanner.io, plus real
-execution" against the tree at `0586164`.
+execution" against the tree at `1252e53`.
 
 **Sourcing.** `arbitragescanner.io` is egress-blocked from this
 development environment, so nothing here was read from the rendered site
@@ -14,7 +14,7 @@ browser before any of it reaches marketing copy or a pricing decision.
 The earlier pricing snapshot in `docs/design/packages.md` §1 was taken in
 a session with site access and is the better source for their tiers.
 
-Facts about **our own tree** are verified directly against `0586164`.
+Facts about **our own tree** are verified directly against `1252e53`.
 
 ## 0. The one structural fact about the competitor
 
@@ -36,7 +36,7 @@ Two consequences for us:
 
 ## 1. Parity matrix
 
-| Capability | Them | Us at `0586164` | Gap |
+| Capability | Them | Us at `1252e53` | Gap |
 |---|---|---|---|
 | CEX venues | 75+ claimed | 15 coded, soaked and enabled by default (`internal/screener/venue`) | T-075 IN_PROGRESS — Upbit, Bithumb, LBank, Phemex remain |
 | Cross-venue spot spreads | yes | yes (T-067, net of both taker fees, identity + liquidity guard) | **parity** |
