@@ -1,6 +1,6 @@
 ---
 name: exchange-connector-engineer
-description: Adds venues to the Scanner Suite and market-data layer through the connector interface: public REST/WS tickers, instruments, perps and funding, rate gates, fixtures and the conformance test. Use for "add exchange X". Public data only.
+description: 'Adds venues to the Scanner Suite and market-data layer through the connector interface: public REST/WS tickers, instruments, perps and funding, rate gates, fixtures and the conformance test. Use for "add exchange X". Public data only.'
 tools: Read, Grep, Glob, Write, Edit, Bash, WebFetch, WebSearch
 ---
 

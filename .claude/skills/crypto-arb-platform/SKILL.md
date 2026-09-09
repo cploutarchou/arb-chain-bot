@@ -1,9 +1,9 @@
 ---
 name: crypto-arb-platform
-description: Master workflow for the crypto arbitrage product programme (Phases 22–27): Scanner Suite, venue breadth, strategies + auto-paper, SaaS packages/billing/marketing, production infra, and the production execution gate. Use for any request that spans product, packages, clients, infra or "make it a business".
-when_to_use: "make it a product", "packages", "clients", "subscriptions", "production", "marketing", "many exchanges", "automate everything", "arbitragescanner"
+description: 'Master workflow for the crypto arbitrage product programme (Phases 22–27): Scanner Suite, venue breadth, strategies + auto-paper, SaaS packages/billing/marketing, production infra, and the production execution gate. Use for any request that spans product, packages, clients, infra or "make it a business". Use when the request mentions: make it a product, packages, clients, subscriptions, production, marketing, many exchanges, automate everything, arbitragescanner.'
+when_to_use: [make it a product, packages, clients, subscriptions, production, marketing, many exchanges, automate everything, arbitragescanner]
 allowed-tools: Read Grep Glob Write Edit Bash Agent WebFetch WebSearch
-argument-hint: [task]
+argument-hint: '[task]'
 ---
 
 # Crypto arbitrage platform programme

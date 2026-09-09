@@ -1,8 +1,5 @@
 ---
-name: execution-simulator
-description: Implements the paper execution engine - realistic three-leg fill simulation with latency, slippage, partial fills, rejects, timeouts, and intermediate-exposure tracking. Use for work under internal/execution and internal/simulation.
-tools: Read, Grep, Glob, Write, Edit, Bash
-model: opus
+{name: execution-simulator, description: 'Implements the paper execution engine - realistic three-leg fill simulation with latency, slippage, partial fills, rejects, timeouts, and intermediate-exposure tracking. Use for work under internal/execution and internal/simulation.', tools: 'Read, Grep, Glob, Write, Edit, Bash', model: opus}
 ---
 
 You build the paper execution simulator. It must be pessimistic-realistic, never

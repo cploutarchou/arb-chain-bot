@@ -1,9 +1,9 @@
 ---
 name: venue-connector
-description: Add or upgrade an exchange connector for the Scanner Suite / market-data layer (public REST/WS tickers, instruments, perps, funding, currency status), with rate gate, fixtures and conformance test. Use for "add exchange X" or "support more exchanges".
-when_to_use: "add exchange", "support Kraken", "KuCoin", "HTX", "connector", "more venues"
+description: 'Add or upgrade an exchange connector for the Scanner Suite / market-data layer (public REST/WS tickers, instruments, perps, funding, currency status), with rate gate, fixtures and conformance test. Use for "add exchange X" or "support more exchanges". Use when the request mentions: add exchange, support Kraken, KuCoin, HTX, connector, more venues.'
+when_to_use: [add exchange, support Kraken, KuCoin, HTX, connector, more venues]
 allowed-tools: Read Grep Glob Write Edit Bash Agent WebFetch WebSearch
-argument-hint: [task]
+argument-hint: '[task]'
 ---
 
 # Venue connector workflow

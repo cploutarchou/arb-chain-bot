@@ -1,9 +1,9 @@
 ---
 name: scanner-suite
-description: Workflow and non-negotiables for the Scanner Suite — cross-venue spot screener, perpetuals basis/funding monitor, spreads calculator, alert rules to Telegram, and automatic PAPER execution over Binance, OKX, Bybit, Bitget, Gate, MEXC public data. Use for any screener/perpetuals/funding/alert/auto-paper work (internal/screener, screener API, Scanner Suite console pages).
-when_to_use: "screener", "cross-exchange spread", "perpetuals", "funding rate", "basis", "carry", "spreads calculator", "alert rule", "auto-paper", "auto execute", "arbitragescanner"
+description: 'Workflow and non-negotiables for the Scanner Suite — cross-venue spot screener, perpetuals basis/funding monitor, spreads calculator, alert rules to Telegram, and automatic PAPER execution over Binance, OKX, Bybit, Bitget, Gate, MEXC public data. Use for any screener/perpetuals/funding/alert/auto-paper work (internal/screener, screener API, Scanner Suite console pages). Use when the request mentions: screener, cross-exchange spread, perpetuals, funding rate, basis, carry, spreads calculator, alert rule, auto-paper, auto execute, arbitragescanner.'
+when_to_use: [screener, cross-exchange spread, perpetuals, funding rate, basis, carry, spreads calculator, alert rule, auto-paper, auto execute, arbitragescanner]
 allowed-tools: Read Grep Glob Write Edit Bash Agent WebFetch WebSearch
-argument-hint: [task id or feature]
+argument-hint: '[task id or feature]'
 ---
 
 # Scanner Suite workflow

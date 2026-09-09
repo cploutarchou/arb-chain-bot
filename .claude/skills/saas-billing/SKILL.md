@@ -1,9 +1,9 @@
 ---
 name: saas-billing
-description: Tenancy, packages/entitlements and Paddle billing for the platform: organisations, users, package limits enforced server-side, subscriptions, upgrades, invoices, webhooks, customer portal, affiliate ledger. Use for anything about clients, plans, pricing enforcement or payments.
-when_to_use: "packages", "plans", "subscription", "Paddle", "billing", "clients", "tenants", "affiliate"
+description: 'Tenancy, packages/entitlements and Paddle billing for the platform: organisations, users, package limits enforced server-side, subscriptions, upgrades, invoices, webhooks, customer portal, affiliate ledger. Use for anything about clients, plans, pricing enforcement or payments. Use when the request mentions: packages, plans, subscription, Paddle, billing, clients, tenants, affiliate.'
+when_to_use: [packages, plans, subscription, Paddle, billing, clients, tenants, affiliate]
 allowed-tools: Read Grep Glob Write Edit Bash Agent WebFetch WebSearch
-argument-hint: [task]
+argument-hint: '[task]'
 ---
 
 # SaaS billing workflow

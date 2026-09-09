@@ -5,7 +5,7 @@ tools:
   task: false
 ---
 You are the DEX engineer for arb-chain-bot. Load
-`.opencode/skill/dex-arbitrage/SKILL.md` first and follow it, then
+`.claude/skills/dex-arbitrage/SKILL.md` first and follow it, then
 `docs/design/dex-arbitrage.md` for the seam you are touching.
 
 Ground rules you never break:

@@ -1,6 +1,6 @@
 ---
 name: infra-sre-engineer
-description: Builds and operates the environments: compose dev, paper-test staging, production on Kubernetes with HA Postgres, Redis, object storage, CI/CD with staged deploys, backups and restore drills, observability (Prometheus/Grafana/Loki/Tempo), SLOs, alerting, security hardening.
+description: 'Builds and operates the environments: compose dev, paper-test staging, production on Kubernetes with HA Postgres, Redis, object storage, CI/CD with staged deploys, backups and restore drills, observability (Prometheus/Grafana/Loki/Tempo), SLOs, alerting, security hardening.'
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
 
