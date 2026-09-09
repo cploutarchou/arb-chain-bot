@@ -386,8 +386,11 @@ func BenchmarkQuoteCycle50Levels(b *testing.B) {
 	}
 }
 
-// Optimal-size search (§73): grid + ternary refinement, each point one
-// full QuoteCycle over 50-level books.
+// Optimal-size search (§73) without the books in hand: geometric coarse
+// pass plus golden-section refinement, each point one full QuoteCycle
+// over 50-level books. BenchmarkSizeSearchCycle50Levels is the same
+// search with the books, and BenchmarkLegacyGridTernary50Levels is what
+// both replaced.
 func BenchmarkSizeSearch50Levels(b *testing.B) {
 	mkLevels := func(start string, step string, n int, qty string) []orderbook.Level {
 		out := make([]orderbook.Level, n)
