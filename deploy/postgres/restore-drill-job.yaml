@@ -1,7 +1,11 @@
-# Restore drill: bring up a scratch Postgres in the same pod, restore
-# the latest backup with WAL replay to a point in time, verify, report.
-# Never touches the production instance. Runnable ad hoc:
+# Restore drill. Fails closed: the drill refuses to run unless its target
+# is explicitly disposable, is not the production endpoint and carries a
+# scratch marker; verification is read-only; results go to the Job log
+# and the pushgateway. Nothing here writes to a production table and the
+# pod holds no admin credential. Runnable ad hoc:
 #   kubectl -n arb create job --from=cronjob/pg-restore-drill drill-$(date +%s)
+# Runbook (including the verify-only path for the managed database):
+# docs/runbooks/restore-drill.md
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,8 +13,12 @@ metadata:
   namespace: arb
 data:
   verify.sql: |
-    -- Fails the drill (exit 3 via ON_ERROR_STOP) when expectations break.
+    -- Read-only checks. Fails the drill (ON_ERROR_STOP) when an
+    -- expectation breaks. The session already runs with
+    -- default_transaction_read_only=on (PGOPTIONS in drill.sh); set it
+    -- again here so the file is safe to run by hand.
     \set ON_ERROR_STOP on
+    SET default_transaction_read_only = on;
     -- 1. all migrations applied, none dirty
     SELECT CASE WHEN dirty THEN 1/0 ELSE version END AS migration_version FROM schema_migrations;
     -- 2. core tables present and readable
@@ -29,38 +37,113 @@ data:
     SELECT max(started_at) AS newest_paper_cycle FROM paper_cycles;
   drill.sh: |
     #!/bin/sh
+    # Guards first, then restore (self-hosted tier) or verify-only
+    # (managed tier), then read-only verification. Exit codes: 0 pass,
+    # 1 drill failed, 2 refused by a guard.
     set -eu
+
+    PUSHGW="${PUSHGATEWAY_URL:-http://prometheus-pushgateway.monitoring:9091}"
+    SOURCE="${RESTORE_DRILL_SOURCE:-pgbackrest}"        # pgbackrest | verify-only
+    TARGET_DSN="${RESTORE_DRILL_TARGET_DSN:-postgres://arb@127.0.0.1:5433/arb}"
     TARGET="${RESTORE_TARGET:-$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)}"
     started=$(date +%s)
-    echo "restore drill: stanza=arb target=$TARGET"
-    mkdir -p /pgdata && chmod 700 /pgdata
-    pgbackrest --stanza=arb --pg1-path=/pgdata --delta \
-      --type=time --target="$TARGET" --target-action=promote restore
-    pg_ctl -D /pgdata -o "-c listen_addresses=127.0.0.1 -c port=5433 -c archive_mode=off" -w start
-    for i in $(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 && break; sleep 5; done
-    # wait for recovery to finish (promote)
-    for i in $(seq 1 120); do
-      r=$(psql -h 127.0.0.1 -p 5433 -U arb -d arb -Atc "select pg_is_in_recovery()")
-      [ "$r" = "f" ] && break; sleep 5
-    done
-    ok=1
-    psql -h 127.0.0.1 -p 5433 -U arb -d arb -v ON_ERROR_STOP=1 -f /scripts/verify.sql > /tmp/verify.out 2>&1 || ok=0
-    cat /tmp/verify.out
-    dur=$(( $(date +%s) - started ))
-    echo "restore drill: success=$ok duration=${dur}s"
-    cat <<METRICS | wget -q --post-file=- -O- "http://prometheus-pushgateway.monitoring:9091/metrics/job/pg_restore_drill/instance/arb" || true
-    # TYPE pg_restore_drill_success gauge
-    pg_restore_drill_success $ok
-    # TYPE pg_restore_drill_duration_seconds gauge
-    pg_restore_drill_duration_seconds $dur
-    # TYPE pg_restore_drill_timestamp gauge
-    pg_restore_drill_timestamp $(date +%s)
+    pushed=0
+
+    # push <success 0|1> <refused 0|1>: the same series the alert rules
+    # read (RestoreDrillFailed, RestoreDrillOverdue).
+    push() {
+      dur=$(( $(date +%s) - started ))
+      cat <<METRICS | sed 's/^[[:space:]]*//' | wget -q --post-file=- -O- "$PUSHGW/metrics/job/pg_restore_drill/instance/arb" \
+        || echo "restore drill: pushgateway unreachable; the result is in this log only"
+        # TYPE pg_restore_drill_success gauge
+        pg_restore_drill_success $1
+        # TYPE pg_restore_drill_refused gauge
+        pg_restore_drill_refused $2
+        # TYPE pg_restore_drill_duration_seconds gauge
+        pg_restore_drill_duration_seconds $dur
+        # TYPE pg_restore_drill_timestamp gauge
+        pg_restore_drill_timestamp $(date +%s)
     METRICS
-    # record in the production ops table via the admin URL (append-only)
-    psql "$PGADMIN_URL" -v ON_ERROR_STOP=1 -c \
-      "insert into restore_drills(target_time, success, duration_seconds, notes) values ('$TARGET', $( [ $ok = 1 ] && echo true || echo false ), $dur, left(\$\$$(head -c 2000 /tmp/verify.out | sed "s/'/''/g")\$\$, 4000))" \
-      || echo "restore_drills table missing (create via migration); result not recorded in DB"
-    pg_ctl -D /pgdata -m fast stop || true
+      pushed=1
+    }
+    # Any unexpected exit (set -e) still reports a failed drill.
+    trap '[ "$pushed" = 1 ] || push 0 0' EXIT
+    refuse() { echo "restore drill: REFUSED: $*"; push 0 1; exit 2; }
+
+    # --- guard 1: the target must be declared disposable ---
+    [ "${RESTORE_DRILL_TARGET_DISPOSABLE:-}" = "1" ] \
+      || refuse "RESTORE_DRILL_TARGET_DISPOSABLE=1 is not set; the drill only restores into or verifies a throwaway database"
+
+    # --- guard 2: parse the target; never the production endpoint ---
+    rest=${TARGET_DSN#*://}; rest=${rest%%\?*}
+    hostpart=${rest%%/*}
+    dbname=${rest#*/}; [ "$dbname" = "$rest" ] && dbname=""
+    hostpart=${hostpart##*@}; host=${hostpart%%:*}
+    host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+    prod_conf=$(sed -n 's/^pg1-host=\([^ #]*\).*/\1/p' /etc/pgbackrest/pgbackrest.conf 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+    prod_env=$(printf '%s' "${PRODUCTION_DB_HOST:-}" | tr '[:upper:]' '[:lower:]')
+    [ -n "$dbname" ] || refuse "the target DSN names no database; be explicit (.../arb_drill)"
+    for p in $prod_conf $prod_env; do
+      [ "$host" != "$p" ] || refuse "target host $host is the production endpoint"
+    done
+
+    # --- guard 3: a remote target must carry a scratch marker ---
+    case "$host" in
+      ""|localhost|127.*|::1) host_class=loopback ;;   # the scratch instance inside this pod
+      *)
+        host_class=remote
+        case "$dbname" in
+          arb_drill*|arb_scratch*) ;;
+          *)
+            case "${host%%.*}" in
+              *drill*|*scratch*) ;;
+              *) refuse "remote target $host/$dbname carries no scratch marker (database arb_drill*/arb_scratch*, or an instance name containing drill/scratch)" ;;
+            esac ;;
+        esac ;;
+    esac
+    echo "restore drill: source=$SOURCE target=$host_class ($host/$dbname) point_in_time=$TARGET"
+
+    # --- restore: physical, self-hosted tier only ---
+    if [ "$SOURCE" = "pgbackrest" ]; then
+      [ "$host_class" = loopback ] \
+        || refuse "source=pgbackrest restores into the in-pod scratch instance only; a remote scratch instance is checked with source=verify-only"
+      mkdir -p /pgdata && chmod 700 /pgdata
+      pgbackrest --stanza=arb --pg1-path=/pgdata --delta \
+        --type=time --target="$TARGET" --target-action=promote restore
+      # The restored cluster carries production's pg_hba.conf; replace it so
+      # only this pod's loopback can connect.
+      printf 'local all all trust\nhost all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\n' > /pgdata/pg_hba.conf
+      pg_ctl -D /pgdata -w start \
+        -o "-c listen_addresses=127.0.0.1 -c port=5433 -c archive_mode=off -c unix_socket_directories=/tmp"
+      for _ in $(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 && break; sleep 5; done
+      r="?"
+      for _ in $(seq 1 120); do
+        r=$(psql "$TARGET_DSN" -Atc "select pg_is_in_recovery()" 2>/dev/null || echo "?")
+        [ "$r" = "f" ] && break; sleep 5
+      done
+      if [ "$r" != "f" ]; then
+        echo "restore drill: the scratch instance never left recovery (WAL gap?)"
+        push 0 0; pg_ctl -D /pgdata -m fast stop || true; exit 1
+      fi
+    elif [ "$SOURCE" = "verify-only" ]; then
+      echo "restore drill: verify-only against an operator-restored scratch instance"
+    else
+      refuse "unknown RESTORE_DRILL_SOURCE=$SOURCE (pgbackrest | verify-only)"
+    fi
+
+    # --- verify, read-only ---
+    export PGOPTIONS="-c default_transaction_read_only=on"
+    ok=1
+    # The read-only guard must actually hold: a write has to fail.
+    if psql "$TARGET_DSN" -Atqc "create table drill_probe_must_fail()" >/dev/null 2>&1; then
+      echo "restore drill: read-only guard did not hold (a CREATE TABLE succeeded); connect to the instance directly, not through a pooler"
+      ok=0
+    fi
+    psql "$TARGET_DSN" -v ON_ERROR_STOP=1 -f /scripts/verify.sql > /tmp/verify.out 2>&1 || ok=0
+    cat /tmp/verify.out
+    echo "restore drill: success=$ok duration=$(( $(date +%s) - started ))s source=$SOURCE target=$host_class"
+    push "$ok" 0
+    if [ "$SOURCE" = "pgbackrest" ]; then pg_ctl -D /pgdata -m fast stop || true; fi
     [ "$ok" = 1 ]
 ---
 apiVersion: batch/v1
@@ -94,9 +177,22 @@ spec:
               image: ghcr.io/cploutarchou/arb-chain-bot/pg-drill:16
               command: ["/bin/sh", "/scripts/drill.sh"]
               env:
-                - {name: RESTORE_TARGET, value: ""}   # empty = now-1h
+                - {name: RESTORE_TARGET, value: ""}                    # empty = now-1h
                 - {name: PGUSER, value: arb}
-              envFrom: [{secretRef: {name: pgbackrest-credentials}}]
+                # The CronJob's target is the scratch instance inside this
+                # pod on an ephemeral volume, which is why the flag may be
+                # set here. An ad hoc Job pointing RESTORE_DRILL_TARGET_DSN
+                # elsewhere is still subject to the endpoint and scratch
+                # marker guards in drill.sh.
+                - {name: RESTORE_DRILL_TARGET_DISPOSABLE, value: "1"}
+                - {name: RESTORE_DRILL_SOURCE, value: pgbackrest}      # verify-only for the managed tier
+                - {name: RESTORE_DRILL_TARGET_DSN, value: "postgres://arb@127.0.0.1:5433/arb"}
+                # Production endpoint (terraform output postgres_endpoint),
+                # compared against the target host; pg1-host from
+                # pgbackrest.conf is compared as well.
+                - {name: PRODUCTION_DB_HOST, value: REPLACE_POSTGRES_ENDPOINT}
+                - {name: PUSHGATEWAY_URL, value: "http://prometheus-pushgateway.monitoring:9091"}
+              envFrom: [{secretRef: {name: pgbackrest-credentials}}]   # PGPASSWORD of the read-only backup role only
               securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
               resources:
                 requests: {cpu: "1", memory: 2Gi}
@@ -112,10 +208,13 @@ spec:
             - name: scripts
               configMap: {name: pg-restore-drill-scripts, defaultMode: 0555}
             - name: pgdata
+              # Sized to the primary's allocated storage (terraform
+              # envs/prod: allocated_storage_gb = 500); a physical restore
+              # needs room for the whole data directory.
               ephemeral:
                 volumeClaimTemplate:
                   spec:
                     accessModes: [ReadWriteOnce]
-                    resources: {requests: {storage: 200Gi}}
+                    resources: {requests: {storage: 500Gi}}
             - name: tmp
               emptyDir: {}

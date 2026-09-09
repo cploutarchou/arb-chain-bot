@@ -1,6 +1,8 @@
 arb-platform {{ .Chart.Version }} released as {{ .Release.Name }} in {{ .Release.Namespace }}
   environment : {{ .Values.global.environment }}
   arbd mode   : {{ include "arb.mode" . }}  (LIVE is not a mode; ErrLiveTradingDisabled stays in code)
+  persistence : {{ ternary "enabled" "disabled (in-memory; no DSN projected)" .Values.arbd.persistence.enabled }}
+  canary      : {{ ternary "yes (state-isolated; opt-in traffic via X-Arb-Canary header)" "no" .Values.canary.enabled }}
   arbd image  : {{ include "arb.image" (dict "root" . "img" .Values.image.arbd) }}
   web image   : {{ include "arb.image" (dict "root" . "img" .Values.image.web) }}
 

@@ -38,6 +38,12 @@ arbd:
   # LIVE mode: the executor returns ErrLiveTradingDisabled and the
   # production gate is a reviewed code change, not a value here.
   mode: PAPER
+  # Persistence. false = no DSN is projected from the secret store and
+  # ARB_DATABASE_URL is pinned to "" on the pod, so the process runs in
+  # memory (sessions, settings and paper state die with the pod). Used by
+  # the prod canary; the chart then refuses migrate.enabled=true.
+  persistence:
+    enabled: true
   httpPort: 8080
   metricsPort: 9109
   logLevel: info
@@ -116,6 +122,21 @@ database:
   # by the external secret; only non-sensitive parts live here.
   sslmode: require
   name: arb
+
+# Canary release (deploy/helm/canary-values.yaml turns this on for the
+# prod bake). With canary.enabled the render refuses: any mode but
+# PAPER, a database key equal to the primary's
+# externalSecrets.keys.databaseURL, the migrate hook while persistence
+# is off, the recordings PVC, and weighted ingress traffic. The
+# assertions are in templates/_helpers.tpl ("arb.guards") and each one
+# is exercised by deploy/helm/test-canary-guards.sh.
+canary:
+  enabled: false
+  # Remote key (under externalSecrets.remotePrefix) holding a DSN to a
+  # scratch database the canary may own. Read only when
+  # arbd.persistence.enabled is true; must differ from
+  # externalSecrets.keys.databaseURL.
+  databaseRemoteKey: ""
 
 service:
   type: ClusterIP
