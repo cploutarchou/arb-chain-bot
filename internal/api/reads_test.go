@@ -38,6 +38,15 @@ func (f fakeReads) Health() any {
 	return map[string]any{"ready": true}
 }
 
+func (f fakeReads) PaperActive() (any, bool) {
+	if !f.portfolio {
+		return nil, false
+	}
+	return map[string]any{"running": true, "cycles": []map[string]any{{
+		"cycle_id": "cy-1", "triangle_id": "t-1", "stage_legs": 3,
+	}}}, true
+}
+
 func getWith(t *testing.T, mux *http.ServeMux, cookie *http.Cookie, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -58,6 +67,7 @@ func TestReadRoutes(t *testing.T) {
 		"/api/v1/pnl":           `"realized":"12.5"`,
 		"/api/v1/risk":          `"MIN_EDGE":4`,
 		"/api/v1/system/health": `"ready":true`,
+		"/api/v1/paper/active":  `"cycle_id":"cy-1"`,
 	} {
 		rec := getWith(t, mux, cookie, path)
 		if rec.Code != http.StatusOK {

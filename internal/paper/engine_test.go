@@ -513,3 +513,103 @@ func TestConcurrentDuplicateRunsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// blockingProgressExecutor stalls inside ExecuteCycle and reports leg
+// stages through the hook the way the simulation engine does, so the
+// live registry can be observed mid-cycle (audit F6).
+type blockingProgressExecutor struct {
+	entered chan struct{}
+	release chan struct{}
+	report  func(execution.CycleProgress)
+}
+
+func (b *blockingProgressExecutor) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (execution.CycleResult, error) {
+	// The engine registers the entry before calling the executor; the
+	// leg events must find it.
+	b.report(execution.CycleProgress{CycleID: plan.CycleID, OpportunityID: plan.Opportunity.ID, LegNo: 1, Stage: execution.LegStageSubmitted, At: t0})
+	b.report(execution.CycleProgress{CycleID: plan.CycleID, OpportunityID: plan.Opportunity.ID, LegNo: 1, Stage: execution.LegStageFilled, At: t0})
+	b.report(execution.CycleProgress{CycleID: plan.CycleID, OpportunityID: plan.Opportunity.ID, LegNo: 2, Stage: execution.LegStageSubmitted, At: t0})
+	close(b.entered)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return execution.CycleResult{}, ctx.Err()
+	}
+	return completed(plan), nil
+}
+
+// TestActiveCyclesTracksLegStages is the F6 core: while a cycle is in
+// flight the registry shows it with its legs and the hook's stage
+// transitions, and once it settles the entry is gone.
+func TestActiveCyclesTracksLegStages(t *testing.T) {
+	exec := &blockingProgressExecutor{entered: make(chan struct{}), release: make(chan struct{})}
+	e, in, _, _ := harness(t, exec)
+	exec.report = e.TrackLeg
+	cancel, wait := runEngine(t, e)
+
+	in <- qualifiedEvent("op-live", "1000")
+	<-exec.entered
+
+	cycles := e.ActiveCycles()
+	if len(cycles) != 1 {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("active cycles = %d, want 1", len(cycles))
+	}
+	c := cycles[0]
+	if c.OpportunityID != "op-live" || c.TriangleID != triID || c.StartAsset != "USDT" {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("active cycle identity = %+v", c)
+	}
+	if c.Input != "1000" {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("input = %s", c.Input)
+	}
+	if len(c.Legs) != 3 {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("legs = %d", len(c.Legs))
+	}
+	want := []string{"FILLED", "SUBMITTED", "PENDING"}
+	for i, stage := range want {
+		if c.Legs[i].Stage != stage {
+			close(exec.release)
+			cancel()
+			wait()
+			t.Fatalf("leg %d stage = %s, want %s", i+1, c.Legs[i].Stage, stage)
+		}
+	}
+	if c.Legs[0].Market != "BTCUSDT" || c.Legs[0].Side != "BUY" {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("leg 1 = %+v", c.Legs[0])
+	}
+
+	close(exec.release)
+	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+	cancel()
+	wait()
+
+	if got := e.ActiveCycles(); len(got) != 0 {
+		t.Fatalf("settled cycle still active: %+v", got)
+	}
+}
+
+// TestActiveCyclesIgnoredBeforeRegistration: a progress event for an
+// unknown cycle (settled, or from an executor sharing the hook shape)
+// must be a no-op, never a panic — the monitor observes execution, it
+// must never be able to disturb it.
+func TestActiveCyclesIgnoredBeforeRegistration(t *testing.T) {
+	e := &Engine{}
+	e.TrackLeg(execution.CycleProgress{CycleID: "ghost", LegNo: 1, Stage: execution.LegStageFilled, At: t0})
+	if got := e.ActiveCycles(); len(got) != 0 {
+		t.Fatalf("unregistered engine reported cycles: %+v", got)
+	}
+}

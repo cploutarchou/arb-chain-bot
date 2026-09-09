@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -57,34 +58,51 @@ func (s *Store) ListOpportunities(ctx context.Context, status string, limit int)
 // CycleRow is the list view of one settled paper cycle. PnLAmount is the
 // marked total (realized plus the exposure mark at settlement);
 // RealizedPnL and ExposureMark are its two components and are absent on
-// rows written before migration 000016.
+// rows written before migration 000016. Reason is the backend's own
+// close reason (absent on all-filled cycles and pre-000021 rows); Fees
+// is the per-asset fee bill as persisted ({} when none was charged).
 type CycleRow struct {
-	ID            string     `json:"id"`
-	SessionID     string     `json:"session_id"`
-	OpportunityID *string    `json:"opportunity_id,omitempty"`
-	Outcome       string     `json:"outcome"`
-	PnLAmount     *string    `json:"pnl_amount,omitempty"`
-	PnLAsset      *string    `json:"pnl_asset,omitempty"`
-	RealizedPnL   *string    `json:"realized_pnl,omitempty"`
-	ExposureMark  *string    `json:"exposure_mark,omitempty"`
-	InputConsumed *string    `json:"input_consumed,omitempty"`
-	FinalAmount   *string    `json:"final_amount,omitempty"`
-	SlippageBps   *string    `json:"slippage_bps,omitempty"`
-	StartedAt     time.Time  `json:"started_at"`
-	SettledAt     *time.Time `json:"settled_at,omitempty"`
+	ID            string            `json:"id"`
+	SessionID     string            `json:"session_id"`
+	OpportunityID *string           `json:"opportunity_id,omitempty"`
+	Outcome       string            `json:"outcome"`
+	Reason        *string           `json:"reason,omitempty"`
+	PnLAmount     *string           `json:"pnl_amount,omitempty"`
+	PnLAsset      *string           `json:"pnl_asset,omitempty"`
+	RealizedPnL   *string           `json:"realized_pnl,omitempty"`
+	ExposureMark  *string           `json:"exposure_mark,omitempty"`
+	InputConsumed *string           `json:"input_consumed,omitempty"`
+	FinalAmount   *string           `json:"final_amount,omitempty"`
+	SlippageBps   *string           `json:"slippage_bps,omitempty"`
+	Fees          map[string]string `json:"fees,omitempty"`
+	StartedAt     time.Time         `json:"started_at"`
+	SettledAt     *time.Time        `json:"settled_at,omitempty"`
 }
 
 const cycleRowColumns = `id, session_id, opportunity_id, outcome,
 		       pnl_amount::text, pnl_asset, realized_pnl::text, exposure_mark::text,
 		       input_consumed::text, final_amount::text, slippage_bps::text,
-		       started_at, settled_at`
+		       reason, fees::text, started_at, settled_at`
 
 func scanCycleRow(rows interface{ Scan(dest ...any) error }) (CycleRow, error) {
 	var r CycleRow
+	var feesJSON *string
 	err := rows.Scan(&r.ID, &r.SessionID, &r.OpportunityID, &r.Outcome,
 		&r.PnLAmount, &r.PnLAsset, &r.RealizedPnL, &r.ExposureMark,
-		&r.InputConsumed, &r.FinalAmount, &r.SlippageBps, &r.StartedAt, &r.SettledAt)
-	return r, err
+		&r.InputConsumed, &r.FinalAmount, &r.SlippageBps, &r.Reason, &feesJSON,
+		&r.StartedAt, &r.SettledAt)
+	if err != nil {
+		return r, err
+	}
+	// fees is a JSONB map of asset → decimal string. A missing or empty
+	// object stays nil (omitted on the wire) rather than a fabricated {}.
+	if feesJSON != nil && *feesJSON != "" && *feesJSON != "null" {
+		f := map[string]string{}
+		if err := json.Unmarshal([]byte(*feesJSON), &f); err == nil && len(f) > 0 {
+			r.Fees = f
+		}
+	}
+	return r, nil
 }
 
 // ListCycles returns paper cycles newest-first ("" session = all).
@@ -122,7 +140,7 @@ func (s *Store) ListCyclesByTriangle(ctx context.Context, triangleID string, lim
 		SELECT c.id, c.session_id, c.opportunity_id, c.outcome,
 		       c.pnl_amount::text, c.pnl_asset, c.realized_pnl::text, c.exposure_mark::text,
 		       c.input_consumed::text, c.final_amount::text, c.slippage_bps::text,
-		       c.started_at, c.settled_at
+		       c.reason, c.fees::text, c.started_at, c.settled_at
 		FROM paper_cycles c
 		JOIN opportunities o ON o.id = c.opportunity_id
 		WHERE o.triangle_id = $1

@@ -246,6 +246,15 @@ func TestOpportunityAndCyclePersistence(t *testing.T) {
 	if err != nil || len(cycles) != 1 || cycles[0].Outcome != "ALL_FILLED" || *cycles[0].PnLAmount != "16.94204" {
 		t.Fatalf("ListCycles = %+v err=%v", cycles, err)
 	}
+	// F6: the fee bill and the close reason travel with the row. An
+	// all-filled cycle carries no reason (NULL → nil), and the persisted
+	// per-asset fee map round-trips as decimal strings.
+	if cycles[0].Reason != nil {
+		t.Fatalf("all-filled cycle reason = %q", *cycles[0].Reason)
+	}
+	if got := cycles[0].Fees["BTC"]; got != "0.01" {
+		t.Fatalf("cycle fees = %+v", cycles[0].Fees)
+	}
 	orders, err := s.ListOrders(ctx, "cyc-1")
 	if err != nil || len(orders) != 1 || orders[0].Side != "BUY" || *orders[0].AvgPrice != "100" {
 		t.Fatalf("ListOrders = %+v err=%v", orders, err)
@@ -514,6 +523,11 @@ func TestInsertCycleSurvivesMissingOpportunityRow(t *testing.T) {
 	rows, err := s.ListCycles(ctx, "sess-unlinked", 10)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("ListCycles = %+v err=%v", rows, err)
+	}
+	// F6: the close reason survives the round-trip — the cycles table
+	// can answer "why", not just "what happened".
+	if rows[0].Reason == nil || *rows[0].Reason != "submit wait: context canceled" {
+		t.Fatalf("cycle reason = %+v", rows[0].Reason)
 	}
 }
 

@@ -112,6 +112,22 @@ func (r readModel) PnL() (any, bool) {
 	return map[string]any{"assets": rows}, true
 }
 
+// PaperActive snapshots the paper engine's in-flight cycles (audit F6:
+// the console's live-cycle monitor). ok=false when no paper engine
+// exists in this profile.
+func (r readModel) PaperActive() (any, bool) {
+	r.e.mu.RLock()
+	pap := r.e.pap
+	r.e.mu.RUnlock()
+	if pap == nil {
+		return nil, false
+	}
+	return map[string]any{
+		"running": pap.Running(),
+		"cycles":  pap.ActiveCycles(),
+	}, true
+}
+
 func (r readModel) Risk() any {
 	out := map[string]any{}
 	if r.s != nil {

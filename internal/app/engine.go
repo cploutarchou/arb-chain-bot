@@ -1145,6 +1145,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		} else {
 			paperEng.Resume()
 		}
+		// F6: the executor's leg-stage events feed the paper engine's
+		// live-cycle registry — the console's "what is executing right
+		// now and where is it stuck" view. Observation only: progress
+		// never alters execution.
+		executor.SetProgressHook(paperEng.TrackLeg)
 		scn.Sims = paperEng.Active
 	}
 

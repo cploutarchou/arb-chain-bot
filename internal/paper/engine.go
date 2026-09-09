@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,7 +33,99 @@ import (
 // session. Callers must wait for Active()==0 as well as !Running().
 var ErrActive = errors.New("paper: engine must be paused with zero active simulations before reset")
 
+// LegView is one leg of an in-flight cycle as the console's live-cycle
+// monitor renders it (audit F6): the market and side it trades, and the
+// coarse stage from execution.LegStage. The settled CycleResult remains
+// the record of truth; this view only answers "where is it stuck".
+type LegView struct {
+	LegNo  int    `json:"leg_no"`
+	Market string `json:"market"`
+	Side   string `json:"side"`
+	Stage  string `json:"stage"`
+}
+
+// ActiveCycle is one in-flight simulation. ExpectedNetBps/ExpectedProfit
+// are the plan's own figures (the revalidated opportunity the engine is
+// about to realise), never a live re-quote — realized PnL exists only in
+// the settled result.
+type ActiveCycle struct {
+	CycleID        string    `json:"cycle_id"`
+	OpportunityID  string    `json:"opportunity_id"`
+	TriangleID     string    `json:"triangle_id"`
+	StartAsset     string    `json:"start_asset"`
+	Input          string    `json:"input"`
+	ExpectedNetBps string    `json:"expected_net_bps"`
+	ExpectedProfit string    `json:"expected_profit"`
+	StartedAt      time.Time `json:"started_at"`
+	Legs           []LegView `json:"legs"`
+}
+
+// activeEntry is the registry's internal, mutable form.
+type activeEntry struct {
+	view ActiveCycle
+}
+
+// liveRegistry tracks in-flight cycles for the console's live-cycle
+// monitor (audit F6). Entries are registered immediately before the
+// executor is called and removed when runCycle returns — an entry can
+// therefore never outlive its cycle, and a crash removes everything.
+type liveRegistry struct {
+	mu      sync.Mutex
+	entries map[string]*activeEntry
+}
+
+func newLiveRegistry() *liveRegistry {
+	return &liveRegistry{entries: map[string]*activeEntry{}}
+}
+
+func (l *liveRegistry) add(c ActiveCycle) {
+	l.mu.Lock()
+	l.entries[c.CycleID] = &activeEntry{view: c}
+	l.mu.Unlock()
+}
+
+func (l *liveRegistry) remove(cycleID string) {
+	l.mu.Lock()
+	delete(l.entries, cycleID)
+	l.mu.Unlock()
+}
+
+// track applies one leg-stage transition (the simulation engine's
+// progress hook). Unknown cycle IDs are ignored: the monitor must never
+// crash execution over a view, and a progress event for a cycle that
+// already settled (or was never registered — replay executors share the
+// hook shape) is exactly that.
+func (l *liveRegistry) track(p execution.CycleProgress) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e, ok := l.entries[p.CycleID]
+	if !ok || p.LegNo < 1 || p.LegNo > len(e.view.Legs) {
+		return
+	}
+	e.view.Legs[p.LegNo-1].Stage = string(p.Stage)
+}
+
+// snapshot returns the in-flight cycles oldest-first (stable display
+// order; newest arrive at the bottom, matching the cycles table).
+func (l *liveRegistry) snapshot() []ActiveCycle {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]ActiveCycle, 0, len(l.entries))
+	for _, e := range l.entries {
+		out = append(out, e.view)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].CycleID < out[j].CycleID
+		}
+		return out[i].StartedAt.Before(out[j].StartedAt)
+	})
+	return out
+}
+
 // Engine consumes qualified opportunities and settles simulated cycles.
+// The live registry powers the console's live-cycle monitor; everything
+// else is execution state.
 type Engine struct {
 	Executor  execution.Executor
 	Resv      *reservation.Manager
@@ -78,6 +171,9 @@ type Engine struct {
 	running atomic.Bool
 	active  atomic.Int32
 
+	// live is the console's live-cycle monitor registry (audit F6).
+	live *liveRegistry
+
 	statsMu sync.Mutex
 	stats   Stats
 }
@@ -99,6 +195,34 @@ type Stats struct {
 }
 
 func (e *Engine) Name() string { return "paper" }
+
+// ActiveCycles snapshots the in-flight simulations with their leg stages
+// (audit F6: the Paper page's live-cycle monitor). Nil-safe when the
+// engine was constructed without Run having registered the registry —
+// tests assemble Engines directly.
+func (e *Engine) ActiveCycles() []ActiveCycle {
+	if e.live == nil {
+		return nil
+	}
+	return e.live.snapshot()
+}
+
+// TrackLeg applies one progress event from the simulation executor's
+// hook; wired by the app assembly as executor.SetProgressHook(eng.TrackLeg).
+func (e *Engine) TrackLeg(p execution.CycleProgress) {
+	if e.live != nil {
+		e.live.track(p)
+	}
+}
+
+// ensureLive installs the registry once; Run calls it before consuming
+// events so a restarted engine gets a fresh view instead of entries
+// from the previous process lifetime.
+func (e *Engine) ensureLive() {
+	if e.live == nil {
+		e.live = newLiveRegistry()
+	}
+}
 
 // Active reports in-flight simulations (scanner risk context).
 func (e *Engine) Active() int { return int(e.active.Load()) }
@@ -186,6 +310,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	if e.MaxConcurrent <= 0 {
 		e.MaxConcurrent = 3
 	}
+	e.ensureLive()
 	sem := make(chan struct{}, e.MaxConcurrent)
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -279,6 +404,28 @@ func (e *Engine) runCycle(ctx context.Context, ev scanner.Event) {
 		Opportunity: &op,
 		Triangle:    tri,
 	}
+	// Live-cycle monitor (audit F6): the entry appears the moment the
+	// cycle truly owns capital (reserved, past revalidation) and
+	// disappears when runCycle returns — settled, refused by the
+	// executor, or interrupted alike. Legs start PENDING; the executor's
+	// progress hook moves them through SUBMITTED → FILLED/FAILED.
+	e.ensureLive()
+	legs := make([]LegView, len(tri.Legs))
+	for i, l := range tri.Legs {
+		legs[i] = LegView{LegNo: i + 1, Market: string(l.Market.Symbol), Side: l.Side.String(), Stage: string(execution.LegStagePending)}
+	}
+	e.live.add(ActiveCycle{
+		CycleID:        plan.CycleID,
+		OpportunityID:  op.ID,
+		TriangleID:     op.TriangleID,
+		StartAsset:     string(op.Start),
+		Input:          op.Quote.InputConsumed.String(),
+		ExpectedNetBps: op.NetReturnBps.StringFixed(4),
+		ExpectedProfit: op.NetProfit.String(),
+		StartedAt:      e.Clock(),
+		Legs:           legs,
+	})
+	defer e.live.remove(plan.CycleID)
 	result, err := e.Executor.ExecuteCycle(ctx, plan)
 	if err != nil {
 		// Executor errors are configuration/programmer faults; release the
