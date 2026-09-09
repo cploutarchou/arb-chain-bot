@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -103,6 +104,34 @@ type Engine struct {
 	cfg    Config
 	shadow bool
 	idGen  func() string
+
+	// progress, when set, receives one event per leg-stage transition
+	// (audit F6: the console's live-cycle monitor). Fire-and-forget by
+	// contract: the paper engine's registry update is a short mutex'd
+	// write, and a slow callback would tax the very latency model this
+	// engine exists to model. Never consulted on any execution decision.
+	progress   func(execution.CycleProgress)
+	progressMu sync.Mutex
+}
+
+// SetProgressHook installs the leg-stage observer. The setter exists so
+// the paper engine (constructed after the executor it owns) can wire its
+// registry without the constructor needing a forward reference.
+func (e *Engine) SetProgressHook(fn func(execution.CycleProgress)) {
+	e.progressMu.Lock()
+	e.progress = fn
+	e.progressMu.Unlock()
+}
+
+// report is the nil-safe progress emit; a missing hook costs one lock
+// read, an installed one must not block execution.
+func (e *Engine) report(cycleID, opportunityID string, legNo int, stage execution.LegStage, at time.Time) {
+	e.progressMu.Lock()
+	fn := e.progress
+	e.progressMu.Unlock()
+	if fn != nil {
+		fn(execution.CycleProgress{CycleID: cycleID, OpportunityID: opportunityID, LegNo: legNo, Stage: stage, At: at})
+	}
 }
 
 // Compile-time boundary checks.
@@ -192,6 +221,8 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 			order.Type = "MARKET"
 		}
 
+		e.report(plan.CycleID, op.ID, i+1, execution.LegStageSubmitted, e.clock.Now())
+
 		if err := e.wait.Wait(ctx, e.cfg.Latency.submit(rng)); err != nil {
 			return e.interrupted(res, order, cur, leg, i, "submit wait", err), nil
 		}
@@ -205,6 +236,7 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 		now := e.clock.Now()
 
 		if ferr != nil {
+			e.report(plan.CycleID, op.ID, i+1, execution.LegStageFailed, now)
 			order.Status = execution.OrderRejected
 			order.Reason = ferr.Error()
 			res.Orders = append(res.Orders, order)
@@ -231,6 +263,7 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 			BookVersion: lq.BookVersion, At: now,
 		})
 		res.Orders = append(res.Orders, order)
+		e.report(plan.CycleID, op.ID, i+1, execution.LegStageFilled, now)
 
 		if lq.FeeAmount.IsPositive() {
 			res.Fees[lq.FeeAsset] = res.Fees[lq.FeeAsset].Add(lq.FeeAmount)
@@ -343,6 +376,7 @@ func (e *Engine) legFailure(res execution.CycleResult, held decimal.Decimal, leg
 // failure. Either way whatever leg 1 deployed is exposure.
 func (e *Engine) interrupted(res execution.CycleResult, order execution.SimOrder, held decimal.Decimal, leg graph.Leg, legIdx int, stage string, cause error) execution.CycleResult {
 	reason := stage + ": " + cause.Error()
+	e.report(res.CycleID, res.OpportunityID, legIdx+1, execution.LegStageFailed, e.clock.Now())
 	order.Status = execution.OrderExpired
 	order.Reason = reason
 	res.Orders = append(res.Orders, order)

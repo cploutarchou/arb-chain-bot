@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -640,5 +641,81 @@ func TestMarketOrdersUseTheMarketLotSizeFilter(t *testing.T) {
 	}
 	if res.Outcome != execution.OutcomeAllFilled {
 		t.Fatalf("limit mode outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+}
+
+// TestProgressHookReportsLegStages: the executor reports one SUBMITTED
+// and one FILLED event per leg on an all-filled cycle, carrying the
+// cycle and opportunity ids the monitor joins on (audit F6).
+func TestProgressHookReportsLegStages(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 7})
+	var mu sync.Mutex
+	var events []execution.CycleProgress
+	e.SetProgressHook(func(p execution.CycleProgress) {
+		mu.Lock()
+		events = append(events, p)
+		mu.Unlock()
+	})
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAllFilled {
+		t.Fatalf("outcome = %s", res.Outcome)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 6 {
+		t.Fatalf("events = %d, want 6: %+v", len(events), events)
+	}
+	for i := 0; i < 3; i++ {
+		sub, fill := events[2*i], events[2*i+1]
+		if sub.CycleID != "cycle-1" || sub.OpportunityID != "op-1" || sub.LegNo != i+1 {
+			t.Fatalf("submit event %d = %+v", 2*i, sub)
+		}
+		if sub.Stage != execution.LegStageSubmitted || fill.Stage != execution.LegStageFilled {
+			t.Fatalf("stages = %s/%s", sub.Stage, fill.Stage)
+		}
+		if fill.LegNo != i+1 {
+			t.Fatalf("fill leg = %d", fill.LegNo)
+		}
+	}
+}
+
+// TestProgressHookReportsFailure: an unhealthy fill-time book fails the
+// leg and the hook reports FAILED for it — the monitor's "where is it
+// stuck" answer must not lag the failure by a settlement.
+func TestProgressHookReportsFailure(t *testing.T) {
+	books := planBooks()
+	// Leg 3's book goes STALE after the plan was priced.
+	stale := books[mETHUSDT]
+	stale.State = orderbook.StateStale
+	books[mETHUSDT] = stale
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 7})
+	var mu sync.Mutex
+	var events []execution.CycleProgress
+	e.SetProgressHook(func(p execution.CycleProgress) {
+		mu.Lock()
+		events = append(events, p)
+		mu.Unlock()
+	})
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeLeg12FilledLeg3Failed {
+		t.Fatalf("outcome = %s", res.Outcome)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	last := events[len(events)-1]
+	if last.LegNo != 3 || last.Stage != execution.LegStageFailed {
+		t.Fatalf("last event = %+v, want leg 3 FAILED", last)
 	}
 }

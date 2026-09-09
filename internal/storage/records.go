@@ -207,14 +207,14 @@ func (s *Store) InsertCycle(ctx context.Context, sessionID string, res *executio
 			id, session_id, opportunity_id, outcome, pnl_amount, pnl_asset,
 			fees, slippage_bps, exposure, started_at, settled_at,
 			realized_pnl, exposure_mark, input_consumed, final_amount,
-			planned_return_bps, actual_return_bps
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			planned_return_bps, actual_return_bps, reason
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		ON CONFLICT (id) DO NOTHING`,
 		res.CycleID, sessionID, oppRef, string(res.Outcome),
 		res.TotalPnL, string(res.StartAsset), fees, slippage, exposure,
 		res.StartedAt, res.SettledAt,
 		res.RealizedPnL, res.ExposureMark, res.InputConsumed, res.FinalAmount,
-		plannedBps, actualBps); err != nil {
+		plannedBps, actualBps, nullStr(res.Reason)); err != nil {
 		return fmt.Errorf("storage: cycle: %w", err)
 	}
 	for _, o := range res.Orders {
