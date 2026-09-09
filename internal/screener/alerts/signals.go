@@ -47,7 +47,10 @@ type Signal struct {
 	Active bool
 	// Reason explains a false Active for diagnostics ("" when active).
 	Reason string
-	// DataAgeOK reports the §1.1 gate; a failed gate never activates.
+	// DataAgeOK reports the §1.1 gate; a failed gate never activates —
+	// and, unlike a market reason, it does not close an open event:
+	// the evaluator HOLDS the lane (Reason == ReasonDataAge) for up to
+	// settings.alerts.stale_hold_s.
 	DataAgeOK bool
 
 	// Cross-venue spot (§2.1).
@@ -117,6 +120,11 @@ func (s Signal) Score() decimal.Decimal {
 	}
 }
 
+// ReasonDataAge is the inactive reason of a signal whose legs fail the
+// §1.1 freshness gate (Signal.DataAgeOK false). It is the ONE reason
+// the evaluator treats as "no evidence" rather than "the spread ended".
+const ReasonDataAge = "DATA_AGE"
+
 // FeeLookup mirrors screener.VenueFeeLookup; a venue that is disabled
 // or unconfigured returns ok=false and the lane is skipped.
 type FeeLookup = screener.VenueFeeLookup
@@ -140,22 +148,18 @@ type Inputs struct {
 	// MaxPlausibleSpreadBps is settings.max_plausible_spread_bps for the
 	// guard; zero means screener.DefaultMaxPlausibleSpreadBps.
 	MaxPlausibleSpreadBps decimal.Decimal
+	// MaxLanesPerRule is settings.alerts.max_lanes_per_rule: how many
+	// spot lanes one rule evaluates per tick, taken from the front of
+	// the quality-ranked universe (clean, fresh lanes first, then by net
+	// bps). 0 = unbounded. The lanes it cuts are counted, never silent.
+	MaxLanesPerRule int
 }
 
 // dataAgeOK applies §1.1: each leg's age ≤ poll interval and the legs'
-// ages within half a poll interval of each other.
+// ages within half a poll interval of each other (screener.DataAgeOK,
+// shared with the spreads ranking so both agree on "stale").
 func dataAgeOK(ageA, ageB, poll time.Duration) bool {
-	if ageA < 0 || ageB < 0 {
-		return false
-	}
-	if ageA > poll || ageB > poll {
-		return false
-	}
-	diff := ageA - ageB
-	if diff < 0 {
-		diff = -diff
-	}
-	return diff <= poll/2
+	return screener.DataAgeOK(ageA, ageB, poll)
 }
 
 func fundingAgeOK(p screener.Perp, now time.Time, poll time.Duration) bool {
@@ -198,16 +202,30 @@ func venueSet(vs []screener.Venue) map[screener.Venue]bool {
 	return out
 }
 
+// laneAccounting is what one rule's evaluation reports about the lane
+// universe it saw, so the evaluator can say how much a cap hid.
+type laneAccounting struct {
+	universe  int // lanes the rule's filters admitted before any cap
+	truncated int // lanes Inputs.MaxLanesPerRule cut
+}
+
 // ComputeSignals evaluates one rule over the book at now and returns
 // one Signal per lane the rule's filters admit, sorted by lane for
 // deterministic iteration. Pure apart from the funding-history read.
 func ComputeSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time) []Signal {
+	out, _ := computeSignals(ctx, in, r, now)
+	return out
+}
+
+func computeSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time) ([]Signal, laneAccounting) {
 	var out []Signal
+	var acc laneAccounting
 	switch r.EffectiveStrategy() {
 	case screener.StrategyCrossVenueSpot:
-		out = spotSignals(in, r, now)
+		out, acc = spotSignals(in, r, now)
 	default:
 		out = perpSignals(ctx, in, r, now)
+		acc.universe = len(out)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i].Lane, out[j].Lane
@@ -222,18 +240,29 @@ func ComputeSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Ti
 		}
 		return a.VenueB < b.VenueB
 	})
-	return out
+	return out, acc
 }
 
-func spotSignals(in Inputs, r screener.Rule, now time.Time) []Signal {
+func spotSignals(in Inputs, r screener.Rule, now time.Time) ([]Signal, laneAccounting) {
 	var out []Signal
+	var acc laneAccounting
 	buy, sell := venueSet(r.BuyVenues), venueSet(r.SellVenues)
 	slip, buffer := r.SlipBps(), r.BufferBps()
+	// The cap is per rule, spent across the rule's quotes in their
+	// listed order; 0 means every admitted lane is evaluated.
+	budget := in.MaxLanesPerRule
 	for _, quote := range ruleQuotes(r) {
 		f := screener.SpreadFilters{
 			BuyVenues: buy, SellVenues: sell, Quote: quote,
 			BasesAllow: toSet(r.BasesAllow), BasesDeny: toSet(r.BasesDeny),
-			Limit: 500,
+			// The table's page size is not an evaluation bound: with the
+			// old fixed 500 the rows past it — ranked by net bps, so the
+			// largest artefacts came first — were never evaluated and
+			// their open events closed as "lane_gone". Every admitted
+			// lane is returned, ranked clean-and-fresh first, and the
+			// configurable cap below is applied to that ranking.
+			NoLimit:   true,
+			MaxLegAge: in.PollInterval,
 			// Include the guarded lanes so the signal carries the verdict
 			// and its reason (diagnostics, tests); spotActive refuses them
 			// — the guard is ONE function (screener.GuardLane) for the
@@ -245,7 +274,16 @@ func spotSignals(in Inputs, r screener.Rule, now time.Time) []Signal {
 		// GET /screener/spreads LifetimeTracker (spreads.go doc comment);
 		// per-rule lifetime is tracked by the Evaluator itself.
 		res := screener.ComputeSpreads(in.Book, in.SpotFees, nil, nil, now, f)
-		for _, row := range res.Rows {
+		rows := res.Rows
+		acc.universe += len(rows)
+		if in.MaxLanesPerRule > 0 {
+			if len(rows) > budget {
+				acc.truncated += len(rows) - budget
+				rows = rows[:budget]
+			}
+			budget -= len(rows)
+		}
+		for _, row := range rows {
 			quotes := in.Book.QuotesFor(row.Base, row.Quote)
 			qa, qb := quotes[row.BuyVenue], quotes[row.SellVenue]
 			s := Signal{
@@ -266,7 +304,7 @@ func spotSignals(in Inputs, r screener.Rule, now time.Time) []Signal {
 			out = append(out, s)
 		}
 	}
-	return out
+	return out, acc
 }
 
 func spotActive(r screener.Rule, s Signal) (bool, string) {
@@ -276,7 +314,7 @@ func spotActive(r screener.Rule, s Signal) (bool, string) {
 	}
 	switch {
 	case !s.DataAgeOK:
-		return false, "DATA_AGE"
+		return false, ReasonDataAge
 	case s.Suspect:
 		return false, screener.SkipSuspectMismatch
 	case s.LiquidityUnknown:
@@ -414,7 +452,7 @@ func perpSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time)
 func carryActive(r screener.Rule, s Signal) (bool, string) {
 	switch {
 	case !s.DataAgeOK:
-		return false, "DATA_AGE"
+		return false, ReasonDataAge
 	case s.Suspect:
 		return false, screener.SkipSuspectMismatch
 	case s.LiquidityUnknown:
@@ -457,7 +495,7 @@ func carryActive(r screener.Rule, s Signal) (bool, string) {
 func harvestActive(r screener.Rule, s Signal) (bool, string) {
 	switch {
 	case !s.DataAgeOK:
-		return false, "DATA_AGE"
+		return false, ReasonDataAge
 	case s.Suspect:
 		return false, screener.SkipSuspectMismatch
 	case s.LiquidityUnknown:

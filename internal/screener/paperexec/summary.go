@@ -73,7 +73,7 @@ func (x *Executor) markOpen(p *screener.PaperPosition, now time.Time) {
 		return
 	}
 	q, okQ := x.svc.Book.QuotesFor(p.Base, p.Quote)[p.VenueA]
-	perp, okP := x.svc.Book.PerpFor(p.VenueA, p.Base)
+	perp, okP := x.svc.Book.PerpFor(p.VenueA, p.Base, p.Quote)
 	if !okQ || !okP || !q.Bid.IsPositive() || !perp.Ask.IsPositive() {
 		return
 	}

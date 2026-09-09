@@ -14,8 +14,17 @@ import (
 // interval, writing every collector's Spot()/Perps() into the Book and
 // keeping per-venue status. The settings snapshot is re-read from
 // Current() each tick so poll_interval_s / perps_enabled /
-// funding_calls_per_poll are hot; venues.*.enabled is restart-scoped
-// (a venue loop starts only in Start), matching screener.FieldTiming.
+// funding_calls_per_poll / perp_quote_preference are hot;
+// venues.*.enabled is restart-scoped (a venue loop starts only in
+// Start), matching screener.FieldTiming.
+//
+// One perp contract per (venue, base): a venue that lists several
+// perpetuals on one base (Binance USDⓈ-M: USDT- and USDC-margined) has
+// them reduced to the contract settings.perp_quote_preference ranks
+// first BEFORE anything reaches the Book or funding history, because
+// funding_history is keyed (venue, base, at) and the carry models read
+// it by (venue, base); the discarded contracts are counted in
+// VenueStatus.PerpsDropped and logged once each.
 type Poller struct {
 	Book    *screener.Book
 	Current func() screener.Settings
@@ -29,11 +38,14 @@ type Poller struct {
 	mu      sync.Mutex
 	status  map[screener.Venue]*screener.VenueStatus
 	lastFnd map[screener.PerpKey]fundingSeen
-	loops   map[screener.Venue]*venueLoop
-	ctx     context.Context // the Start context; venue loops derive from it
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	running bool
+	// dropLogged remembers which discarded contracts have been logged so
+	// the same contract is not reported on every poll.
+	dropLogged map[screener.PerpKey]bool
+	loops      map[screener.Venue]*venueLoop
+	ctx        context.Context // the Start context; venue loops derive from it
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	running    bool
 }
 
 // venueLoop is one venue's goroutine handle: cancelling it (self-heal)
@@ -67,6 +79,7 @@ func (p *Poller) Start(ctx context.Context) error {
 	}
 	p.status = map[screener.Venue]*screener.VenueStatus{}
 	p.lastFnd = map[screener.PerpKey]fundingSeen{}
+	p.dropLogged = map[screener.PerpKey]bool{}
 	p.loops = map[screener.Venue]*venueLoop{}
 	settings := p.Current()
 	p.ctx, p.cancel = context.WithCancel(ctx)
@@ -203,7 +216,7 @@ func (p *Poller) loop(ctx context.Context, c Collector, st *screener.VenueStatus
 func (p *Poller) pollOnce(ctx context.Context, c Collector, st *screener.VenueStatus, settings screener.Settings) {
 	start := time.Now()
 	quotes, err := c.Spot(ctx)
-	var perps []screener.Perp
+	var perps, dropped []screener.Perp
 	if err == nil {
 		if vs := settings.Venues[c.ID()]; vs.PerpsEnabled {
 			perps, err = c.Perps(ctx)
@@ -211,6 +224,7 @@ func (p *Poller) pollOnce(ctx context.Context, c Collector, st *screener.VenueSt
 	}
 	elapsed := time.Since(start)
 	if err == nil {
+		perps, dropped = selectPerpContracts(perps, settings.EffectivePerpQuotePreference())
 		for _, q := range quotes {
 			p.Book.SetQuote(q)
 		}
@@ -218,6 +232,7 @@ func (p *Poller) pollOnce(ctx context.Context, c Collector, st *screener.VenueSt
 			p.Book.SetPerp(pp)
 			p.recordFunding(ctx, pp)
 		}
+		p.logDropped(dropped, perps)
 	} else if ctx.Err() == nil {
 		p.Log.Warn("screener poll failed", "venue", c.ID(), "error", err)
 	}
@@ -241,17 +256,102 @@ func (p *Poller) pollOnce(ctx context.Context, c Collector, st *screener.VenueSt
 	st.LastError = ""
 	st.SpotPairs = len(quotes)
 	st.PerpContracts = len(perps)
+	st.PerpsDropped = len(dropped)
 	st.Polls++
+}
+
+// selectPerpContracts keeps one contract per (venue, base): the one
+// whose quote/margin asset ranks first in prefer. An asset absent from
+// prefer ranks after every listed one, and equal ranks fall back to the
+// quote string, so the choice never depends on the order the venue
+// listed its symbols (the order-dependent overwrite this replaces kept
+// AAVEUSDC over AAVEUSDT because the venue listed it later). A base
+// with a single contract is kept whatever its quote — nothing that was
+// tracked before is dropped, only the colliding duplicates. kept keeps
+// the input order; dropped is what the caller counts and logs.
+func selectPerpContracts(perps []screener.Perp, prefer []string) (kept, dropped []screener.Perp) {
+	rank := func(quote string) int {
+		for i, q := range prefer {
+			if q == quote {
+				return i
+			}
+		}
+		return len(prefer)
+	}
+	type contractBase struct {
+		venue screener.Venue
+		base  string
+	}
+	winner := map[contractBase]int{} // index into perps
+	for i, pp := range perps {
+		k := contractBase{pp.Venue, pp.Base}
+		j, seen := winner[k]
+		if !seen {
+			winner[k] = i
+			continue
+		}
+		ri, rj := rank(pp.Quote), rank(perps[j].Quote)
+		if ri < rj || (ri == rj && pp.Quote < perps[j].Quote) {
+			winner[k] = i
+		}
+	}
+	if len(winner) == len(perps) {
+		return perps, nil // no base listed twice: the usual case
+	}
+	isWinner := make(map[int]bool, len(winner))
+	for _, i := range winner {
+		isWinner[i] = true
+	}
+	kept = make([]screener.Perp, 0, len(winner))
+	for i, pp := range perps {
+		if isWinner[i] {
+			kept = append(kept, pp)
+		} else {
+			dropped = append(dropped, pp)
+		}
+	}
+	return kept, dropped
+}
+
+// logDropped reports each discarded contract ONCE (not every poll) with
+// the contract that is tracked in its place, so the status counter has
+// a log line behind it without a line per poll per contract.
+func (p *Poller) logDropped(dropped, kept []screener.Perp) {
+	if len(dropped) == 0 {
+		return
+	}
+	keptQuote := make(map[string]string, len(kept))
+	for _, pp := range kept {
+		keptQuote[pp.Base] = pp.Quote
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.dropLogged == nil {
+		p.dropLogged = map[screener.PerpKey]bool{}
+	}
+	for _, pp := range dropped {
+		k := screener.PerpKey{Venue: pp.Venue, Base: pp.Base, Quote: pp.Quote}
+		if p.dropLogged[k] {
+			continue
+		}
+		p.dropLogged[k] = true
+		p.Log.Info("screener perp contract dropped: one contract per (venue, base)",
+			"venue", pp.Venue, "base", pp.Base, "quote", pp.Quote, "kept_quote", keptQuote[pp.Base], "reason", "perp_quote_preference")
+	}
 }
 
 // recordFunding appends a funding_history row when a contract's settled
 // rate changes: the venue's NextFundingAt advancing past the previously
 // seen one means the previously reported rate settled at that time.
+// The last-seen state is per contract (venue, base, quote) so a second
+// contract on the same base can never advance — or be attributed —
+// another contract's settlement; the store itself is (venue, base)
+// keyed, which is why pollOnce admits one contract per base.
 func (p *Poller) recordFunding(ctx context.Context, pp screener.Perp) {
 	if p.Funding == nil || pp.NextFundingAt.IsZero() {
 		return
 	}
-	key := screener.PerpKey{Venue: pp.Venue, Base: pp.Base}
+	key := screener.PerpKey{Venue: pp.Venue, Base: pp.Base, Quote: pp.Quote}
 	rate := pp.FundingRate.String()
 	p.mu.Lock()
 	prev, seen := p.lastFnd[key]

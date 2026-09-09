@@ -26,6 +26,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
 // Period labels.
@@ -103,35 +104,58 @@ type Summary struct {
 }
 
 // Store persists screener_reports rows. The storage package implements
-// it over migration 000012; MemoryStore serves tests and DB-less
-// profiles.
+// it over migrations 000012/000017; MemoryStore serves tests and DB-less
+// profiles. Rows belong to the organisation in ctx at insert time
+// (tenancy.OrgOrPlatform); a scoped read sees only its organisation's
+// rows, an unscoped one every organisation's.
 type Store interface {
 	InsertReport(ctx context.Context, r Report) error
 	ListReports(ctx context.Context, limit int) ([]Summary, error)
 	GetReport(ctx context.Context, id string) (Report, error)
 }
 
+// OrgSource lists the organisations a scheduled (unscoped) run
+// iterates; tenancy.Store implements it. nil: the platform organisation
+// only (tests, database-less profiles).
+type OrgSource interface {
+	ListOrgIDs(ctx context.Context) ([]int64, error)
+}
+
+// orgVisible mirrors the screener package's memory-store rule: an
+// unscoped read sees every organisation's rows, a scoped read its own.
+func orgVisible(ctx context.Context, rowOrg int64) bool {
+	id, ok := tenancy.OrgFrom(ctx)
+	return !ok || id == rowOrg
+}
+
 // MemoryStore is an in-process Store.
 type MemoryStore struct {
 	mu   sync.Mutex
 	rows map[string]Report
+	orgs map[string]int64
 }
 
 // NewMemoryStore returns an empty store.
-func NewMemoryStore() *MemoryStore { return &MemoryStore{rows: map[string]Report{}} }
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{rows: map[string]Report{}, orgs: map[string]int64{}}
+}
 
-func (m *MemoryStore) InsertReport(_ context.Context, r Report) error {
+func (m *MemoryStore) InsertReport(ctx context.Context, r Report) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rows[r.ID] = cloneReport(r)
+	m.orgs[r.ID] = tenancy.OrgOrPlatform(ctx)
 	return nil
 }
 
-func (m *MemoryStore) ListReports(_ context.Context, limit int) ([]Summary, error) {
+func (m *MemoryStore) ListReports(ctx context.Context, limit int) ([]Summary, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Summary, 0, len(m.rows))
-	for _, r := range m.rows {
+	for id, r := range m.rows {
+		if !orgVisible(ctx, m.orgs[id]) {
+			continue
+		}
 		out = append(out, r.Summary())
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -146,11 +170,11 @@ func (m *MemoryStore) ListReports(_ context.Context, limit int) ([]Summary, erro
 	return out, nil
 }
 
-func (m *MemoryStore) GetReport(_ context.Context, id string) (Report, error) {
+func (m *MemoryStore) GetReport(ctx context.Context, id string) (Report, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.rows[id]
-	if !ok {
+	if !ok || !orgVisible(ctx, m.orgs[id]) {
 		return Report{}, screener.ErrNotFound
 	}
 	return cloneReport(r), nil

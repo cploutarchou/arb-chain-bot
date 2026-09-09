@@ -72,7 +72,7 @@ func TestPollerFillsBookAndStatus(t *testing.T) {
 	if len(book.QuotesFor("BTC", "USDT")) != 2 {
 		t.Fatalf("BTC/USDT quotes = %v", book.QuotesFor("BTC", "USDT"))
 	}
-	if _, ok := book.PerpFor(screener.VenueGate, "BTC"); !ok {
+	if _, ok := book.PerpFor(screener.VenueGate, "BTC", "USDT"); !ok {
 		t.Fatal("gate BTC perp missing from book")
 	}
 	// Funding history: a NextFundingAt advance records the previous rate.
