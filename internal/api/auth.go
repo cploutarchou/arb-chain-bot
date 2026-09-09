@@ -24,6 +24,20 @@ import (
 
 const sessionCookie = "arb_session"
 
+// orgHeader is the explicit organisation choice for a session caller
+// that holds more than one membership: "X-Org-ID: <organisation id>".
+// Without it the account acts in its tenant organisation (ContextsForUser
+// order); naming the platform organisation (1) is the only way a
+// platform member who also belongs to a tenant reaches the platform
+// scope. The Bearer path ignores it: an API key is minted inside one
+// organisation and stays there.
+const orgHeader = "X-Org-ID"
+
+var (
+	errBadOrgHeader = errors.New("api: X-Org-ID must be a positive integer")
+	errOrgForbidden = errors.New("api: not a member of the requested organisation")
+)
+
 type ctxKey int
 
 const principalKey ctxKey = 1
@@ -43,6 +57,11 @@ type Principal struct {
 	OrgID         int64
 	OrgRole       tenancy.Role
 	Org           tenancy.Org
+	// Memberships lists every organisation the account belongs to (the
+	// console's organisation switch reads it from /me and selects one
+	// with X-Org-ID). Empty for Bearer callers and database-less
+	// profiles.
+	Memberships []tenancy.Membership
 	// Entitlements is the organisation's effective document
 	// (packages.md §3); nil only when the resolver is not wired, in
 	// which case the package document is used directly.
@@ -121,7 +140,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_request", "malformed login payload", correlationID(r))
 		return
 	}
-	sess, err := s.Auth.Login(r.Context(), req.Email, req.Password, clientAddr(r))
+	sess, err := s.Auth.Login(r.Context(), req.Email, req.Password, s.clientAddr(r))
 	if err != nil {
 		status, code := http.StatusUnauthorized, "invalid_credentials"
 		if errors.Is(err, auth.ErrThrottled) {
@@ -172,6 +191,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"platform_admin":    p.PlatformAdmin,
 		"org":               meOrg(p.Org),
 		"org_role":          string(p.OrgRole),
+		"memberships":       meMemberships(p.Memberships),
 		"risk_ack_required": s.riskAckRequired(p),
 		"risk_ack_version":  s.RiskAckVersion,
 		"entitlements":      ent,
@@ -191,6 +211,16 @@ func meOrg(o tenancy.Org) map[string]any {
 		"customer_type": o.CustomerType, "risk_ack_version": o.RiskAckVersion, "risk_ack_at": o.RiskAckAt,
 		"trial_ends_at": o.TrialEndsAt, "created_at": o.CreatedAt,
 	}
+}
+
+// meMemberships is the membership list on /me: organisation id and role
+// only (the roster with e-mails stays behind /org/members).
+func meMemberships(ms []tenancy.Membership) []map[string]any {
+	out := make([]map[string]any, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, map[string]any{"org_id": m.OrgID, "role": string(m.Role), "suspended": m.Suspended})
+	}
+	return out
 }
 
 // riskAckRequired: compliance review #3/#11 — every organisation must
@@ -240,10 +270,19 @@ func (s *Server) authenticate(gateAck bool, next http.HandlerFunc) http.HandlerF
 			WriteError(w, http.StatusUnauthorized, "unauthenticated", "session invalid", correlationID(r))
 			return
 		}
-		principal, err := s.resolvePrincipal(r.Context(), sess)
+		requested, err := requestedOrg(r)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "bad_org", "X-Org-ID must be a positive integer", correlationID(r))
+			return
+		}
+		principal, err := s.resolvePrincipal(r.Context(), sess, requested)
 		if err != nil {
 			if errors.Is(err, tenancy.ErrNoMembership) {
 				WriteError(w, http.StatusForbidden, "no_organisation", "this account belongs to no organisation", correlationID(r))
+				return
+			}
+			if errors.Is(err, errOrgForbidden) {
+				WriteError(w, http.StatusForbidden, "org_forbidden", "this account is not a member of the requested organisation", correlationID(r))
 				return
 			}
 			s.log.Error("principal resolution failed", "user", sess.UserID, "error", err)
@@ -266,25 +305,66 @@ func (s *Server) authenticate(gateAck bool, next http.HandlerFunc) http.HandlerF
 	}
 }
 
+// requestedOrg reads the explicit organisation choice (orgHeader);
+// 0 when absent.
+func requestedOrg(r *http.Request) (int64, error) {
+	raw := strings.TrimSpace(r.Header.Get(orgHeader))
+	if raw == "" {
+		return 0, nil
+	}
+	id, ok := parseID(raw)
+	if !ok {
+		return 0, errBadOrgHeader
+	}
+	return id, nil
+}
+
 // resolvePrincipal attaches organisation, membership role, platform
-// flag and entitlements. Without a tenancy store (database-less
-// profiles) every account acts in the platform organisation and the
-// legacy console role stands in for the membership role, with ADMIN
-// treated as platform admin so the operator's console keeps working.
-func (s *Server) resolvePrincipal(ctx context.Context, sess auth.Session) (Principal, error) {
+// flag and entitlements. requested (X-Org-ID) selects among the
+// account's memberships and is refused with errOrgForbidden when the
+// account holds none there; 0 takes the default (ContextsForUser
+// order: tenant organisation before platform). Without a tenancy store
+// (database-less profiles) every account acts in the platform
+// organisation and the legacy console role stands in for the
+// membership role, with ADMIN treated as platform admin so the
+// operator's console keeps working.
+func (s *Server) resolvePrincipal(ctx context.Context, sess auth.Session, requested int64) (Principal, error) {
 	p := Principal{UserID: sess.UserID, Role: sess.Role, PlatformAdmin: sess.PlatformAdmin}
 	if s.Tenancy == nil {
+		if requested != 0 && requested != tenancy.PlatformOrgID {
+			return Principal{}, errOrgForbidden
+		}
 		p.OrgID = tenancy.PlatformOrgID
 		p.Org = tenancy.Org{ID: tenancy.PlatformOrgID, Name: "platform", PackageCode: entitlements.PackageInstitution, CustomerType: tenancy.CustomerBusiness}
 		p.OrgRole = platformRoleFor(sess.Role)
 		p.PlatformAdmin = p.PlatformAdmin || sess.Role == auth.RoleAdmin
 		return p, nil
 	}
-	tc, err := s.Tenancy.ContextForUser(ctx, sess.UserID)
+	cs, err := s.Tenancy.ContextsForUser(ctx, sess.UserID)
 	if err != nil {
 		return Principal{}, err
 	}
+	if len(cs) == 0 {
+		return Principal{}, tenancy.ErrNoMembership
+	}
+	tc := cs[0]
+	if requested != 0 {
+		found := false
+		for _, c := range cs {
+			if c.Org.ID == requested {
+				tc, found = c, true
+				break
+			}
+		}
+		if !found {
+			return Principal{}, errOrgForbidden
+		}
+	}
 	p.OrgID, p.Org, p.OrgRole, p.Suspended = tc.Org.ID, tc.Org, tc.Membership.Role, tc.Membership.Suspended
+	p.Memberships = make([]tenancy.Membership, 0, len(cs))
+	for _, c := range cs {
+		p.Memberships = append(p.Memberships, c.Membership)
+	}
 	if s.Entitlements != nil {
 		doc, err := s.Entitlements.For(ctx, p.OrgID)
 		if err != nil {
@@ -334,7 +414,14 @@ func (s *Server) authenticateAPIKey(gateAck bool, token string, next http.Handle
 		}
 		principal, err := s.resolveAPIKeyPrincipal(r.Context(), key)
 		if err != nil {
-			if errors.Is(err, tenancy.ErrUnknownOrg) {
+			// audit S3/P1-12: a disabled owner or a removed membership
+			// must read exactly like "invalid API key" to the caller —
+			// same status, same message as any other unauthenticated
+			// Bearer request, no oracle distinguishing "the credential
+			// itself is wrong" from "the credential is fine but its
+			// owner no longer is".
+			if errors.Is(err, tenancy.ErrUnknownOrg) || errors.Is(err, tenancy.ErrNoMembership) ||
+				errors.Is(err, auth.ErrUserDisabled) || errors.Is(err, auth.ErrUnknownUser) {
 				WriteError(w, http.StatusUnauthorized, "unauthenticated", "invalid API key", correlationID(r))
 				return
 			}
@@ -374,10 +461,30 @@ func (s *Server) authenticateAPIKey(gateAck bool, token string, next http.Handle
 // PlatformAdmin is always false, unconditionally — an API key minted by
 // staff who happen to hold platform_admin must never reach the
 // exchange-credential vault group or any platform_admin-only route.
+//
+// apikey.Authenticate only checks the key row itself (Active()); it has
+// no way to know the owner was disabled or lost their seat in this
+// organisation AFTER the key was minted. Both are re-verified on every
+// request (audit S3/P1-12) rather than only at revoke time, so a
+// disable or membership removal takes effect immediately even on the
+// rare path where the cascade revoke (AdminService.SetUserDisabled,
+// handleOrgMemberRemove) did not run.
 func (s *Server) resolveAPIKeyPrincipal(ctx context.Context, key apikey.Key) (Principal, error) {
 	p := Principal{UserID: key.UserID, Role: auth.RoleViewer, PlatformAdmin: false, APIKey: &key}
 	if s.Tenancy == nil {
 		return Principal{}, tenancy.ErrUnknownOrg
+	}
+	if s.Users != nil {
+		owner, err := s.Users.UserByID(ctx, key.UserID)
+		if err != nil {
+			return Principal{}, err
+		}
+		if owner.Disabled {
+			return Principal{}, auth.ErrUserDisabled
+		}
+	}
+	if _, err := s.Tenancy.MembershipFor(ctx, key.OrgID, key.UserID); err != nil {
+		return Principal{}, err
 	}
 	org, err := s.Tenancy.Org(ctx, key.OrgID)
 	if err != nil {
@@ -440,14 +547,36 @@ func (s *Server) requirePlatformAdmin(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-// requireOrgRole gates a route on the caller's membership role inside
-// its organisation (OWNER/ADMIN manage members, billing, the risk
-// acknowledgement). Platform admins pass.
+// requireOrgManager gates a route on the caller's membership role
+// inside its organisation (OWNER/ADMIN manage members, API keys,
+// billing). Platform admins pass. In the platform organisation only
+// platform admins pass (requirePlatformScopeWrite): an org-1 OWNER/
+// ADMIN membership is what every console-created account historically
+// received and must not confer authority over the operator's roster,
+// keys or billing.
 func (s *Server) requireOrgManager(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return s.requirePlatformScopeWrite(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := PrincipalFrom(r.Context())
 		if !p.PlatformAdmin && !p.OrgRole.CanManage() {
 			WriteError(w, http.StatusForbidden, "org_role", "organisation owner or admin required", correlationID(r))
+			return
+		}
+		next(w, r)
+	})
+}
+
+// requirePlatformScopeWrite refuses a mutation that would land in the
+// platform organisation unless the caller holds platform_admin. The
+// platform organisation's screener document, rules, reports, roster,
+// keys and billing are the operator's own; a tenant-style membership
+// role there (or a console role) is not enough to change them, while
+// reads stay governed by the ordinary RBAC/membership gates. Must run
+// after requireAuth so PrincipalFrom is populated.
+func (s *Server) requirePlatformScopeWrite(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, _ := PrincipalFrom(r.Context())
+		if p.OrgID == tenancy.PlatformOrgID && !p.PlatformAdmin {
+			WriteError(w, http.StatusForbidden, "platform_admin_required", "changes to the platform organisation are reserved for the platform operator", correlationID(r))
 			return
 		}
 		next(w, r)
@@ -591,7 +720,12 @@ func correlationID(r *http.Request) string {
 	return "invalid-correlation-id"
 }
 
-func clientAddr(r *http.Request) netip.Addr {
+// peerAddr resolves the raw TCP peer from r.RemoteAddr (always
+// "host:port", per net/http). This is never spoofable by a client, but
+// behind a reverse proxy it is the proxy's own address for every
+// request — clientAddr is the trusted-proxy-aware resolution built on
+// top of it.
+func peerAddr(r *http.Request) netip.Addr {
 	host := r.RemoteAddr
 	if i := strings.LastIndex(host, ":"); i > 0 {
 		host = host[:i]
@@ -601,6 +735,80 @@ func clientAddr(r *http.Request) netip.Addr {
 		return a
 	}
 	return netip.IPv4Unspecified()
+}
+
+// clientAddr resolves the address login throttling and audit forensics
+// key on (audit S1/P1-10). X-Forwarded-For/X-Real-IP are attacker-
+// controlled on any direct connection, so they are honoured ONLY when
+// the immediate TCP peer is inside cfg.TrustedProxies; otherwise (no
+// proxy configured, or an untrusted peer) the result is always the raw
+// peer, exactly as before this list existed — wrong behind an
+// unconfigured proxy, but never spoofable. When the peer IS trusted,
+// X-Forwarded-For is walked from the right (nearest this server) for
+// the first entry that is NOT itself a trusted proxy — the address the
+// outermost trusted hop actually received the request from — with
+// X-Real-IP as a fallback for a proxy that only sets that header.
+func (s *Server) clientAddr(r *http.Request) netip.Addr {
+	peer := peerAddr(r)
+	if len(s.cfg.TrustedProxies) == 0 || !trustedProxyAddr(peer, s.cfg.TrustedProxies) {
+		return peer
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if addr, ok := rightmostUntrustedHop(xff, s.cfg.TrustedProxies); ok {
+			return addr
+		}
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		if addr, ok := parseForwardedAddr(xri); ok {
+			return addr
+		}
+	}
+	return peer
+}
+
+func trustedProxyAddr(addr netip.Addr, trusted []netip.Prefix) bool {
+	for _, p := range trusted {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// rightmostUntrustedHop scans a comma-separated X-Forwarded-For value
+// from the end (nearest this server) and returns the first entry that
+// is not itself a trusted proxy. Entries that fail to parse are
+// skipped rather than trusted blindly; ok=false when every entry
+// parses as a trusted proxy (no untrusted hop to report) or none
+// parses at all.
+func rightmostUntrustedHop(header string, trusted []netip.Prefix) (netip.Addr, bool) {
+	hops := strings.Split(header, ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		addr, ok := parseForwardedAddr(hops[i])
+		if !ok {
+			continue
+		}
+		if !trustedProxyAddr(addr, trusted) {
+			return addr, true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+// parseForwardedAddr parses one X-Forwarded-For/X-Real-IP entry. Unlike
+// r.RemoteAddr, these are never guaranteed to carry a port, so a bare
+// address is tried first.
+func parseForwardedAddr(s string) (netip.Addr, bool) {
+	s = strings.TrimSpace(s)
+	if a, err := netip.ParseAddr(strings.Trim(s, "[]")); err == nil {
+		return a, true
+	}
+	if i := strings.LastIndex(s, ":"); i > 0 {
+		if a, err := netip.ParseAddr(strings.Trim(s[:i], "[]")); err == nil {
+			return a, true
+		}
+	}
+	return netip.Addr{}, false
 }
 
 // requireOnlyPlatformAdmin is requirePlatformAdmin for handlers that

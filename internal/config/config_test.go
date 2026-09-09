@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/netip"
 	"reflect"
 	"regexp"
 	"strings"
@@ -50,6 +51,69 @@ func TestAllowlistParsing(t *testing.T) {
 	t.Setenv("ARB_TELEGRAM_ALLOWLIST", "abc")
 	if _, err := Load(); err == nil {
 		t.Fatal("want error for non-numeric allowlist entry")
+	}
+}
+
+func TestTrustedProxiesParsing(t *testing.T) {
+	t.Setenv("ARB_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.5")
+	b, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.TrustedProxies) != 2 {
+		t.Fatalf("TrustedProxies = %v", b.TrustedProxies)
+	}
+	if !b.TrustedProxies[0].Contains(mustAddr(t, "10.1.2.3")) {
+		t.Fatalf("CIDR entry did not parse as expected: %v", b.TrustedProxies[0])
+	}
+	// A bare address is a single-host prefix, not "match everything".
+	if !b.TrustedProxies[1].Contains(mustAddr(t, "192.168.1.5")) {
+		t.Fatalf("bare address entry should contain itself: %v", b.TrustedProxies[1])
+	}
+	if b.TrustedProxies[1].Contains(mustAddr(t, "192.168.1.6")) {
+		t.Fatalf("bare address entry must not widen to a subnet: %v", b.TrustedProxies[1])
+	}
+	t.Setenv("ARB_TRUSTED_PROXIES", "not-an-address")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for an unparsable ARB_TRUSTED_PROXIES entry")
+	}
+}
+
+func mustAddr(t *testing.T, s string) netip.Addr {
+	t.Helper()
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// Acceptance (audit S6/P1-14): a bootstrap password shorter than the
+// platform's own minimum, or equal to the documented .env.example
+// placeholder, must refuse to boot rather than mint a guessable
+// administrator credential.
+func TestAdminPasswordValidation(t *testing.T) {
+	t.Setenv("ARB_ADMIN_EMAIL", "admin@example.test")
+
+	t.Setenv("ARB_ADMIN_PASSWORD", "short12345") // 10 chars, below the minimum
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for a bootstrap password shorter than 12 characters")
+	}
+
+	t.Setenv("ARB_ADMIN_PASSWORD", "change-me-local-dev-only")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error when ARB_ADMIN_PASSWORD is the documented example value")
+	}
+
+	t.Setenv("ARB_ADMIN_PASSWORD", "a-unique-strong-password-99")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load with a strong password: %v", err)
+	}
+
+	// Unset stays fine — bootstrap is simply skipped elsewhere.
+	t.Setenv("ARB_ADMIN_PASSWORD", "")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load with no admin password: %v", err)
 	}
 }
 

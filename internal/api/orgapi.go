@@ -58,7 +58,7 @@ func (s *Server) handleRiskAck(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := PrincipalFrom(r.Context())
 	now := time.Now().UTC()
-	ip := clientAddr(r).String()
+	ip := s.clientAddr(r).String()
 	if err := s.Tenancy.SetRiskAck(r.Context(), p.OrgID, body.Version, now, ip); err != nil {
 		s.writeTenancyError(w, r, err)
 		return
@@ -156,6 +156,19 @@ func (s *Server) handleOrgMemberRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, p.UserID, "org.member.remove", "org:"+itoa(p.OrgID)+":user:"+id)
+	// audit S3/P1-12: a removed member's API keys for THIS organisation
+	// must stop working immediately rather than keep authenticating
+	// until someone notices and revokes them by hand — the
+	// authenticate-time membership check (resolveAPIKeyPrincipal) is
+	// the durable backstop if this ever fails to run. Best-effort: the
+	// membership is already gone regardless of whether this succeeds.
+	if s.APIKeys != nil {
+		if n, err := s.APIKeys.RevokeByMembership(r.Context(), p.OrgID, id, time.Now().UTC()); err != nil {
+			s.log.Error("api key cascade revoke on membership removal failed", "org", p.OrgID, "user", id, "error", err)
+		} else if n > 0 {
+			s.audit(r, p.UserID, "apikey.revoke_cascade", "org:"+itoa(p.OrgID)+":user:"+id)
+		}
+	}
 	WriteData(w, http.StatusOK, map[string]any{"status": "removed"})
 }
 

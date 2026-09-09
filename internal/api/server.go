@@ -375,7 +375,7 @@ func (s *Server) auditWith(r *http.Request, actor, action, entity string, after 
 			s.log.Error("audit payload not marshalled", "action", action, "error", err)
 		}
 	}
-	s.AuditAction(actor, action, entity, clientAddr(r).String(), correlationID(r), payload)
+	s.AuditAction(actor, action, entity, s.clientAddr(r).String(), correlationID(r), payload)
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {

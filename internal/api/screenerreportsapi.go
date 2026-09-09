@@ -29,9 +29,13 @@ func (s *Server) handleScreenerReportsList(w http.ResponseWriter, r *http.Reques
 		WriteError(w, http.StatusInternalServerError, "reports_list_failed", "listing reports failed", correlationID(r))
 		return
 	}
+	// The list and last_run are the caller's organisation's only: the
+	// store filters on the request scope and the generator keeps one
+	// result per organisation.
+	principal, _ := PrincipalFrom(r.Context())
 	WriteData(w, http.StatusOK, map[string]any{
 		"reports":      list,
-		"last_run":     s.ScreenerReports.LastRun(),
+		"last_run":     s.ScreenerReports.LastRunFor(principal.OrgID),
 		"next_run_utc": nextReportRun(),
 		"generated_at": time.Now().UTC(),
 	})

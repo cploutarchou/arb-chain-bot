@@ -19,6 +19,10 @@ import (
 // interface (SKILL §52, §56).
 type UserAdmin interface {
 	ListUsers(ctx context.Context) ([]auth.User, error)
+	// UserByID resolves one account (password hash stripped) — used by
+	// the API-key authentication path to re-check the owner's status on
+	// every request (audit S3/P1-12), not only console user management.
+	UserByID(ctx context.Context, id string) (auth.User, error)
 	CreateUser(ctx context.Context, email string, role auth.Role, password string) (auth.User, error)
 	UpdateUserRole(ctx context.Context, actorID, targetID string, role auth.Role) (auth.User, error)
 	SetUserDisabled(ctx context.Context, actorID, targetID string, disabled bool) (auth.User, error)

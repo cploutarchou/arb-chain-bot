@@ -242,6 +242,14 @@ POST /screener/calculator
 
 GET  /screener/settings            { version, created_at, settings, field_timing }
 POST /screener/settings            { parent_version, settings }        (ADMIN)
+  Per organisation (migration 000017): each organisation has its own
+  versioned document, seeded from the defaults on first read; version
+  numbers are unique across organisations and parent_version must be
+  the caller's organisation's active version. Status, spreads,
+  perpetuals and the calculator price with the caller's document; the
+  collectors, evaluator and paper executor run on the platform
+  organisation's. In the platform organisation the POST needs
+  platform_admin.
   settings = { poll_interval_s, min_liquidity_quote,
                max_plausible_spread_bps,        (default 2000; 100..100000; hot)
                venues: { <id>: { enabled, spot_taker_bps, perp_taker_bps, perps_enabled } },

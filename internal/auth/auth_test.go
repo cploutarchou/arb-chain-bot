@@ -114,7 +114,7 @@ func TestDisabledUserRejected(t *testing.T) {
 }
 
 func TestLoginThrottling(t *testing.T) {
-	m, _ := manager(t)
+	m, store := manager(t)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		if _, err := m.Login(ctx, "op@example.test", "wrong", ip); !errors.Is(err, ErrInvalidPassword) {
@@ -125,15 +125,85 @@ func TestLoginThrottling(t *testing.T) {
 	if _, err := m.Login(ctx, "op@example.test", "correct horse battery staple", ip); !errors.Is(err, ErrThrottled) {
 		t.Fatalf("throttle: %v", err)
 	}
-	// A different IP is a different key (per email|ip) and still works.
+	// Acceptance (audit S1/P1-10): the account limiter is keyed on the
+	// account alone, so it follows the account across source addresses —
+	// a distributed attacker cannot get a fresh allowance per address.
 	other := netip.MustParseAddr("198.51.100.9")
-	if _, err := m.Login(ctx, "op@example.test", "correct horse battery staple", other); err != nil {
-		t.Fatalf("other ip blocked: %v", err)
+	if _, err := m.Login(ctx, "op@example.test", "correct horse battery staple", other); !errors.Is(err, ErrThrottled) {
+		t.Fatalf("account throttle must follow the account across source addresses: %v", err)
+	}
+	// A sibling account at the very same (locked-out) address is
+	// unaffected — the account limiter never blocks a DIFFERENT account.
+	hash, err := HashPassword("sibling password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.AddUser(User{ID: "u-sibling", Email: "sibling@example.test", PasswordHash: hash, Role: RoleViewer})
+	if _, err := m.Login(ctx, "sibling@example.test", "sibling password", ip); err != nil {
+		t.Fatalf("sibling account blocked by an unrelated account's throttle: %v", err)
 	}
 	// Lockout expires.
 	m.Now = func() time.Time { return t0.Add(6 * time.Minute) }
 	if _, err := m.Login(ctx, "op@example.test", "correct horse battery staple", ip); err != nil {
 		t.Fatalf("post-lockout: %v", err)
+	}
+}
+
+// Acceptance (audit S1/P1-10): a successful login clears the account
+// throttle's failure count — two failures followed by a success must
+// not carry forward into the next round and trip the lockout early.
+func TestLoginSuccessResetsAccountThrottle(t *testing.T) {
+	m, _ := manager(t) // Throttle: NewThrottle(3, time.Minute, 5*time.Minute)
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if _, err := m.Login(ctx, "op@example.test", "wrong", ip); !errors.Is(err, ErrInvalidPassword) {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+	}
+	if _, err := m.Login(ctx, "op@example.test", "correct horse battery staple", ip); err != nil {
+		t.Fatalf("login after 2 failures should succeed: %v", err)
+	}
+	// If the reset had not happened, this failure would be the third
+	// cumulative one and trip the lockout for the next attempt.
+	if _, err := m.Login(ctx, "op@example.test", "wrong", ip); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("post-success attempt: %v", err)
+	}
+	if _, err := m.Login(ctx, "op@example.test", "correct horse battery staple", ip); err != nil {
+		t.Fatalf("account throttle did not reset on success: %v", err)
+	}
+}
+
+// Acceptance (audit S1/P1-10): IPThrottle does NOT reset on success —
+// an attacker sharing an address with a legitimate account must not be
+// able to "launder" a fresh allowance just because that OTHER account
+// happened to log in successfully.
+func TestLoginSuccessDoesNotResetIPThrottle(t *testing.T) {
+	m, store := manager(t)
+	m.IPThrottle = NewThrottle(3, time.Minute, 5*time.Minute)
+	hash, err := HashPassword("second password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.AddUser(User{ID: "u-second", Email: "second@example.test", PasswordHash: hash, Role: RoleViewer})
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if _, err := m.Login(ctx, "op@example.test", "wrong", ip); !errors.Is(err, ErrInvalidPassword) {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+	}
+	// A different account succeeds from the same address.
+	if _, err := m.Login(ctx, "second@example.test", "second password", ip); err != nil {
+		t.Fatalf("second account login should succeed: %v", err)
+	}
+	// One more failure reaches IPThrottle's limit of 3 (2 + 1 — the
+	// success above did not reset it) and trips the lockout.
+	if _, err := m.Login(ctx, "op@example.test", "wrong", ip); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("third failure: %v", err)
+	}
+	if _, err := m.Login(ctx, "second@example.test", "second password", ip); !errors.Is(err, ErrThrottled) {
+		t.Fatalf("IPThrottle should now be engaged for every account behind this address: %v", err)
 	}
 }
 

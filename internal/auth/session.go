@@ -89,9 +89,18 @@ func HashToken(token string) string {
 type Manager struct {
 	Users    UserStore
 	Sessions SessionStore
-	// Throttle locks out one (email, ip) pair after repeated failures;
-	// IPThrottle caps total failures per source IP so rotating emails
-	// does not evade the lockout (audit S-006). Either may be nil.
+	// Throttle and IPThrottle are two INDEPENDENT limiters, both
+	// consulted on every attempt (audit S1/P1-10): Throttle is keyed on
+	// the account alone, so an attacker rotating source addresses
+	// against one target account cannot get a fresh allowance per
+	// address; IPThrottle is keyed on the caller's address alone (as
+	// resolved by the caller — behind the documented reverse proxy that
+	// is api.Server.clientAddr, trusted-proxy aware), so one address
+	// spraying many accounts cannot evade the account limiter by
+	// rotating emails. Either may be nil. Only Throttle resets on a
+	// successful login: resetting IPThrottle on one account's success
+	// would undo the protection it gives every OTHER account behind a
+	// shared address (NAT, or the reverse proxy this fix exists for).
 	Throttle   *Throttle
 	IPThrottle *Throttle
 	TTL        time.Duration // absolute session lifetime
@@ -102,8 +111,7 @@ type Manager struct {
 // throttles; throttled callers fail before password verification (no
 // Argon2 work for a locked-out key).
 func (m *Manager) Login(ctx context.Context, email, password string, ip netip.Addr) (Session, error) {
-	key := email + "|" + ip.String()
-	if m.Throttle != nil && !m.Throttle.Allow(key, m.Now()) {
+	if m.Throttle != nil && !m.Throttle.Allow(email, m.Now()) {
 		return Session{}, ErrThrottled
 	}
 	if m.IPThrottle != nil && !m.IPThrottle.Allow(ip.String(), m.Now()) {
@@ -111,7 +119,7 @@ func (m *Manager) Login(ctx context.Context, email, password string, ip netip.Ad
 	}
 	fail := func() {
 		if m.Throttle != nil {
-			m.Throttle.Fail(key, m.Now())
+			m.Throttle.Fail(email, m.Now())
 		}
 		if m.IPThrottle != nil {
 			m.IPThrottle.Fail(ip.String(), m.Now())
@@ -154,7 +162,7 @@ func (m *Manager) Login(ctx context.Context, email, password string, ip netip.Ad
 		return Session{}, err
 	}
 	if m.Throttle != nil {
-		m.Throttle.Reset(key)
+		m.Throttle.Reset(email)
 	}
 	return s, nil
 }

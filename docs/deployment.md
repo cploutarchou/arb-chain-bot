@@ -22,7 +22,7 @@ ARB_SYMBOLS=BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT
 ARB_STARTING_ASSETS=USDT,USDC
 # only for the paper profile:
 ARB_ADMIN_EMAIL=you@example.com
-ARB_ADMIN_PASSWORD=a-strong-password
+ARB_ADMIN_PASSWORD=a-strong-password-of-12-or-more-characters
 ```
 
 Scope of this stack: one operator on one host. Postgres is published
@@ -305,7 +305,8 @@ it configures:
 | `ARB_SECRET_KEY` | Master key for the vault; storing it in the vault is circular. |
 | `ARB_HTTP_ADDR`, `ARB_METRICS_ADDR` | Listen addresses; bound before the database is reachable. |
 | `ARB_RECORDING_DIR` | Filesystem path of the recordings volume (container mount). |
-| `ARB_ADMIN_EMAIL`, `ARB_ADMIN_PASSWORD` | First-boot admin bootstrap only; ignored once a user exists. |
+| `ARB_ADMIN_EMAIL`, `ARB_ADMIN_PASSWORD` | First-boot admin bootstrap only: the admin is created when absent and never updated afterwards, so a later password change, demotion or disable survives every restart. The password must be at least 12 characters and not the old placeholder, or the process refuses to boot. |
+| `ARB_TRUSTED_PROXIES` | CIDRs/addresses of the reverse proxies whose `X-Forwarded-For`/`X-Real-IP` the API trusts for the client address (login throttling keys on it, audit and risk-acknowledgement records store it). Empty means the TCP peer is the client. Set it only for the proxy actually in front of the API. |
 | `ARB_SHUTDOWN_GRACE` | Read during shutdown; never a trading parameter. |
 | `ARB_REPLAY_SESSION`, `ARB_SEED` | CLI batch tools only (`replay`/`campaign` binaries); the console passes them per job. |
 | `ARB_MODE`, `ARB_SYMBOLS`, `ARB_STARTING_ASSETS`, `ARB_PAPER_BALANCE`, `ARB_LOG_LEVEL`, `ARB_ALLOWED_ORIGIN`, `ARB_AI_*`, `ARB_TELEGRAM_*`, `ANTHROPIC_API_KEY` | **Seed version 1 only**; ignored once the settings document exists. Safe to delete from `.env` after first boot. |

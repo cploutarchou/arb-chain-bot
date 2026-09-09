@@ -133,6 +133,86 @@ func TestSetUserDisabledRules(t *testing.T) {
 	}
 }
 
+// fakeAPIKeyRevoker records RevokeByOwner calls for the cascade tests
+// below (audit S3/P1-12); it never touches real storage.
+type fakeAPIKeyRevoker struct {
+	revokedFor []string
+	revoked    int
+	err        error
+}
+
+func (f *fakeAPIKeyRevoker) RevokeByOwner(_ context.Context, userID string, _ time.Time) (int, error) {
+	f.revokedFor = append(f.revokedFor, userID)
+	return f.revoked, f.err
+}
+
+// TestSetUserDisabledCascadesAPIKeyRevoke is the audit S3/P1-12
+// regression: disabling an account must revoke every API key it
+// minted and record that cascade as its own audit event, distinct
+// from the caller's own "user.disable" row.
+func TestSetUserDisabledCascadesAPIKeyRevoke(t *testing.T) {
+	svc, _ := adminService(t)
+	ctx := context.Background()
+	admin := mustCreate(t, svc, "admin@example.test", RoleAdmin)
+	op := mustCreate(t, svc, "op@example.test", RoleOperator)
+
+	revoker := &fakeAPIKeyRevoker{revoked: 2}
+	svc.APIKeys = revoker
+	var audited []string
+	svc.AuditCascade = func(actor, action, entity string) {
+		audited = append(audited, actor+"|"+action+"|"+entity)
+	}
+
+	if _, err := svc.SetUserDisabled(ctx, admin.ID, op.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(revoker.revokedFor) != 1 || revoker.revokedFor[0] != op.ID {
+		t.Fatalf("RevokeByOwner not called for the disabled account: %+v", revoker.revokedFor)
+	}
+	want := admin.ID + "|apikey.revoke_cascade|user:" + op.ID
+	if len(audited) != 1 || audited[0] != want {
+		t.Fatalf("cascade audit = %+v, want [%q]", audited, want)
+	}
+}
+
+// Re-enabling an account must never touch its API keys — only a
+// disable is a security event serious enough to revoke a bearer
+// credential.
+func TestSetUserEnabledDoesNotRevokeAPIKeys(t *testing.T) {
+	svc, _ := adminService(t)
+	ctx := context.Background()
+	admin := mustCreate(t, svc, "admin@example.test", RoleAdmin)
+	op := mustCreate(t, svc, "op@example.test", RoleOperator)
+	revoker := &fakeAPIKeyRevoker{revoked: 1}
+	svc.APIKeys = revoker
+
+	if _, err := svc.SetUserDisabled(ctx, admin.ID, op.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(revoker.revokedFor) != 0 {
+		t.Fatalf("enabling a user must not cascade-revoke API keys: %+v", revoker.revokedFor)
+	}
+}
+
+// When RevokeByOwner finds nothing to revoke, no cascade audit event
+// is recorded — a no-op must not manufacture a history entry.
+func TestSetUserDisabledNoCascadeAuditWhenNoKeysRevoked(t *testing.T) {
+	svc, _ := adminService(t)
+	ctx := context.Background()
+	admin := mustCreate(t, svc, "admin@example.test", RoleAdmin)
+	op := mustCreate(t, svc, "op@example.test", RoleOperator)
+	svc.APIKeys = &fakeAPIKeyRevoker{revoked: 0}
+	audited := 0
+	svc.AuditCascade = func(string, string, string) { audited++ }
+
+	if _, err := svc.SetUserDisabled(ctx, admin.ID, op.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if audited != 0 {
+		t.Fatalf("cascade audit fired with nothing revoked: %d calls", audited)
+	}
+}
+
 // TestChangeOwnPasswordThrottled is the P3-13 regression test: repeated
 // wrong-current-password attempts against ChangeOwnPassword must lock
 // out, the same as Manager.Login already does for unauthenticated
