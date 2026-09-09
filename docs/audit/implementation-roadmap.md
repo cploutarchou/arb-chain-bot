@@ -62,6 +62,7 @@ observability → architecture → UX → polish → performance).
 | P1-3 | Fixed | `scanner.Revalidate` re-quotes a qualified plan at its size on the current books (only when a book version moved) and re-runs the full risk gate; the paper engine calls it before reserving capital and skips, counts and reports refusals (`opportunities_revalidation_rejected_total`, risk_events) |
 | P1-4 | Fixed | `simulation.fillLeg` requires a HEALTHY fill-time book and honours `Config.MaxBookAge` (live paper: the scanner's 2 s budget); an unhealthy leg-1 book is REJECTED, a later one strands exposure like any other mid-cycle failure |
 | P1-5 | Fixed | The paper engine runs `reservation.CheckInvariants` after every settlement and release, pauses itself on a violation, counts it (`invariant_violations`) and opens the `simulation_inconsistency` breaker |
+| P1-23 | Fixed | `order_latency_ms{exchange,stage}` (submit_ack, ack_fill, submit_fill) and `cycle_duration_ms{exchange}` histograms recorded per settled cycle; `risk_rejections_total{exchange,stage,reason}` (qualification and revalidation), `paper_cycle_outcomes_total{exchange,outcome}` and `order_outcomes_total{exchange,status}` replace the flat aggregates; `paper_cycles_received_total` / `paper_cycles_skipped_total` exported (O6) |
 
 ## P2 — Medium
 

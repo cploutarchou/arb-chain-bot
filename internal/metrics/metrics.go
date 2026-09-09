@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -40,6 +41,17 @@ type Metrics struct {
 	msgLatency   api.Float64Histogram // market_message_latency_ms
 	netEdge      api.Float64Histogram // net_edge_bps (qualified)
 	slippage     api.Float64Histogram // slippage_bps (settled paper cycles)
+
+	// Latency chain and labelled outcomes (audit O3/O5): recorded once
+	// per settled cycle, per order and per rejection — off the per-frame
+	// hot path, so synchronous instruments are affordable here.
+	orderLatency  api.Float64Histogram // order_latency_ms{exchange,stage}
+	cycleDuration api.Float64Histogram // cycle_duration_ms{exchange}
+	rejections    api.Int64Counter     // risk_rejections{exchange,stage,reason}
+	cycleOutcomes api.Int64Counter     // paper_cycle_outcomes{exchange,outcome}
+	orderOutcomes api.Int64Counter     // order_outcomes{exchange,status}
+
+	attrSets sync.Map // string key → api.MeasurementOption (precomputed label sets)
 }
 
 // New builds the provider + exporter. Call Shutdown on process exit.
@@ -89,7 +101,75 @@ func New() (*Metrics, error) {
 		api.WithExplicitBucketBoundaries(-50, -20, -10, -5, -2, -1, 0, 1, 2, 5, 10, 20, 50)); err != nil {
 		return nil, err
 	}
+	if m.orderLatency, err = meter.Float64Histogram("order_latency_ms",
+		api.WithDescription("simulated order latency in ms by stage: submit_ack, ack_fill, submit_fill"),
+		api.WithExplicitBucketBoundaries(1, 2, 5, 10, 20, 35, 50, 75, 100, 150, 250, 500, 1000)); err != nil {
+		return nil, err
+	}
+	if m.cycleDuration, err = meter.Float64Histogram("cycle_duration_ms",
+		api.WithDescription("paper cycle wall time from first submission to settlement in ms"),
+		api.WithExplicitBucketBoundaries(10, 25, 50, 100, 150, 250, 400, 600, 1000, 2500, 5000)); err != nil {
+		return nil, err
+	}
+	if m.rejections, err = meter.Int64Counter("risk_rejections",
+		api.WithDescription("opportunities refused by the risk gate, by stage (qualification, revalidation) and reason code")); err != nil {
+		return nil, err
+	}
+	if m.cycleOutcomes, err = meter.Int64Counter("paper_cycle_outcomes",
+		api.WithDescription("settled paper cycles by outcome")); err != nil {
+		return nil, err
+	}
+	if m.orderOutcomes, err = meter.Int64Counter("order_outcomes",
+		api.WithDescription("simulated orders by final status")); err != nil {
+		return nil, err
+	}
 	return m, nil
+}
+
+// attrs returns a cached measurement option for a small, bounded label
+// set (reason codes, outcomes, stages): the rejection path can run
+// thousands of times a second and must not allocate a label set each time.
+func (m *Metrics) attrs(key string, kvs ...attribute.KeyValue) api.MeasurementOption {
+	if opt, ok := m.attrSets.Load(key); ok {
+		return opt.(api.MeasurementOption)
+	}
+	opt := api.WithAttributeSet(attribute.NewSet(kvs...))
+	m.attrSets.Store(key, opt)
+	return opt
+}
+
+// ObserveOrderLatency records one simulated order's latency for a stage
+// (submit_ack: created→acked; ack_fill: acked→filled; submit_fill: end
+// to end). These calibrate the latency buffer, so the histograms are the
+// numbers to compare the buffer against.
+func (m *Metrics) ObserveOrderLatency(exchangeID, stage string, ms float64) {
+	m.orderLatency.Record(context.Background(), ms, m.attrs("ol|"+exchangeID+"|"+stage,
+		attribute.String("exchange", exchangeID), attribute.String("stage", stage)))
+}
+
+// ObserveCycleDuration records one settled cycle's wall time.
+func (m *Metrics) ObserveCycleDuration(exchangeID string, ms float64) {
+	m.cycleDuration.Record(context.Background(), ms, m.attrs("cd|"+exchangeID,
+		attribute.String("exchange", exchangeID)))
+}
+
+// CountRejection counts one refused opportunity by stage and reason code.
+func (m *Metrics) CountRejection(exchangeID, stage, reason string) {
+	m.rejections.Add(context.Background(), 1, m.attrs("rj|"+exchangeID+"|"+stage+"|"+reason,
+		attribute.String("exchange", exchangeID), attribute.String("stage", stage),
+		attribute.String("reason", reason)))
+}
+
+// CountCycleOutcome counts one settled cycle by outcome.
+func (m *Metrics) CountCycleOutcome(exchangeID, outcome string) {
+	m.cycleOutcomes.Add(context.Background(), 1, m.attrs("co|"+exchangeID+"|"+outcome,
+		attribute.String("exchange", exchangeID), attribute.String("outcome", outcome)))
+}
+
+// CountOrderStatus counts one simulated order by its final status.
+func (m *Metrics) CountOrderStatus(exchangeID, status string) {
+	m.orderOutcomes.Add(context.Background(), 1, m.attrs("os|"+exchangeID+"|"+status,
+		attribute.String("exchange", exchangeID), attribute.String("status", status)))
 }
 
 // Shutdown flushes the provider.
