@@ -1,12 +1,23 @@
+# Single-operator / development stack. Not a multi-user deployment:
+#   - Postgres is published on 127.0.0.1 only and has NO default password;
+#     set POSTGRES_PASSWORD in .env or compose refuses to start.
+#   - The API on :8080 is plaintext; put a TLS-terminating proxy in front
+#     of it before exposing it beyond the host (docs/deployment.md §1).
+# The DSN anchor below keeps every service on the same credential.
+x-database-url: &database-url postgres://arb:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env - there is no default, see .env.example}@db:5432/arb?sslmode=disable
+
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: arb
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arb-dev-password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env - there is no default, see .env.example}
       POSTGRES_DB: arb
     ports:
-      - "5432:5432"
+      # Loopback only: host tools (psql, go run, the test suite) reach the
+      # database via 127.0.0.1; nothing off-host can, whatever the host
+      # firewall says. Drop the mapping entirely if no host tool needs it.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -25,7 +36,7 @@ services:
     command:
       [
         "-path", "/migrations",
-        "-database", "postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable",
+        "-database", *database-url,
         "up",
       ]
 
@@ -42,7 +53,7 @@ services:
         condition: service_completed_successfully
     environment:
       ARB_MODE: RECORD
-      ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_DATABASE_URL: *database-url
       ARB_SECRET_KEY: ${ARB_SECRET_KEY:-}
       ARB_RECORDING_DIR: /recordings
       ARB_SYMBOLS: ${ARB_SYMBOLS:-BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT}
@@ -53,6 +64,7 @@ services:
       ARB_ADMIN_EMAIL: ${ARB_ADMIN_EMAIL:-}
       ARB_ADMIN_PASSWORD: ${ARB_ADMIN_PASSWORD:-}
     ports:
+      # Plaintext HTTP: loopback-only console use, or behind a TLS proxy.
       - "8080:8080"
     volumes:
       - recordings:/recordings
@@ -70,7 +82,7 @@ services:
         condition: service_completed_successfully
     environment:
       ARB_MODE: PAPER
-      ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_DATABASE_URL: *database-url
       ARB_SECRET_KEY: ${ARB_SECRET_KEY:-}
       ARB_RECORDING_DIR: /recordings
       ARB_SYMBOLS: ${ARB_SYMBOLS:-BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT}
@@ -82,6 +94,7 @@ services:
       ARB_TELEGRAM_ALLOWLIST: ${ARB_TELEGRAM_ALLOWLIST:-}
       ARB_LOG_LEVEL: ${ARB_LOG_LEVEL:-info}
     ports:
+      # Plaintext HTTP: loopback-only console use, or behind a TLS proxy.
       - "8080:8080"
     volumes:
       - recordings:/recordings
@@ -99,7 +112,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      ARB_DATABASE_URL: postgres://arb:${POSTGRES_PASSWORD:-arb-dev-password}@db:5432/arb?sslmode=disable
+      ARB_DATABASE_URL: *database-url
       ARB_SECRET_KEY: ${ARB_SECRET_KEY:-}
     volumes:
       - recordings:/recordings

@@ -1,5 +1,5 @@
 # Build once on tag, promote the same image digests through paper-test
-# (automatic) and prod (manual approval, canary 10% -> full) with
+# (automatic) and prod (manual approval, isolated canary -> full) with
 # automatic rollback on failed smoke tests or SLO burn alerts.
 #
 # Secrets: none in this file. Cloud + cluster access is via GitHub OIDC
@@ -109,12 +109,17 @@ jobs:
           version: ${{ env.HELM_VERSION }}
       - run: deploy/helm/package.sh dist
       - run: |
+          # --kube-version: helm template simulates 1.20 by default and the
+          # chart requires >= 1.27, so every render below would fail without it
           for v in dev paper-test prod; do
-            helm template arb deploy/helm/arb-platform -f deploy/helm/arb-platform/values-$v.yaml > /dev/null
+            helm template arb deploy/helm/arb-platform --kube-version 1.29.0 -f deploy/helm/arb-platform/values-$v.yaml > /dev/null
           done
           # negative guard: LIVE must be rejected by the chart
-          if helm template arb deploy/helm/arb-platform --set arbd.mode=LIVE >/dev/null 2>&1; then
+          if helm template arb deploy/helm/arb-platform --kube-version 1.29.0 --set arbd.mode=LIVE >/dev/null 2>&1; then
             echo "chart accepted arbd.mode=LIVE"; exit 1; fi
+          # render-time guards (canary isolation, REPLAY session, single
+          # writer, persistence/migrate) must refuse what they claim to
+          deploy/helm/test-canary-guards.sh
       - uses: actions/upload-artifact@v4
         with:
           name: chart
@@ -169,7 +174,7 @@ jobs:
       - run: echo "approved ${{ needs.build.outputs.tag }} for prod canary"
 
   prod-canary:
-    name: Prod canary (10%)
+    name: Prod canary (state-isolated, header opt-in)
     runs-on: ubuntu-latest
     needs: [build, prod-approval]
     environment:
@@ -188,9 +193,13 @@ jobs:
         run: |
           helm -n "$NAMESPACE" history "$RELEASE" -o json | jq -r '.[-1].revision' > prev-rev.txt || echo 0 > prev-rev.txt
           echo "previous revision: $(cat prev-rev.txt)"
-      - name: canary release (web 10% via separate release + ingress canary annotations)
-        # arbd is single-writer; the canary is the stateless web tier
-        # plus a shadow arbd in REPLAY mode against the latest recording.
+      - name: canary release (state-isolated second release, header opt-in traffic)
+        # arbd is single-writer, so the canary is a second, state-isolated
+        # instance of the same digests: PAPER mode against live feeds with
+        # persistence disabled (deploy/helm/canary-values.yaml). The chart
+        # refuses a canary that references the primary's database key,
+        # runs any other mode, enables the migrate hook or takes weighted
+        # ingress traffic; reviewers reach it with `X-Arb-Canary: always`.
         # Full arbd cut-over happens in prod-full after the bake.
         run: |
           deploy/helm/package.sh >/dev/null
@@ -200,9 +209,9 @@ jobs:
             -f deploy/helm/canary-values.yaml \
             --set image.arbd.digest="${{ needs.build.outputs.arbd_digest }}" \
             --set image.web.digest="${{ needs.build.outputs.web_digest }}"
-      - name: smoke + bake 15m against SLO alerts
+      - name: canary check (rollout, health, readiness, isolation, feed metrics) + bake 15m against SLO alerts
         run: |
-          deploy/scripts/smoke.sh "$NAMESPACE" "$RELEASE-canary"
+          deploy/scripts/canary-check.sh "$NAMESPACE" "$RELEASE-canary" "$RELEASE"
           deploy/scripts/bake.sh "${{ vars.PROD_ALERTMANAGER_URL }}" 900 \
             'APIAvailabilityBurnFast|FeedStale|PodCrashLooping|MigrateJobFailed|ArbdNotReady'
       - name: rollback canary on failure

@@ -120,7 +120,7 @@ Use a disposable database:
 
 ```bash
 make test-db                 # drops and recreates arb_test, applies migrations
-ARB_TEST_DATABASE_URL="postgres://arb:arb-dev-password@localhost:5432/arb_test?sslmode=disable" \
+ARB_TEST_DATABASE_URL="postgres://arb:${POSTGRES_PASSWORD}@localhost:5432/arb_test?sslmode=disable" \
 ARB_TEST_DB_DESTRUCTIVE=1 go test -race ./internal/storage/
 ```
 

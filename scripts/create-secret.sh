@@ -18,6 +18,7 @@ if [ ! -f "$ENV_FILE" ]; then
   if [ -f .env.example ]; then
     cp .env.example "$ENV_FILE"
     echo "created $ENV_FILE from .env.example"
+    echo "set POSTGRES_PASSWORD in $ENV_FILE before 'docker compose up': the database has no default password."
   else
     : > "$ENV_FILE"
   fi

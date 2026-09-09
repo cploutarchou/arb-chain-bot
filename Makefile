@@ -1,6 +1,10 @@
 GO ?= go
-MIGRATE_DSN ?= postgres://arb:arb-dev-password@localhost:5432/arb?sslmode=disable
-TEST_DSN ?= postgres://arb:arb-dev-password@localhost:5432/arb_test?sslmode=disable
+# The compose database has no default password (docker-compose.yml) and
+# listens on loopback only: export POSTGRES_PASSWORD (the value in .env)
+# before using these DSNs from the host, e.g. `POSTGRES_PASSWORD=... make test-db`.
+POSTGRES_PASSWORD ?=
+MIGRATE_DSN ?= postgres://arb:$(POSTGRES_PASSWORD)@127.0.0.1:5432/arb?sslmode=disable
+TEST_DSN ?= postgres://arb:$(POSTGRES_PASSWORD)@127.0.0.1:5432/arb_test?sslmode=disable
 
 .PHONY: all build test race lint fmt vet tidy up down migrate create-secret test-db web-install web-dev web-build web-lint clean docker-build record record-stop campaign
 
