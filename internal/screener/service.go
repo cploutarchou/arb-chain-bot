@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
 // Snapshot is one immutable settings version (mirrors platform.Snapshot).
@@ -34,7 +35,12 @@ type VersionInfo struct {
 }
 
 // SettingsStore persists screener_settings version rows: append-only,
-// exactly one active row, same shape as platform.Store.
+// exactly one active row per organisation, same shape as
+// platform.Store. The organisation comes from ctx (tenancy.WithOrg):
+// Insert writes it on the row and Active reads that organisation's
+// active version; an unscoped ctx means the platform organisation. Get
+// and List filter on the scope the way every other screener store does
+// (an unscoped read sees every organisation).
 type SettingsStore interface {
 	Insert(ctx context.Context, createdBy string, payload, diff json.RawMessage, parent int64) (version int64, createdAt time.Time, err error)
 	Active(ctx context.Context) (Snapshot, bool, error)
@@ -84,6 +90,20 @@ type Event struct {
 	PeakNetBps       string     `json:"peak_net_bps"`
 	TelegramSent     bool       `json:"telegram_sent"`
 	PaperExecutionID *string    `json:"paper_execution_id,omitempty"`
+	// CloseReason says why the evaluator closed the event: the signal's
+	// own inactive reason for a market close ("below_min_spread",
+	// "below_min_liquidity", ...), "lane_gone" when the rule or venue
+	// configuration removed the lane, or "HOLD_TIMEOUT" when the lane's
+	// quotes stayed stale past settings.alerts.stale_hold_s. Stored by
+	// EventCloseReasonRecorder implementations; a store that only
+	// implements EventCloser keeps the row without it.
+	CloseReason string `json:"close_reason,omitempty"`
+	// HoldReason is live state, not history: while an open event's lane
+	// fails the data-age gate it is HELD (lifetime preserved, event
+	// open) rather than closed, and this names the gate that failed
+	// ("DATA_AGE"). Cleared when the lane is active again; never
+	// persisted.
+	HoldReason string `json:"hold_reason,omitempty"`
 	// Delivered records the delivery outcome per alert channel this
 	// event's rule pushed to (docs/design/packages.md §3.1
 	// alerts.channels, T-086): "telegram" is set synchronously by the
@@ -176,6 +196,12 @@ type Service struct {
 	cur atomic.Pointer[Snapshot]
 
 	autoPaper AutoPaperSource // service_automation.go; nil when no executor runs
+
+	// diag holds the per-ticker diagnostic counters GET /screener/status
+	// reports (service_automation.go RegisterDiagnostics); its own mutex
+	// so a status read never waits on a settings write.
+	diagMu sync.Mutex
+	diag   map[string]func() map[string]int64
 }
 
 // NewService wires a Service over the given stores. Book must be
@@ -186,12 +212,27 @@ func NewService(book *Book, store SettingsStore, log *slog.Logger, audit func(co
 	return &Service{Book: book, store: store, log: log, audit: audit, SpreadLifetime: NewLifetimeTracker(decimal.Zero)}
 }
 
-// Load installs the active settings version, seeding the store with
-// Defaults() (actor "system") when none exists yet — logged either way
-// (mirrors platform.Service.Load).
+// Load installs the platform organisation's active settings version as
+// the process-wide snapshot, seeding the store with Defaults() (actor
+// "system") when none exists yet — logged either way (mirrors
+// platform.Service.Load). The engine loops (collectors, alert
+// evaluator, paper executor) run on this document; tenant documents are
+// read through SnapshotFor.
 func (s *Service) Load(ctx context.Context) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	snap, err := s.activeOrSeedLocked(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	s.cur.Store(&snap)
+	return snap, nil
+}
+
+// activeOrSeedLocked returns the active version of the organisation in
+// ctx (platform when unscoped), seeding Defaults() when it has none.
+// Caller holds s.mu so two first readers cannot seed twice.
+func (s *Service) activeOrSeedLocked(ctx context.Context) (Snapshot, error) {
 	snap, ok, err := s.store.Active(ctx)
 	if err != nil {
 		return Snapshot{}, err
@@ -216,19 +257,57 @@ func (s *Service) Load(ctx context.Context) (Snapshot, error) {
 				Entity: "screener_settings", EntityID: fmt.Sprintf("%d", version), After: payload,
 			})
 		}
-		s.log.Info("screener settings seeded", "version", version)
+		s.log.Info("screener settings seeded", "version", version, "org", tenancy.OrgOrPlatform(ctx))
 	} else {
-		s.log.Info(fmt.Sprintf("screener settings v%d is authoritative", snap.Version))
+		s.log.Info(fmt.Sprintf("screener settings v%d is authoritative", snap.Version), "org", tenancy.OrgOrPlatform(ctx))
 	}
+	return normalised(snap)
+}
+
+// normalised validates a stored document and fills the defaults a
+// document stored before a field existed carries as zero (for example
+// max_plausible_spread_bps), so the active snapshot shows the effective
+// value the console edits and re-posts.
+func normalised(snap Snapshot) (Snapshot, error) {
 	if err := snap.Settings.Validate(); err != nil {
 		return Snapshot{}, fmt.Errorf("screener: stored active version %d invalid: %w", snap.Version, err)
 	}
-	// A document stored before max_plausible_spread_bps existed carries
-	// a zero there; the active snapshot shows the effective default so
-	// the console edits (and re-posts) the real value.
 	snap.Settings = snap.Settings.Normalised()
-	s.cur.Store(&snap)
 	return snap, nil
+}
+
+// tenantOrg reports the organisation in ctx and whether it is a tenant
+// (anything but the platform); unscoped callers are the platform.
+func tenantOrg(ctx context.Context) (int64, bool) {
+	id, ok := tenancy.OrgFrom(ctx)
+	if !ok {
+		return tenancy.PlatformOrgID, false
+	}
+	return id, id != tenancy.PlatformOrgID
+}
+
+// SnapshotFor returns the active settings document of the organisation
+// in ctx: the process-wide snapshot for the platform organisation and
+// for unscoped callers (engine loops), or the tenant's own active
+// version, seeded from Defaults() on first access exactly as Load seeds
+// the platform's. Tenant documents are read through to the store, not
+// cached: the API and the engine may run in different processes, and a
+// stale copy of a tenant's fee table or paper balances would silently
+// misprice its views and its nightly report.
+func (s *Service) SnapshotFor(ctx context.Context) (Snapshot, error) {
+	if _, tenant := tenantOrg(ctx); !tenant {
+		return s.Current(), nil
+	}
+	snap, ok, err := s.store.Active(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if ok {
+		return normalised(snap)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeOrSeedLocked(ctx)
 }
 
 // Current returns the active snapshot (zero Version before Load). The
@@ -261,14 +340,26 @@ func (s *Service) PlanDiff(doc Settings) (map[string]strategy.Change, error) {
 // ApplyExpect validates, versions, persists, audits, and hot-swaps doc,
 // refusing the write with ErrStaleVersion when expectedParent (if
 // non-zero) no longer matches the active version — checked inside the
-// writer lock (mirrors platform.Service.ApplyAuthorizedExpect).
+// writer lock (mirrors platform.Service.ApplyAuthorizedExpect). The
+// organisation in ctx decides which document is written: the
+// platform's, which is also the process-wide snapshot the engine loops
+// run on, or a tenant's own, which never replaces the process-wide
+// snapshot and never reaches the executor's wallets (those are seeded
+// from the platform document only).
 func (s *Service) ApplyExpect(ctx context.Context, actor, source string, doc Settings, expectedParent int64) (Snapshot, error) {
 	if err := doc.Validate(); err != nil {
 		return Snapshot{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	org, tenant := tenantOrg(ctx)
 	cur := s.Current()
+	if tenant {
+		var err error
+		if cur, err = s.activeOrSeedLocked(ctx); err != nil {
+			return Snapshot{}, err
+		}
+	}
 	if expectedParent != 0 && cur.Version != expectedParent {
 		return Snapshot{}, &StaleVersionError{Current: cur.Version}
 	}
@@ -292,7 +383,9 @@ func (s *Service) ApplyExpect(ctx context.Context, actor, source string, doc Set
 		return Snapshot{}, err
 	}
 	snap := Snapshot{Version: version, Settings: doc, CreatedBy: actor, CreatedAt: createdAt, ParentVer: cur.Version}
-	s.cur.Store(&snap)
+	if !tenant {
+		s.cur.Store(&snap)
+	}
 
 	before, _ := json.Marshal(cur.Settings)
 	if s.audit != nil {
@@ -302,61 +395,66 @@ func (s *Service) ApplyExpect(ctx context.Context, actor, source string, doc Set
 			Before: before, After: payload,
 		})
 	}
-	s.log.Info("screener settings activated", "version", version, "parent", cur.Version, "actor", actor, "source", source, "changes", len(diff))
-	if s.OnSettingsApplied != nil {
+	s.log.Info("screener settings activated", "version", version, "parent", cur.Version, "org", org, "actor", actor, "source", source, "changes", len(diff))
+	if !tenant && s.OnSettingsApplied != nil {
 		s.OnSettingsApplied(snap)
 	}
 	return snap, nil
 }
 
 // MemoryStore keeps settings versions in memory: tests and DB-less dev
-// profiles (mirrors platform.MemoryStore).
+// profiles (mirrors platform.MemoryStore). Rows remember the
+// organisation they were written in and there is one active version
+// per organisation, like the pgx store.
 type MemoryStore struct {
 	mu     sync.Mutex
 	rows   []memRow
-	active int64
+	active map[int64]int64 // organisation -> active version
 	now    func() time.Time
 }
 
 type memRow struct {
 	snap Snapshot
 	diff json.RawMessage
+	org  int64
 }
 
 // NewMemoryStore returns an empty in-memory SettingsStore.
-func NewMemoryStore() *MemoryStore { return &MemoryStore{now: time.Now} }
+func NewMemoryStore() *MemoryStore { return &MemoryStore{active: map[int64]int64{}, now: time.Now} }
 
-func (m *MemoryStore) Insert(_ context.Context, createdBy string, payload, diff json.RawMessage, parent int64) (int64, time.Time, error) {
+func (m *MemoryStore) Insert(ctx context.Context, createdBy string, payload, diff json.RawMessage, parent int64) (int64, time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var doc Settings
 	if err := json.Unmarshal(payload, &doc); err != nil {
 		return 0, time.Time{}, err
 	}
+	org := tenancy.OrgOrPlatform(ctx)
 	version := int64(len(m.rows) + 1)
 	createdAt := m.now().UTC()
 	m.rows = append(m.rows, memRow{snap: Snapshot{
 		Version: version, Settings: doc, CreatedBy: createdBy, CreatedAt: createdAt, ParentVer: parent,
-	}, diff: diff})
-	m.active = version
+	}, diff: diff, org: org})
+	m.active[org] = version
 	return version, createdAt, nil
 }
 
-func (m *MemoryStore) Active(_ context.Context) (Snapshot, bool, error) {
+func (m *MemoryStore) Active(ctx context.Context) (Snapshot, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.active == 0 {
+	active := m.active[tenancy.OrgOrPlatform(ctx)]
+	if active == 0 {
 		return Snapshot{}, false, nil
 	}
-	snap := m.rows[m.active-1].snap
+	snap := m.rows[active-1].snap
 	snap.Settings = snap.Settings.Clone()
 	return snap, true, nil
 }
 
-func (m *MemoryStore) Get(_ context.Context, version int64) (Snapshot, error) {
+func (m *MemoryStore) Get(ctx context.Context, version int64) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if version < 1 || version > int64(len(m.rows)) {
+	if version < 1 || version > int64(len(m.rows)) || !orgVisible(ctx, m.rows[version-1].org) {
 		return Snapshot{}, ErrNotFound
 	}
 	snap := m.rows[version-1].snap
@@ -364,7 +462,7 @@ func (m *MemoryStore) Get(_ context.Context, version int64) (Snapshot, error) {
 	return snap, nil
 }
 
-func (m *MemoryStore) List(_ context.Context, limit int) ([]VersionInfo, error) {
+func (m *MemoryStore) List(ctx context.Context, limit int) ([]VersionInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if limit <= 0 || limit > len(m.rows) {
@@ -373,9 +471,12 @@ func (m *MemoryStore) List(_ context.Context, limit int) ([]VersionInfo, error) 
 	out := make([]VersionInfo, 0, limit)
 	for i := len(m.rows) - 1; i >= 0 && len(out) < limit; i-- {
 		r := m.rows[i]
+		if !orgVisible(ctx, r.org) {
+			continue
+		}
 		out = append(out, VersionInfo{
 			Version: r.snap.Version, CreatedBy: r.snap.CreatedBy,
-			CreatedAt: r.snap.CreatedAt, Active: r.snap.Version == m.active,
+			CreatedAt: r.snap.CreatedAt, Active: r.snap.Version == m.active[r.org],
 			ParentVer: r.snap.ParentVer, Diff: r.diff,
 		})
 	}

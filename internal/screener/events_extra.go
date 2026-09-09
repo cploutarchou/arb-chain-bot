@@ -15,6 +15,17 @@ type EventCloser interface {
 	SetEventExecution(ctx context.Context, id, paperExecutionID string) error
 }
 
+// EventCloseReasonRecorder is the optional EventCloser extension that
+// also stores WHY the event closed (Event.CloseReason). It is a separate
+// interface rather than a new CloseEvent parameter so an EventStore
+// implementation that predates it keeps closing events (the evaluator
+// falls back to CloseEvent); MemoryEventStore implements it, the
+// storage adapter needs a close_reason column (or JSON slot) before it
+// can.
+type EventCloseReasonRecorder interface {
+	CloseEventWithReason(ctx context.Context, id string, closedAt time.Time, lifetimeS int64, peakNetBps, reason string) error
+}
+
 // EventCounter is the optional EventStore extension the auto-paper
 // summary uses for the per-rule "alerts" figure without paging through
 // ListEvents' capped result.
@@ -40,6 +51,22 @@ func (m *MemoryEventStore) CloseEvent(_ context.Context, id string, closedAt tim
 			m.rows[i].ClosedAt = &t
 			m.rows[i].LifetimeS = lifetimeS
 			m.rows[i].PeakNetBps = peakNetBps
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (m *MemoryEventStore) CloseEventWithReason(ctx context.Context, id string, closedAt time.Time, lifetimeS int64, peakNetBps, reason string) error {
+	if err := m.CloseEvent(ctx, id, closedAt, lifetimeS, peakNetBps); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.rows {
+		if m.rows[i].ID == id {
+			m.rows[i].CloseReason = reason
+			m.rows[i].HoldReason = ""
 			return nil
 		}
 	}

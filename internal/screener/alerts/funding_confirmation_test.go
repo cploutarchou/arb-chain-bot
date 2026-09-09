@@ -30,7 +30,7 @@ func TestCarryRequiresConfirmedFunding(t *testing.T) {
 	// other gate; only the settled history varies below.
 	setBook := func() {
 		setCarry(svc.Book, t0)
-		p, _ := svc.Book.PerpFor(screener.VenueBinance, "BTC")
+		p, _ := svc.Book.PerpFor(screener.VenueBinance, "BTC", "USDT")
 		p.PredictedFundingRate = d("0.0005")
 		p.FundingRate = d("0.0005")
 		p.Bid = d("50100")
@@ -104,7 +104,7 @@ func TestSettledNIsRecorded(t *testing.T) {
 	r := screener.Rule{ID: "c2", Name: "carry", Enabled: true, Kind: screener.RuleKindCarry, MinCarryAPR: &apr,
 		BuyVenues: []screener.Venue{screener.VenueBinance}}
 	setCarry(svc.Book, t0)
-	p, _ := svc.Book.PerpFor(screener.VenueBinance, "BTC")
+	p, _ := svc.Book.PerpFor(screener.VenueBinance, "BTC", "USDT")
 	p.PredictedFundingRate = d("0.0005")
 	p.FundingRate = d("0.0005")
 	p.Bid = d("50100")

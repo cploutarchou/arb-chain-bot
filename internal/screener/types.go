@@ -110,8 +110,11 @@ type Quote struct {
 	LiquidityUnknown bool
 }
 
-// Perp is one venue's snapshot for one USDT-margined (or venue-native)
-// perpetual contract.
+// Perp is one venue's snapshot for one linear perpetual contract. Quote
+// is the contract's quote/margin asset exactly as the venue lists it
+// (USDT, USDC, USD, ...) and is part of the contract's identity
+// (book.go PerpKey): a venue may list several perpetuals on one base
+// that differ only in margin asset, and they are never merged.
 type Perp struct {
 	Venue Venue
 	Base  string

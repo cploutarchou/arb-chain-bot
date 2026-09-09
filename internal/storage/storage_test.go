@@ -62,12 +62,21 @@ func testStore(t *testing.T) *Store {
 	if _, err := s.Pool.Exec(context.Background(), "TRUNCATE audit_events, risk_events"); err != nil {
 		t.Fatalf("truncate immutable tables: %v", err)
 	}
-	for _, table := range []string{"fills", "orders", "paper_cycles", "paper_sessions",
+	for _, table := range []string{"fills", "orders", "paper_cycles",
+		// virtual_balances/balance_snapshots/pnl_snapshots FK-reference
+		// paper_sessions(id) with no cascade: deleted before
+		// "paper_sessions" below (TestLedgerSnapshotRoundTripAndResumableSession
+		// is the only fixture that populates them; same latent gap as the
+		// three added just below for retention_test.go).
+		"virtual_balances", "balance_snapshots", "pnl_snapshots", "paper_sessions",
 		"opportunities", "triangles", "markets",
-		// exchange_health FK-references exchanges(id) with no cascade:
-		// deleted before "exchanges" below (retention_test.go is the
-		// first fixture to populate this table).
-		"exchange_health", "sessions",
+		// exchange_health and market_recording_metadata FK-reference
+		// exchanges(id) with no cascade: deleted before "exchanges" below
+		// (retention_test.go is the first fixture to populate either
+		// table). system_events has no foreign key at all but was, like
+		// the two above, simply never cleaned because nothing wrote to it
+		// before retention_test.go.
+		"exchange_health", "market_recording_metadata", "system_events", "sessions",
 		"strategy_configs", "platform_settings",
 		// screener_settings/_rules FK-reference users(id) with no cascade
 		// (same as platform_settings above): deleted before "users" below.

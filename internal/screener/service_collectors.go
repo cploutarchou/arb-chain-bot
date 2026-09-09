@@ -16,8 +16,15 @@ type VenueStatus struct {
 	PollMS        int64      `json:"poll_ms"`
 	SpotPairs     int        `json:"spot_pairs"`
 	PerpContracts int        `json:"perp_contracts"`
-	RateLimited   int        `json:"rate_limited"`
-	Polls         int64      `json:"polls"`
+	// PerpsDropped is how many perp contracts the last poll discarded
+	// because the venue listed more than one contract on the same base
+	// (different quote/margin assets) and the suite tracks one per
+	// (venue, base) — settings.perp_quote_preference picks it. The
+	// dropped contracts are logged once each; this is the running count
+	// an operator sees in GET /screener/status.
+	PerpsDropped int   `json:"perps_dropped"`
+	RateLimited  int   `json:"rate_limited"`
+	Polls        int64 `json:"polls"`
 	// Restarts counts how many times the self-healing loop (T-079,
 	// Automation.healCollectors) replaced this venue's goroutine because
 	// it had not completed a poll for 5 × poll_interval_s.

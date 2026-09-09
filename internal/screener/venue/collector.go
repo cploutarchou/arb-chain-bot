@@ -79,7 +79,11 @@ type Collector interface {
 	// Spot returns one Quote per tradable spot pair from ONE bulk call
 	// (plus an instrument refresh when the cache is stale).
 	Spot(ctx context.Context) ([]screener.Quote, error)
-	// Perps returns one Perp per tradable USDT-margined perpetual.
+	// Perps returns one Perp per tradable linear perpetual the venue
+	// lists, each carrying the contract's own quote/margin asset. A
+	// venue that lists a USDT- and a USDC-margined contract on one base
+	// returns both; the Poller keeps one per (venue, base) by
+	// settings.perp_quote_preference (screener.PerpKey explains why).
 	Perps(ctx context.Context) ([]screener.Perp, error)
 	// Networks returns deposit/withdraw status per asset where the venue
 	// publishes it publicly, else screener.NetworkUnknown with reason

@@ -26,6 +26,42 @@ type OpenHook func(ctx context.Context, s Signal, ev screener.Event)
 // organisation has used its alerts.per_day quota (packages.md §3.2).
 const SkipAlertsPerDay = "ALERTS_PER_DAY"
 
+// Close reasons the evaluator stores on Event.CloseReason in addition
+// to a signal's own inactive reason ("below_min_spread", ...).
+const (
+	// CloseReasonLaneGone: the lane left the rule's universe — rule
+	// disabled or deleted, venue disabled in settings, filters changed.
+	CloseReasonLaneGone = "lane_gone"
+	// CloseReasonHoldTimeout: the lane's legs stayed stale (DATA_AGE)
+	// for longer than settings.alerts.stale_hold_s; the evaluator gave
+	// up waiting for fresh quotes. Not a market event.
+	CloseReasonHoldTimeout = "HOLD_TIMEOUT"
+)
+
+// LaneStats is the evaluator's lane accounting for the last tick plus
+// its cumulative counters — the numbers behind GET /screener/status
+// automation.alerts. Universe − Lanes is what the cap hid this tick.
+type LaneStats struct {
+	At time.Time
+	// Rules is how many enabled rules were evaluated.
+	Rules int
+	// Universe is how many lanes the rules' filters admitted before
+	// alerts.max_lanes_per_rule; Lanes how many were evaluated after it;
+	// Truncated the difference, i.e. lanes that were NOT evaluated.
+	Universe  int
+	Lanes     int
+	Truncated int
+	// TruncatedTotal accumulates Truncated since start.
+	TruncatedTotal int64
+	// MaxLanesPerRule is the cap in force (0 = unbounded).
+	MaxLanesPerRule int
+	// Holding is how many lanes are on DATA_AGE hold right now;
+	// HoldTimeoutCloses how many open events closed as HOLD_TIMEOUT
+	// since start.
+	Holding           int
+	HoldTimeoutCloses int64
+}
+
 // Entitlement is the answer to "may this alert open now?" for one rule:
 // Allow=false skips the alert with Reason (counted in Skipped());
 // Telegram=false keeps the event but withholds the Telegram delivery
@@ -70,6 +106,16 @@ type Evaluator struct {
 	states  map[string]Signal // last signal per lane id (diagnostics)
 	opened  map[screener.RuleKind]int64
 	skipped map[string]int64 // by reason
+
+	// staleHold is settings.alerts.stale_hold_s, refreshed every tick;
+	// laneStats / truncatedTotal / holdTimeouts / lastTruncated are the
+	// LaneStats bookkeeping (lastTruncated so the truncation warning is
+	// logged when the count changes, not on every tick).
+	staleHold      time.Duration
+	laneStats      LaneStats
+	truncatedTotal int64
+	holdTimeouts   int64
+	lastTruncated  int
 }
 
 type laneID struct {
@@ -84,6 +130,11 @@ type laneState struct {
 	lastOpen  time.Time
 	lastSig   Signal
 	skipped   string // last entitlement skip reason logged for this lane
+	// holdSince is the tick the lane's legs first failed the data-age
+	// gate while it had a lifetime (or an open event) to preserve; zero
+	// when not held. holdReason names the failed gate.
+	holdSince  time.Time
+	holdReason string
 }
 
 // New builds an evaluator over the service's book, rules, events,
@@ -92,7 +143,7 @@ func New(svc *screener.Service, notify Notifier, log *slog.Logger) *Evaluator {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Evaluator{
+	e := &Evaluator{
 		svc: svc, notify: notify, log: log,
 		idGen:       func() string { return "evt-" + ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String() },
 		lanes:       map[laneID]*laneState{},
@@ -100,6 +151,34 @@ func New(svc *screener.Service, notify Notifier, log *slog.Logger) *Evaluator {
 		opened:      map[screener.RuleKind]int64{},
 		skipped:     map[string]int64{},
 		dispatchSem: make(chan struct{}, dispatchWorkers),
+		staleHold:   screener.DefaultStaleHoldS * time.Second,
+	}
+	if svc != nil {
+		svc.RegisterDiagnostics(e.Name(), e.diagnostics)
+	}
+	return e
+}
+
+// LaneStats returns the last tick's lane accounting (see LaneStats).
+func (e *Evaluator) LaneStats() LaneStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.laneStats
+}
+
+// diagnostics is the screener.Service diagnostics projection of
+// LaneStats for GET /screener/status (automation.alerts.*).
+func (e *Evaluator) diagnostics() map[string]int64 {
+	st := e.LaneStats()
+	return map[string]int64{
+		"rules":               int64(st.Rules),
+		"universe":            int64(st.Universe),
+		"lanes":               int64(st.Lanes),
+		"truncated":           int64(st.Truncated),
+		"truncated_total":     st.TruncatedTotal,
+		"max_lanes_per_rule":  int64(st.MaxLanesPerRule),
+		"holding":             int64(st.Holding),
+		"hold_timeout_closes": st.HoldTimeoutCloses,
 	}
 }
 
@@ -141,6 +220,9 @@ func (e *Evaluator) inputs() Inputs {
 	if poll <= 0 {
 		poll = 5 * time.Second
 	}
+	e.mu.Lock()
+	e.staleHold = snap.Settings.Alerts.EffectiveStaleHold()
+	e.mu.Unlock()
 	return Inputs{
 		Book: e.svc.Book,
 		SpotFees: func(v screener.Venue) (decimal.Decimal, bool) {
@@ -160,6 +242,7 @@ func (e *Evaluator) inputs() Inputs {
 		FundingHistory:        e.svc.Funding,
 		PollInterval:          poll,
 		MaxPlausibleSpreadBps: snap.Settings.EffectiveMaxPlausibleSpreadBps(),
+		MaxLanesPerRule:       snap.Settings.Alerts.MaxLanesPerRule,
 	}
 }
 
@@ -174,12 +257,18 @@ func (e *Evaluator) Tick(ctx context.Context, now time.Time) {
 		return
 	}
 	in := e.inputs()
+	stats := LaneStats{At: now, MaxLanesPerRule: in.MaxLanesPerRule}
 	seen := map[laneID]bool{}
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
 		}
-		for _, s := range ComputeSignals(ctx, in, r, now) {
+		sigs, acc := computeSignals(ctx, in, r, now)
+		stats.Rules++
+		stats.Universe += acc.universe
+		stats.Lanes += len(sigs)
+		stats.Truncated += acc.truncated
+		for _, s := range sigs {
 			id := laneID{RuleID: r.ID, Lane: s.Lane}
 			seen[id] = true
 			e.observe(ctx, id, s, now)
@@ -203,7 +292,7 @@ func (e *Evaluator) Tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		last := st.lastSig
-		last.Active, last.Reason, last.At = false, "lane_gone", now
+		last.Active, last.Reason, last.At = false, CloseReasonLaneGone, now
 		e.observe(ctx, id, last, now)
 		e.mu.Lock()
 		if st.openEvent == nil {
@@ -211,9 +300,37 @@ func (e *Evaluator) Tick(ctx context.Context, now time.Time) {
 		}
 		e.mu.Unlock()
 	}
+	e.mu.Lock()
+	for _, st := range e.lanes {
+		if !st.holdSince.IsZero() {
+			stats.Holding++
+		}
+	}
+	e.truncatedTotal += int64(stats.Truncated)
+	stats.TruncatedTotal = e.truncatedTotal
+	stats.HoldTimeoutCloses = e.holdTimeouts
+	e.laneStats = stats
+	changed := stats.Truncated != e.lastTruncated
+	e.lastTruncated = stats.Truncated
+	e.mu.Unlock()
+	if changed && stats.Truncated > 0 {
+		e.log.Warn("screener alerts: lane universe truncated by alerts.max_lanes_per_rule",
+			"cap", stats.MaxLanesPerRule, "universe", stats.Universe, "evaluated", stats.Lanes, "truncated", stats.Truncated)
+	}
 }
 
 // observe updates one lane's lifetime and event state for signal s.
+//
+// An inactive signal ends the lane's lifetime and closes its open event
+// — except DATA_AGE. Stale legs say "no evidence this tick", not "the
+// spread ended": venue polls and the evaluator tick run on separate
+// timers, so a slow venue (Crypto.com averaged 10.2 s per poll at a
+// 5 s interval in the 2026-08-28 soak) fails the gate on most ticks and
+// used to reset every lifetime and close every event it touched, then
+// notify and start a cooldown, with nothing having happened in the
+// market. Such a lane is HELD instead: lifetime and open event are
+// preserved, the event carries HoldReason, and only a hold longer than
+// settings.alerts.stale_hold_s closes it — with reason HOLD_TIMEOUT.
 func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.Time) {
 	e.mu.Lock()
 	st := e.lanes[id]
@@ -225,15 +342,48 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 	e.states[id.RuleID+"|"+id.Lane.Base+"/"+id.Lane.Quote+"|"+string(id.Lane.VenueA)+">"+string(id.Lane.VenueB)] = s
 
 	if !s.Active {
+		reason := s.Reason
+		if s.Reason == ReasonDataAge && !st.firstSeen.IsZero() {
+			if st.holdSince.IsZero() {
+				st.holdSince, st.holdReason = now, s.Reason
+				if st.openEvent != nil {
+					// Only an open event's hold is logged: warming-up
+					// lanes on a slow venue enter a hold every other
+					// tick and are accounted for in LaneStats.Holding.
+					st.openEvent.HoldReason = s.Reason
+					e.log.Info("screener alert on hold: stale quotes, event kept open", "rule", s.Rule.ID,
+						"event", st.openEvent.ID, "base", s.Lane.Base, "quote", s.Lane.Quote,
+						"venue_a", s.Lane.VenueA, "venue_b", s.Lane.VenueB,
+						"age_a_ms", s.AgeAMs, "age_b_ms", s.AgeBMs, "hold_for", e.staleHold.String())
+				}
+			}
+			if now.Sub(st.holdSince) <= e.staleHold {
+				e.mu.Unlock()
+				return
+			}
+			reason = CloseReasonHoldTimeout
+		}
 		st.firstSeen = time.Time{}
+		st.holdSince, st.holdReason = time.Time{}, ""
 		open := st.openEvent
 		st.openEvent = nil
 		peak := st.peak
+		if open != nil && reason == CloseReasonHoldTimeout {
+			e.holdTimeouts++
+		}
 		e.mu.Unlock()
 		if open != nil {
-			e.closeEvent(ctx, *open, s, now, peak)
+			e.closeEvent(ctx, *open, s, now, peak, reason)
 		}
 		return
+	}
+	if !st.holdSince.IsZero() {
+		// Fresh quotes again: the hold ends, the lifetime that started
+		// before it continues, and an open event stays open.
+		st.holdSince, st.holdReason = time.Time{}, ""
+		if st.openEvent != nil {
+			st.openEvent.HoldReason = ""
+		}
 	}
 	if st.firstSeen.IsZero() || now.Before(st.firstSeen) {
 		st.firstSeen = now
@@ -321,12 +471,21 @@ func (e *Evaluator) observe(ctx context.Context, id laneID, s Signal, now time.T
 	}
 }
 
-func (e *Evaluator) closeEvent(ctx context.Context, ev screener.Event, s Signal, now time.Time, peak decimal.Decimal) {
+func (e *Evaluator) closeEvent(ctx context.Context, ev screener.Event, s Signal, now time.Time, peak decimal.Decimal, reason string) {
 	lifetime := int64(now.Sub(ev.OpenedAt)/time.Second) + ev.LifetimeS
-	if closer, ok := e.svc.Events.(screener.EventCloser); ok && e.svc.Events != nil {
-		if err := closer.CloseEvent(ctx, ev.ID, now, lifetime, peak.String()); err != nil {
-			e.log.Error("screener alerts: event close failed", "event", ev.ID, "error", err)
-		}
+	ev.CloseReason, ev.HoldReason = reason, ""
+	// A store that records the close reason is preferred; one that only
+	// implements the older EventCloser still closes the row (the reason
+	// then lives in the log line below only).
+	var err error
+	switch store := e.svc.Events.(type) {
+	case screener.EventCloseReasonRecorder:
+		err = store.CloseEventWithReason(ctx, ev.ID, now, lifetime, peak.String(), reason)
+	case screener.EventCloser:
+		err = store.CloseEvent(ctx, ev.ID, now, lifetime, peak.String())
+	}
+	if err != nil {
+		e.log.Error("screener alerts: event close failed", "event", ev.ID, "reason", reason, "error", err)
 	}
 	// Close notifications are best-effort and fire-and-forget on every
 	// channel the rule effectively asks for — the entitlement gate and
@@ -334,7 +493,7 @@ func (e *Evaluator) closeEvent(ctx context.Context, ev screener.Event, s Signal,
 	// closing does not spend them again and is not itself audited on
 	// the event's Delivered map (that field is the OPEN alert's delivery
 	// record).
-	title, body := CloseText(s, lifetime, peak)
+	title, body := CloseText(s, lifetime, peak, reason)
 	for _, ch := range s.Rule.EffectiveChannels() {
 		switch ch {
 		case "telegram":
@@ -358,7 +517,7 @@ func (e *Evaluator) closeEvent(ctx context.Context, ev screener.Event, s Signal,
 			}
 		}
 	}
-	e.log.Info("screener alert closed", "rule", ev.RuleID, "event", ev.ID, "lifetime_s", lifetime, "peak_bps", peak.StringFixed(2))
+	e.log.Info("screener alert closed", "rule", ev.RuleID, "event", ev.ID, "reason", reason, "lifetime_s", lifetime, "peak_bps", peak.StringFixed(2))
 }
 
 func laneKey(l Lane) string {

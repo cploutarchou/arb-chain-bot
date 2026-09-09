@@ -105,3 +105,27 @@ func TestMemoryFundingStoreUpsertAndList(t *testing.T) {
 		t.Fatalf("first point rate = %s, want 0.0001 (ON CONFLICT DO NOTHING semantics)", series[0].Points[0].Rate)
 	}
 }
+
+func TestMemoryEventStoreCloseEventWithReason(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryEventStore()
+	t0 := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	ev := Event{ID: "e1", RuleID: "r1", Kind: RuleKindSpread, Base: "BTC", Quote: "USDT", OpenedAt: t0, PeakNetBps: "1", HoldReason: "DATA_AGE"}
+	if err := m.InsertEvent(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	var _ EventCloseReasonRecorder = m
+	if err := m.CloseEventWithReason(ctx, "e1", t0.Add(40*time.Second), 40, "2", "HOLD_TIMEOUT"); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := m.ListEvents(ctx, "r1", 10)
+	if len(rows) != 1 || rows[0].ClosedAt == nil || rows[0].LifetimeS != 40 || rows[0].PeakNetBps != "2" {
+		t.Fatalf("closed row = %+v", rows)
+	}
+	if rows[0].CloseReason != "HOLD_TIMEOUT" || rows[0].HoldReason != "" {
+		t.Fatalf("close_reason = %q hold_reason = %q, want HOLD_TIMEOUT and no hold", rows[0].CloseReason, rows[0].HoldReason)
+	}
+	if err := m.CloseEventWithReason(ctx, "missing", t0, 0, "0", "lane_gone"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
