@@ -291,3 +291,61 @@ func BenchmarkView50(b *testing.B) {
 		_ = book.View(50)
 	}
 }
+
+// Integrity checks (audit M4): a crossed top of book or a non-positive
+// price marks the book CORRUPTED instead of leaving a price the pricing
+// engine would trust.
+func TestCrossedBookIsCorrupted(t *testing.T) {
+	b := New(exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"}, 0)
+	var last string
+	b.OnTransition(func(_, to State, reason string) { last = to.String() + ":" + reason })
+	b.ApplySnapshot(snapshot(100, []Level{lv("100", "1")}, []Level{lv("101", "1")}))
+	if b.View(0).State != StateHealthy {
+		t.Fatalf("state after snapshot = %s", b.View(0).State)
+	}
+	// A bid at 101 meets the best ask: crossed.
+	action := b.Apply(DepthEvent{FirstUpdateID: 101, FinalUpdateID: 101, Bids: []Level{lv("101", "2")}}, chainValidator{})
+	if action != ActionApply {
+		t.Fatalf("action = %v", action)
+	}
+	if v := b.View(0); v.State != StateCorrupted {
+		t.Fatalf("crossed book state = %s", v.State)
+	}
+	if last != "CORRUPTED:crossed book" {
+		t.Fatalf("transition = %q", last)
+	}
+	if b.Meta().Initialized {
+		t.Fatal("a corrupted book must require a fresh snapshot")
+	}
+	// A crossed snapshot is refused the same way.
+	b.ApplySnapshot(snapshot(200, []Level{lv("102", "1")}, []Level{lv("101", "1")}))
+	if b.View(0).State != StateCorrupted || b.Meta().Initialized {
+		t.Fatalf("crossed snapshot accepted: %s", b.View(0).State)
+	}
+	// A clean snapshot heals it.
+	b.ApplySnapshot(snapshot(300, []Level{lv("100", "1")}, []Level{lv("101", "1")}))
+	if b.View(0).State != StateHealthy {
+		t.Fatalf("clean snapshot state = %s", b.View(0).State)
+	}
+}
+
+func TestNonPositivePriceCorruptsBook(t *testing.T) {
+	b := New(exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"}, 0)
+	b.ApplySnapshot(snapshot(100, []Level{lv("100", "1")}, []Level{lv("101", "1")}))
+	b.Apply(DepthEvent{FirstUpdateID: 101, FinalUpdateID: 101, Asks: []Level{lv("0", "5")}}, chainValidator{})
+	if v := b.View(0); v.State != StateCorrupted || len(v.Asks) != 1 || !v.Asks[0].Price.Equal(d("101")) {
+		t.Fatalf("zero-price delta: state=%s asks=%v", v.State, v.Asks)
+	}
+	b2 := New(exchange.MarketID{Exchange: "binance", Symbol: "ETHUSDT"}, 0)
+	b2.ApplySnapshot(snapshot(1, []Level{lv("-1", "1")}, []Level{lv("101", "1")}))
+	if b2.View(0).State != StateCorrupted {
+		t.Fatalf("negative-price snapshot state = %s", b2.View(0).State)
+	}
+	// Deletions (zero quantity) at a valid price remain ordinary.
+	b3 := New(exchange.MarketID{Exchange: "binance", Symbol: "BNBUSDT"}, 0)
+	b3.ApplySnapshot(snapshot(1, []Level{lv("100", "1"), lv("99", "1")}, []Level{lv("101", "1")}))
+	b3.Apply(DepthEvent{FirstUpdateID: 2, FinalUpdateID: 2, Bids: []Level{lv("100", "0")}}, chainValidator{})
+	if v := b3.View(0); v.State != StateHealthy || len(v.Bids) != 1 {
+		t.Fatalf("deletion: state=%s bids=%v", v.State, v.Bids)
+	}
+}
