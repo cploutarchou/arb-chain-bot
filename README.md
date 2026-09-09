@@ -32,14 +32,14 @@ first-exchange definition of done.
 | `deploy/` | compose, dashboards, alert rules |
 | `docs/` | architecture, research, MASTER_PLAN, runbooks |
 | `.claude/` | development skill, agent team, skill resources |
-| `AGENTS.md`, `opencode.json`, `.opencode/` | working instructions, OpenCode configuration, skills, specialist agents and commands (`/continue-audit`, `/review`, `/regression`, `/handover`) |
+| `AGENTS.md`, `opencode.json`, `.opencode/` | working instructions, OpenCode configuration, specialist agents and commands (`/continue-audit`, `/review`, `/regression`, `/handover`) |
 | `.devcontainer/`, `.vscode/` | development container and shared editor config (`docs/devcontainer.md`) |
 
 ## Development
 
 Working instructions for coding tools live in `AGENTS.md`. OpenCode reads
 it together with `opencode.json` (command permissions: history rewrites and
-destructive commands are denied), the skills under `.opencode/skill/`, the
+destructive commands are denied), the skills under `.claude/skills/`, the
 specialist agents under `.opencode/agent/` (mention one as `@name`) and the
 commands under `.opencode/command/`; the reference material the skills cite
 stays under `.claude/skills/triangular-arbitrage-platform/resources/`.

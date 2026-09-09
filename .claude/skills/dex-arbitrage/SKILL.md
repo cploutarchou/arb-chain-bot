@@ -1,9 +1,9 @@
 ---
 name: dex-arbitrage
-description: Workflow and non-negotiables for DEX lanes — aggregator-quoted on-chain pricing, token identity by (chain_id, contract_address), gas-aware cost modelling, CEX↔DEX inventory lanes and DEX↔DEX same-chain lanes, as signals plus automatic PAPER execution. Use for any work under internal/screener/dex, DEX quote sources, token lists, gas oracles or DEX lane math.
-when_to_use: "dex", "uniswap", "pancakeswap", "jupiter", "aggregator quote", "on-chain", "gas", "token list", "cex-dex", "dex-dex", "chain", "swap"
+description: 'Workflow and non-negotiables for DEX lanes — aggregator-quoted on-chain pricing, token identity by (chain_id, contract_address), gas-aware cost modelling, CEX↔DEX inventory lanes and DEX↔DEX same-chain lanes, as signals plus automatic PAPER execution. Use for any work under internal/screener/dex, DEX quote sources, token lists, gas oracles or DEX lane math. Use when the request mentions: dex, uniswap, pancakeswap, jupiter, aggregator quote, on-chain, gas, token list, cex-dex, dex-dex, chain, swap.'
+when_to_use: [dex, uniswap, pancakeswap, jupiter, aggregator quote, on-chain, gas, token list, cex-dex, dex-dex, chain, swap]
 allowed-tools: Read Grep Glob Write Edit Bash Agent WebFetch WebSearch
-argument-hint: [task id or feature]
+argument-hint: '[task id or feature]'
 ---
 
 # DEX arbitrage workflow

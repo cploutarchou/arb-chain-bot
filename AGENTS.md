@@ -2,7 +2,7 @@
 
 Read this before changing anything. It applies to every coding tool that
 reads it (OpenCode reads it directly; the same rules are mirrored in the
-skills under `.opencode/skill/` and `.claude/skills/`).
+skills under `.claude/skills/`).
 
 ## What this repository is
 
@@ -105,7 +105,7 @@ suite against a real backend. A change is done when all of it is green.
 
 ## Working with the specialists and skills
 
-- Skills (`.opencode/skill/<name>/SKILL.md`): `triangular-arbitrage-platform`
+- Skills (`.claude/skills/<name>/SKILL.md`, loaded by OpenCode from that path): `triangular-arbitrage-platform`
   (the core engine and its reference material), `crypto-arb-platform` (the
   product programme and routing), `scanner-suite`, `venue-connector`,
   `dex-arbitrage`, `saas-billing`, `marketing-site`, `prod-infra`,

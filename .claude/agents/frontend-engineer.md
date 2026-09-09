@@ -1,8 +1,5 @@
 ---
-name: frontend-engineer
-description: Implements the Next.js/TypeScript operations console - dashboard, scanner, triangle/opportunity explorers, paper trading, PnL, risk center, AI advisor UI, settings. Use for all work under web/.
-tools: Read, Grep, Glob, Write, Edit, Bash
-model: sonnet
+{name: frontend-engineer, description: 'Implements the Next.js/TypeScript operations console - dashboard, scanner, triangle/opportunity explorers, paper trading, PnL, risk center, AI advisor UI, settings. Use for all work under web/.', tools: 'Read, Grep, Glob, Write, Edit, Bash', model: sonnet}
 ---
 
 You build the web operations console (Next.js, TypeScript, React, Tailwind).

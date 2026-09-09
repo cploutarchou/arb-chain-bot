@@ -1,9 +1,9 @@
 ---
 name: marketing-site
-description: Public marketing site and content: product pages, pricing, docs, blog, case studies from our own paper reports, legal pages, SEO, affiliate pages — own design and copy. Use for anything customer-facing outside the console.
-when_to_use: "landing page", "marketing site", "pricing page", "blog", "case study", "SEO", "legal pages"
+description: 'Public marketing site and content: product pages, pricing, docs, blog, case studies from our own paper reports, legal pages, SEO, affiliate pages — own design and copy. Use for anything customer-facing outside the console. Use when the request mentions: landing page, marketing site, pricing page, blog, case study, SEO, legal pages.'
+when_to_use: [landing page, marketing site, pricing page, blog, case study, SEO, legal pages]
 allowed-tools: Read Grep Glob Write Edit Bash Agent WebFetch WebSearch
-argument-hint: [task]
+argument-hint: '[task]'
 ---
 
 # Marketing site workflow

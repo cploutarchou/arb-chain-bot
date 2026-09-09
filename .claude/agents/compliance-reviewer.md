@@ -1,6 +1,6 @@
 ---
 name: compliance-reviewer
-description: Reviews product, copy and execution paths for regulatory and legal risk: signals-vs-execution distinction, client-fund handling, marketing claims, GDPR, terms/risk disclosures, jurisdiction notes. Read-only; produces findings and required changes for the operator's legal decision.
+description: "Reviews product, copy and execution paths for regulatory and legal risk: signals-vs-execution distinction, client-fund handling, marketing claims, GDPR, terms/risk disclosures, jurisdiction notes. Read-only; produces findings and required changes for the operator's legal decision."
 tools: Read, Grep, Glob, WebSearch, WebFetch
 ---
 

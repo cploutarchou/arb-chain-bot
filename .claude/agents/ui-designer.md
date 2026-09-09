@@ -1,6 +1,6 @@
 ---
 name: ui-designer
-description: Owns the visual design system: tokens (light/dark), typography, spacing, icon set, component states, charts and data-density rules for the consoles and marketing site. Produces design tokens and component specs, not app code.
+description: 'Owns the visual design system: tokens (light/dark), typography, spacing, icon set, component states, charts and data-density rules for the consoles and marketing site. Produces design tokens and component specs, not app code.'
 tools: Read, Grep, Glob, Write, Edit
 ---
 
