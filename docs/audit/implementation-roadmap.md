@@ -53,6 +53,16 @@ observability → architecture → UX → polish → performance).
 | P1-23 | Order/cycle latency chain never exported; rejections and outcomes have no reason/outcome labels | observability O3/O5 |
 | P1-24 | Console: mode banner absent on mobile; no emergency control (pause is 2–3 clicks, unconfirmed, generic failure copy); fee-inclusive figure labelled "Gross"; cycle-outcome vocabulary mismatch; overview fails the five-second test; Paper page is not a live-cycle monitor; request failures rendered as empty states; float division on a persisted threshold | ui F1–F8 |
 
+### P1 status
+
+| # | Status | Landed as |
+|---|---|---|
+| P1-1 | Fixed | Breaker policies in `internal/app/riskpolicy.go`: `feed_instability` (exchange scope) opens on 5 coalesced book faults per minute, probes after 30 s and closes after a quiet probe window; `simulation_inconsistency`, `daily_loss`, `drawdown` (global) open on their triggers and stay open until an operator closes them; `persistence` (P0-3). Book transitions reach the policy through `orderbook.Set.OnTransition`; the scanner gate also honours `market:` scopes |
+| P1-2 | Fixed | `scanner.LedgerView` (session loss and drawdown per start asset) feeds `risk.Context.DailyLoss/Drawdown`; the engine's `sessionLedger` refreshes after every settlement and on the tick, which also advances the portfolio's high-water mark |
+| P1-3 | Fixed | `scanner.Revalidate` re-quotes a qualified plan at its size on the current books (only when a book version moved) and re-runs the full risk gate; the paper engine calls it before reserving capital and skips, counts and reports refusals (`opportunities_revalidation_rejected_total`, risk_events) |
+| P1-4 | Fixed | `simulation.fillLeg` requires a HEALTHY fill-time book and honours `Config.MaxBookAge` (live paper: the scanner's 2 s budget); an unhealthy leg-1 book is REJECTED, a later one strands exposure like any other mid-cycle failure |
+| P1-5 | Fixed | The paper engine runs `reservation.CheckInvariants` after every settlement and release, pauses itself on a violation, counts it (`invariant_violations`) and opens the `simulation_inconsistency` breaker |
+
 ## P2 — Medium
 
 - Sizer objective ignores the impact cap and minimum edge (trading T2); `MARKET_LOT_SIZE` not parsed (T4); limit prices not tick-quantized (T5); `ValidateOrder` on filled rather than submitted quantity (T6); fee rates hard-coded rather than fetched from the venue (T7 — P1 for any non-VIP0 account); topology and rules never refreshed (T8); `MaxSlippageBps` never evaluated (T9, execution F12); constraint duplication in the screener (T10); sizer ~7× its documented latency budget (T11).

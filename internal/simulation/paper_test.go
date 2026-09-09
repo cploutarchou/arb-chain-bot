@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -497,5 +498,85 @@ func BenchmarkExecuteCycle(b *testing.B) {
 		if _, err := e.ExecuteCycle(context.Background(), p2); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// --- fill-time book health --------------------------------------------------
+
+// A book that degraded between qualification and the fill carries no
+// knowable price: the leg fails rather than filling on the last levels
+// it showed, and whatever leg 1 deployed is exposure.
+func TestUnhealthyBookAtFillTimeFailsTheLeg(t *testing.T) {
+	books := planBooks()
+	stale := books[mETHBTC]
+	stale.State = orderbook.StateStale
+	books[mETHBTC] = stale
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeLeg1FilledLeg2Failed {
+		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+	if !res.Exposure["BTC"].Equal(d("9.99")) {
+		t.Fatalf("exposure = %v", res.Exposure)
+	}
+	if !strings.Contains(res.Reason, "STALE") {
+		t.Fatalf("reason %q does not name the book state", res.Reason)
+	}
+}
+
+// Leg 1 on a book that is not HEALTHY deploys nothing: REJECTED.
+func TestUnhealthyLeg1BookRejectsBeforeDeploying(t *testing.T) {
+	for _, state := range []orderbook.State{orderbook.StateSyncing, orderbook.StateCorrupted, orderbook.StateDisconnected} {
+		books := planBooks()
+		v := books[mBTCUSDT]
+		v.State = state
+		books[mBTCUSDT] = v
+		clock := NewVirtualClock(t0)
+		e := engine(t, books, clock, Config{Seed: 1})
+
+		res, err := e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome != execution.OutcomeRejected || !res.InputConsumed.IsZero() || len(res.Exposure) != 0 {
+			t.Fatalf("%s: outcome=%s consumed=%s exposure=%v", state, res.Outcome, res.InputConsumed, res.Exposure)
+		}
+	}
+}
+
+// With an age budget, a fill-time view older than the budget fails the
+// leg even when its state is still HEALTHY (the staleness sweep lags).
+func TestBookAgeAtFillTimeIsEnforced(t *testing.T) {
+	fresh := func() fakeBooks {
+		books := planBooks()
+		for id, v := range books {
+			v.ReceiveTime = t0
+			books[id] = v
+		}
+		return books
+	}
+	clock := NewVirtualClock(t0)
+	e := engine(t, fresh(), clock, Config{Seed: 1, MaxBookAge: time.Second})
+	res, err := e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAllFilled {
+		t.Fatalf("within budget: outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+
+	clock = NewVirtualClock(t0)
+	e = engine(t, fresh(), clock, Config{Seed: 1, MaxBookAge: time.Millisecond})
+	res, err = e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeRejected || !strings.Contains(res.Reason, "old") {
+		t.Fatalf("over budget: outcome = %s (%s)", res.Outcome, res.Reason)
 	}
 }
