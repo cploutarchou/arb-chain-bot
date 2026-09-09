@@ -33,6 +33,17 @@ type AdminStore interface {
 	SetUserPassword(ctx context.Context, id, passwordHash string) error
 }
 
+// APIKeyRevoker is the minimal capability AdminService needs to cascade
+// a disable onto any API key the account minted (audit S3/P1-12): a
+// disabled account must not keep authenticating through a bearer
+// credential nobody remembered to revoke by hand. Declared locally
+// (rather than importing internal/apikey) so this package's dependency
+// graph stays a leaf; the concrete store wired in production
+// (apikey.Store, over pgx or in memory) already satisfies it.
+type APIKeyRevoker interface {
+	RevokeByOwner(ctx context.Context, userID string, at time.Time) (int, error)
+}
+
 // AdminService implements the user & role management business rules
 // shared by every caller (web today; Telegram would use the same
 // service — SKILL §52, §56). The HTTP layer enforces RBAC
@@ -58,6 +69,16 @@ type AdminService struct {
 	// so email|ip is not the relevant dimension here). nil disables
 	// throttling (tests that do not care may omit it).
 	PasswordThrottle *Throttle
+	// APIKeys, set only in profiles where the client API exists, cascades
+	// a disable onto the account's bearer credentials (audit S3/P1-12).
+	// nil is a legitimate "no API keys in this profile", not a bug.
+	APIKeys APIKeyRevoker
+	// AuditCascade records the cascade revoke above as its own event —
+	// the caller's audit row for "user.disable" does not know a cascade
+	// even happened. nil disables it (tests that do not care may omit
+	// it); actor/action/entity mirror the shape callers already use for
+	// their own audit calls (e.g. internal/api's s.audit).
+	AuditCascade func(actor, action, entity string)
 }
 
 func (s *AdminService) now() time.Time {
@@ -90,6 +111,19 @@ func (s *AdminService) ListUsers(ctx context.Context) ([]User, error) {
 		users[i].PasswordHash = ""
 	}
 	return users, nil
+}
+
+// UserByID resolves one account, PasswordHash stripped (P3-6): used by
+// the console (a future single-account view) and by the API-key
+// authentication path, which re-checks the owner's status on every
+// request rather than trusting it once at mint time (audit S3/P1-12).
+func (s *AdminService) UserByID(ctx context.Context, id string) (User, error) {
+	u, err := s.Store.UserByID(ctx, id)
+	if err != nil {
+		return User{}, err
+	}
+	u.PasswordHash = ""
+	return u, nil
 }
 
 func validEmail(email string) bool {
@@ -195,6 +229,19 @@ func (s *AdminService) SetUserDisabled(ctx context.Context, actorID, targetID st
 	if disabled {
 		if err := s.Sessions.RevokeUserSessions(ctx, targetID, s.now()); err != nil {
 			return User{}, err
+		}
+		// audit S3/P1-12: a disabled account must not keep authenticating
+		// through an API key it minted earlier. The authenticate-time
+		// owner-status check is the durable backstop if this ever fails
+		// to run; this is what makes the row itself say so.
+		if s.APIKeys != nil {
+			n, err := s.APIKeys.RevokeByOwner(ctx, targetID, s.now())
+			if err != nil {
+				return User{}, err
+			}
+			if n > 0 && s.AuditCascade != nil {
+				s.AuditCascade(actorID, "apikey.revoke_cascade", "user:"+targetID)
+			}
 		}
 	}
 	target.PasswordHash = "" // P3-6: never hand a hash back across the service boundary

@@ -165,6 +165,14 @@ type Store interface {
 	ByPrefix(ctx context.Context, prefix string) (Key, error)
 	RevokeKey(ctx context.Context, orgID int64, id string, at time.Time) error
 	Touch(ctx context.Context, id string, at time.Time) error
+	// RevokeByOwner and RevokeByMembership cascade a credential change
+	// onto every key it affects (audit S3/P1-12): disabling an account,
+	// or removing its membership in one organisation, must not leave a
+	// bearer credential live just because nobody remembered to revoke
+	// it by hand. Both report how many keys were actually revoked; 0 is
+	// not an error, it just means the account held none.
+	RevokeByOwner(ctx context.Context, userID string, at time.Time) (int, error)
+	RevokeByMembership(ctx context.Context, orgID int64, userID string, at time.Time) (int, error)
 }
 
 // Authenticate resolves a plaintext Bearer token to its Key. ok=false

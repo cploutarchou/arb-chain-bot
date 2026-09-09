@@ -91,3 +91,27 @@ func (a *APIKeys) Touch(ctx context.Context, id string, at time.Time) error {
 	}
 	return nil
 }
+
+// RevokeByOwner revokes every live key owned by userID, across every
+// organisation (audit S3/P1-12: cascades an account disable so a
+// bearer credential does not outlive the account that minted it).
+func (a *APIKeys) RevokeByOwner(ctx context.Context, userID string, at time.Time) (int, error) {
+	tag, err := a.s.Pool.Exec(ctx, `
+		UPDATE api_keys SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`, userID, at)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// RevokeByMembership revokes every live key owned by userID scoped to
+// orgID (audit S3/P1-12: cascades a membership removal — the account
+// may still be enabled and hold keys in another organisation).
+func (a *APIKeys) RevokeByMembership(ctx context.Context, orgID int64, userID string, at time.Time) (int, error) {
+	tag, err := a.s.Pool.Exec(ctx, `
+		UPDATE api_keys SET revoked_at = $3 WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL`, orgID, userID, at)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}

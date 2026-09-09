@@ -39,28 +39,65 @@ func scanOrg(row pgx.Row) (tenancy.Org, error) {
 }
 
 func (t *Tenancy) ContextForUser(ctx context.Context, userID string) (tenancy.Context, error) {
-	var out tenancy.Context
-	var role string
-	err := t.s.Pool.QueryRow(ctx, `
+	cs, err := t.ContextsForUser(ctx, userID)
+	if err != nil {
+		return tenancy.Context{}, err
+	}
+	if len(cs) == 0 {
+		return tenancy.Context{}, tenancy.ErrNoMembership
+	}
+	return cs[0], nil
+}
+
+// ContextsForUser sorts the platform membership last on purpose: every
+// console-created account is joined to organisation 1 first (CreateUser),
+// so "oldest membership wins" made the platform shadow the tenant
+// organisation a user was later added to and no tenant scope ever
+// engaged.
+func (t *Tenancy) ContextsForUser(ctx context.Context, userID string) ([]tenancy.Context, error) {
+	rows, err := t.s.Pool.Query(ctx, `
 		SELECT m.org_id, m.user_id, m.role, m.status = 'suspended', m.created_at,
 		       o.id, o.name, o.package_code, COALESCE(o.country,''), o.customer_type,
 		       COALESCE(o.risk_ack_version,''), o.risk_ack_at, COALESCE(o.risk_ack_ip,''), o.trial_ends_at,
 		       o.entitlements_override, o.created_at
 		FROM memberships m JOIN organisations o ON o.id = m.org_id
 		WHERE m.user_id = $1
-		ORDER BY m.created_at ASC, m.org_id ASC LIMIT 1`, userID).
-		Scan(&out.Membership.OrgID, &out.Membership.UserID, &role, &out.Membership.Suspended, &out.Membership.CreatedAt,
-			&out.Org.ID, &out.Org.Name, &out.Org.PackageCode, &out.Org.Country, (*string)(&out.Org.CustomerType),
-			&out.Org.RiskAckVersion, &out.Org.RiskAckAt, &out.Org.RiskAckIP, &out.Org.TrialEndsAt,
-			&out.Org.EntitlementsOverride, &out.Org.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return tenancy.Context{}, tenancy.ErrNoMembership
-	}
+		ORDER BY (m.org_id = $2) ASC, m.created_at ASC, m.org_id ASC`, userID, tenancy.PlatformOrgID)
 	if err != nil {
-		return tenancy.Context{}, err
+		return nil, err
 	}
-	out.Membership.Role = tenancy.Role(role)
-	return out, nil
+	defer rows.Close()
+	var out []tenancy.Context
+	for rows.Next() {
+		var c tenancy.Context
+		var role string
+		if err := rows.Scan(&c.Membership.OrgID, &c.Membership.UserID, &role, &c.Membership.Suspended, &c.Membership.CreatedAt,
+			&c.Org.ID, &c.Org.Name, &c.Org.PackageCode, &c.Org.Country, (*string)(&c.Org.CustomerType),
+			&c.Org.RiskAckVersion, &c.Org.RiskAckAt, &c.Org.RiskAckIP, &c.Org.TrialEndsAt,
+			&c.Org.EntitlementsOverride, &c.Org.CreatedAt); err != nil {
+			return nil, err
+		}
+		c.Membership.Role = tenancy.Role(role)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (t *Tenancy) ListOrgIDs(ctx context.Context) ([]int64, error) {
+	rows, err := t.s.Pool.Query(ctx, `SELECT id FROM organisations ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (t *Tenancy) Org(ctx context.Context, id int64) (tenancy.Org, error) {
@@ -218,6 +255,25 @@ func (t *Tenancy) RemoveMember(ctx context.Context, orgID int64, userID string) 
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// MembershipFor resolves one (org_id, user_id) membership row (audit
+// S3/P1-12: API-key authentication re-checks this on every request,
+// independent of ContextForUser's "pick one" resolution).
+func (t *Tenancy) MembershipFor(ctx context.Context, orgID int64, userID string) (tenancy.Membership, error) {
+	row := t.s.Pool.QueryRow(ctx, `
+		SELECT org_id, user_id, role, status = 'suspended', created_at
+		FROM memberships WHERE org_id = $1 AND user_id = $2`, orgID, userID)
+	var m tenancy.Membership
+	var role string
+	if err := row.Scan(&m.OrgID, &m.UserID, &role, &m.Suspended, &m.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return tenancy.Membership{}, tenancy.ErrNoMembership
+		}
+		return tenancy.Membership{}, err
+	}
+	m.Role = tenancy.Role(role)
+	return m, nil
 }
 
 // ownerGuard locks the target membership and every owner row of the
