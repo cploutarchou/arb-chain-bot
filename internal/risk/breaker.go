@@ -161,6 +161,22 @@ func (r *Registry) AnyOpen(scopes ...string) bool {
 	return false
 }
 
+// State resolves one breaker's current state. ok=false when no breaker
+// is registered under (name, scope) — the honest answer for an operator
+// action against a name that does not exist (typo, or a policy this
+// build does not register).
+func (r *Registry) State(name, scope string) (BreakerState, bool) {
+	r.mu.RLock()
+	b, ok := r.breakers[key(name, scope)]
+	r.mu.RUnlock()
+	if !ok {
+		return BreakerClosed, false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state, true
+}
+
 // States snapshots every breaker (console Risk Center payload).
 func (r *Registry) States() []Transition {
 	r.mu.RLock()

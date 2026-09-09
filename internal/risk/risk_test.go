@@ -276,3 +276,29 @@ func TestBreakerLifecycle(t *testing.T) {
 		t.Fatalf("events = %d: %+v", len(events), events)
 	}
 }
+
+// State is the operator-acknowledgement read (POST /risk/breakers/close
+// answers with it): it resolves one breaker's current state and reports
+// honestly when no breaker is registered under (name, scope).
+func TestBreakerState(t *testing.T) {
+	reg := NewRegistry(func(Transition) {})
+	reg.Register("daily_loss", "", 0)
+
+	if st, ok := reg.State("daily_loss", ""); !ok || st != BreakerClosed {
+		t.Fatalf("registered state = %v/%v", st, ok)
+	}
+	if _, ok := reg.State("daily_loss", "exchange:binance"); ok {
+		t.Fatal("scope mismatch resolved")
+	}
+	if _, ok := reg.State("typo_loss", ""); ok {
+		t.Fatal("unknown breaker resolved")
+	}
+	reg.Trip("daily_loss", "", "loss at limit", t0)
+	if st, ok := reg.State("daily_loss", ""); !ok || st != BreakerOpen {
+		t.Fatalf("tripped state = %v/%v", st, ok)
+	}
+	reg.Close("daily_loss", "", t0)
+	if st, ok := reg.State("daily_loss", ""); !ok || st != BreakerClosed {
+		t.Fatalf("closed state = %v/%v", st, ok)
+	}
+}

@@ -364,6 +364,28 @@ func (e *Engine) Recorder() *marketdata.RecorderControl {
 	return e.rctl
 }
 
+// CloseBreaker closes a registered breaker after an explicit operator
+// action. The loss, drawdown, slippage and simulation-inconsistency
+// policies deliberately never close their breakers (docs/risk.md §5:
+// automatic resume is off) — until this existed, one of them opening
+// meant a restart was the only way to resume qualification. Closing is
+// still the operator's decision made from the Risk Center with the
+// breaker's own evidence in view; the registry's observer records the
+// transition (risk_events, notification) and the HTTP layer audits the
+// action itself. found=false: no such breaker in this build/run.
+func (e *Engine) CloseBreaker(name, scope string) (risk.BreakerState, bool) {
+	reg := e.currentBreakers()
+	if reg == nil {
+		return risk.BreakerClosed, false
+	}
+	if _, ok := reg.State(name, scope); !ok {
+		return risk.BreakerClosed, false
+	}
+	reg.Close(name, scope, time.Now())
+	state, _ := reg.State(name, scope)
+	return state, true
+}
+
 // Paper exposes the paper engine control surface (nil outside PAPER mode).
 func (e *Engine) Paper() *paper.Engine {
 	e.mu.RLock()

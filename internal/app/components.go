@@ -24,6 +24,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
+	"github.com/cploutarchou/arb-chain-bot/internal/risk"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/alerts"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
@@ -573,6 +574,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			// boot mode would 404 the paper routes after a switch into
 			// PAPER until a redeploy.
 			apiServer.Paper = paperProxy{engine}
+			apiServer.Breakers = breakerProxy{engine}
 			apiServer.Recorder = recorderProxy{engine}
 		}
 		if supervisor != nil {
@@ -689,6 +691,16 @@ func (p paperProxy) Reset(ctx context.Context) error {
 		return api.ErrPaperNotIdle
 	}
 	return err
+}
+
+// breakerProxy exposes the engine's breaker registry to the API's
+// operator acknowledgement route; before bootstrap (or in an engine-less
+// profile) it answers "not found" honestly because there is no registry
+// to close anything on.
+type breakerProxy struct{ e *Engine }
+
+func (p breakerProxy) CloseBreaker(name, scope string) (risk.BreakerState, bool) {
+	return p.e.CloseBreaker(name, scope)
 }
 
 // aiRuntime is the advisor's current runtime state for the status
