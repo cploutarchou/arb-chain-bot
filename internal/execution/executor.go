@@ -113,8 +113,16 @@ type CycleResult struct {
 	ExposureMark decimal.Decimal                    // exposure valued in start asset (0 when unmarkable)
 	TotalPnL     decimal.Decimal                    // RealizedPnL + ExposureMark
 
-	Fees        map[exchange.Asset]decimal.Decimal
-	SlippageBps decimal.Decimal // realized final vs plan estimate, bps of input (complete cycles)
+	Fees map[exchange.Asset]decimal.Decimal
+
+	// PlannedReturnBps is the un-buffered plan's return (Quote.FinalAmount
+	// over Quote.InputConsumed); ActualReturnBps is the realized return
+	// over the input actually deployed; SlippageBps = planned − actual
+	// (positive = worse than plan). All three are zero when the cycle did
+	// not return to the start asset; persistence gates on the outcome.
+	PlannedReturnBps decimal.Decimal
+	ActualReturnBps  decimal.Decimal
+	SlippageBps      decimal.Decimal
 
 	Orders    []SimOrder
 	StartedAt time.Time

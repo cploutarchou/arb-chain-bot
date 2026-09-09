@@ -168,9 +168,9 @@ func (s *Store) InsertCycle(ctx context.Context, sessionID string, res *executio
 	if err != nil {
 		return err
 	}
-	// SlippageBps is realized-vs-plan and only meaningful for cycles
-	// that reached leg 3 (a mid-cycle failure would persist a ~+10000
-	// artifact); other outcomes store NULL.
+	// SlippageBps (planned return − realized return, both per unit of
+	// input actually deployed) is only meaningful for cycles that
+	// converted back to the start asset; other outcomes store NULL.
 	var slippage any
 	if slippageMeasurable(res.Outcome) {
 		slippage = res.SlippageBps

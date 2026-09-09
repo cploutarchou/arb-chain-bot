@@ -137,8 +137,9 @@ func engine(t testing.TB, books fakeBooks, clock *VirtualClock, cfg Config) *Eng
 // --- tests -----------------------------------------------------------------
 
 // Unchanged books: the simulation must reproduce the plan's economics
-// exactly and settle ALL_FILLED. Realized slippage vs the buffered
-// estimate equals exactly the configured 5 bps of buffers.
+// exactly and settle ALL_FILLED. Realized slippage against the un-buffered
+// plan is exactly zero — the buffers are a risk allowance, never part of
+// the measurement.
 func TestAllFilledReproducesPlan(t *testing.T) {
 	books := planBooks()
 	clock := NewVirtualClock(t0)
@@ -173,10 +174,13 @@ func TestAllFilledReproducesPlan(t *testing.T) {
 	if len(res.Orders) != 3 || res.Orders[2].Status != execution.OrderFilled {
 		t.Fatalf("orders=%+v", res.Orders)
 	}
-	// Buffered estimate was 5 bps below the raw quote → slippage vs
-	// estimate = -5 bps (we did better than the buffered number).
-	if !res.SlippageBps.Equal(d("-5")) {
-		t.Fatalf("slippage = %s bps", res.SlippageBps)
+	// Identical books ⇒ the realized return equals the plan's return and
+	// slippage is zero, whatever the configured buffers (5 bps here).
+	if !res.SlippageBps.IsZero() {
+		t.Fatalf("slippage = %s bps, want 0", res.SlippageBps)
+	}
+	if !res.PlannedReturnBps.Equal(d("169.4204")) || !res.ActualReturnBps.Equal(res.PlannedReturnBps) {
+		t.Fatalf("planned = %s actual = %s bps", res.PlannedReturnBps, res.ActualReturnBps)
 	}
 	if !res.SettledAt.After(res.StartedAt) {
 		t.Fatal("virtual time did not advance")
@@ -228,6 +232,11 @@ func TestAdverseMoveWithinToleranceFills(t *testing.T) {
 	}
 	if res.RealizedPnL.GreaterThanOrEqual(d("16.94204")) {
 		t.Fatalf("pnl did not degrade: %s", res.RealizedPnL)
+	}
+	// The adverse move is the only case in this file that should register
+	// as cycle slippage: planned 169.4204 bps, actual below it.
+	if !res.SlippageBps.IsPositive() || !res.ActualReturnBps.LessThan(res.PlannedReturnBps) {
+		t.Fatalf("cycle slippage = %s (planned %s, actual %s)", res.SlippageBps, res.PlannedReturnBps, res.ActualReturnBps)
 	}
 }
 
@@ -333,6 +342,13 @@ func TestLeg1PartialFill(t *testing.T) {
 	}
 	if !res.Outcome.Complete() || !res.FinalAmount.IsPositive() {
 		t.Fatalf("partial cycle did not complete: %+v", res)
+	}
+	// Prices are byte-identical to the plan; only the size shrank. The
+	// return per unit deployed is therefore the plan's return and the
+	// slippage is zero — a size mismatch must never masquerade as
+	// slippage (the previous formula reported +15 229 bps here).
+	if !res.SlippageBps.IsZero() || !res.ActualReturnBps.Equal(res.PlannedReturnBps) {
+		t.Fatalf("slippage = %s (planned %s, actual %s)", res.SlippageBps, res.PlannedReturnBps, res.ActualReturnBps)
 	}
 }
 
