@@ -76,13 +76,24 @@ func TestPlatformReadRequiresAuthAndReturnsFieldTiming(t *testing.T) {
 		t.Fatalf("unauth GET = %d", rec.Code)
 	}
 
-	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	// S5: the settings document is the operator's — a VIEWER (and any
+	// non-platform-admin) gets 403, the platform admin gets the doc.
+	viewerCookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform/settings", nil)
+	req.AddCookie(viewerCookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer GET = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	cookie, _ := login(t, mux, "admin@example.test", "admin-pw")
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/platform/settings", nil)
 	req.AddCookie(cookie)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("viewer GET = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("admin GET = %d: %s", rec.Code, rec.Body.String())
 	}
 	var env struct {
 		Data struct {
@@ -388,7 +399,9 @@ func TestPlatformVenuesRequiresAuthAndIsHonestAboutModeled(t *testing.T) {
 
 func TestPlatformAbsentServiceIs503(t *testing.T) {
 	_, mux := newTestServer(t)
-	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	// The platform-admin gate answers before the service gate; use the
+	// admin so the 503 path is what is actually exercised.
+	cookie, _ := login(t, mux, "admin@example.test", "admin-pw")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform/settings", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()

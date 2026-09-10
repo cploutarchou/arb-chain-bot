@@ -10,7 +10,6 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 )
 
@@ -30,14 +29,20 @@ type SecretsAdmin interface {
 // framing). Read through an io.LimitReader and zeroed after use.
 const maxSecretBody = 8 << 10
 
-// secretsRoutes: GET needs view:system; PUT/DELETE need system:config
-// (ADMIN) and CSRF. Every mutation is audited as secret.write /
-// secret.delete with entity "secret:{name}" — no before payload, since
-// there is nothing safe to record.
+// secretsRoutes (audit S5/S8): the vault is the platform operator's —
+// the inventory (presence, provenance, master-key fingerprint) and every
+// write are platform_admin only. The exchange group is additionally
+// hidden from non-platform-admins in listings; before S8 a promoted
+// console ADMIN could overwrite the Paddle webhook secret (then forge
+// subscription events to grant any package), retarget the Telegram bot
+// or point alert e-mail at a hostile relay — ADMIN is a console role,
+// not the operator's identity. Every mutation is audited as
+// secret.write / secret.delete with entity "secret:{name}" — no before
+// payload, since there is nothing safe to record.
 func (s *Server) secretsRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/secrets", s.requirePerm(auth.PermViewSystem, s.handleSecretsList))
-	mux.HandleFunc("PUT /api/v1/secrets/{name}", s.requirePerm(auth.PermSystemConfig, s.requireCSRF(s.handleSecretPut)))
-	mux.HandleFunc("DELETE /api/v1/secrets/{name}", s.requirePerm(auth.PermSystemConfig, s.requireCSRF(s.handleSecretDelete)))
+	mux.HandleFunc("GET /api/v1/secrets", s.requirePlatformAdmin(s.handleSecretsList))
+	mux.HandleFunc("PUT /api/v1/secrets/{name}", s.requirePlatformAdmin(s.requireCSRF(s.handleSecretPut)))
+	mux.HandleFunc("DELETE /api/v1/secrets/{name}", s.requirePlatformAdmin(s.requireCSRF(s.handleSecretDelete)))
 }
 
 // secretsVaultStatus is the shared vault-status shape (GET /secrets and
@@ -70,37 +75,8 @@ func (s *Server) handleSecretsList(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "secrets_failed", "listing secrets failed", correlationID(r))
 		return
 	}
-	// The exchange-credential group exists for the platform operator
-	// only (compliance review 2026-08-27 #1): tenants never see that it
-	// exists, let alone its presence bits.
-	principal, _ := PrincipalFrom(r.Context())
-	if !principal.PlatformAdmin {
-		filtered := make([]secrets.Info, 0, len(list))
-		for _, in := range list {
-			if in.Group != secrets.GroupExchange {
-				filtered = append(filtered, in)
-			}
-		}
-		list = filtered
-	}
 	out["secrets"] = list
 	WriteData(w, http.StatusOK, out)
-}
-
-// exchangeGroupGate refuses a tenant (non-platform-admin) write to an
-// exchange-group secret with 403 platform_admin_required. Unknown names
-// still 404 first, so the gate leaks nothing about the registry.
-func (s *Server) exchangeGroupGate(w http.ResponseWriter, r *http.Request, name string) bool {
-	spec, ok := secrets.Known[name]
-	if !ok || spec.Group != secrets.GroupExchange {
-		return true
-	}
-	principal, _ := PrincipalFrom(r.Context())
-	if principal.PlatformAdmin {
-		return true
-	}
-	WriteError(w, http.StatusForbidden, "platform_admin_required", "exchange credentials are managed by the platform operator only", correlationID(r))
-	return false
 }
 
 func (s *Server) handleSecretPut(w http.ResponseWriter, r *http.Request) {
@@ -111,9 +87,6 @@ func (s *Server) handleSecretPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := secrets.Known[name]; !ok {
 		WriteError(w, http.StatusNotFound, "unknown_secret", "no such secret in the registry", correlationID(r))
-		return
-	}
-	if !s.exchangeGroupGate(w, r, name) {
 		return
 	}
 	// Bounded read into a buffer that is zeroed before the handler
@@ -262,9 +235,6 @@ func (s *Server) handleSecretDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := secrets.Known[name]; !ok {
 		WriteError(w, http.StatusNotFound, "unknown_secret", "no such secret in the registry", correlationID(r))
-		return
-	}
-	if !s.exchangeGroupGate(w, r, name) {
 		return
 	}
 	principal, _ := PrincipalFrom(r.Context())
