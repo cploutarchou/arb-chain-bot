@@ -267,8 +267,16 @@ func TestCapabilitiesShapeAndNewFieldTiming(t *testing.T) {
 	if !providers["anthropic"] || !providers["fake"] || len(providers) != 3 {
 		t.Fatalf("providers = %v", providers)
 	}
-	if len(d.LogLevels) != 4 || d.Secrets["vault_configured"] != true || d.Secrets["key_id"] == "" {
-		t.Fatalf("log_levels=%v secrets=%v", d.LogLevels, d.Secrets)
+	// S5: a VIEWER gets the capability tables without the vault status
+	// (the master-key fingerprint is the operator's); the platform
+	// admin's response carries it.
+	if d.Secrets != nil {
+		t.Fatalf("viewer sees the vault status: %v", d.Secrets)
+	}
+	adminCookie, _ := login(t, mux, "admin@example.test", "admin-pw")
+	rec = doSecret(t, mux, http.MethodGet, "/api/v1/platform/capabilities", adminCookie, "", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"vault_configured":true`) {
+		t.Fatalf("admin capabilities = %d: %s", rec.Code, rec.Body.String())
 	}
 	for path, want := range map[string]string{
 		"platform.mode": "restart", "platform.log_level": "hot", "platform.allowed_origin": "hot",

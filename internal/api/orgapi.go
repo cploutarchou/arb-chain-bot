@@ -74,7 +74,7 @@ func (s *Server) handleOrgGet(w http.ResponseWriter, r *http.Request) {
 		s.writeTenancyError(w, r, err)
 		return
 	}
-	WriteData(w, http.StatusOK, map[string]any{"org": meOrg(p.Org), "org_role": p.OrgRole, "members": members, "entitlements": p.Ent()})
+	WriteData(w, http.StatusOK, map[string]any{"org": meOrg(p.Org), "org_role": p.OrgRole, "members": s.rosterView(p, members), "entitlements": p.Ent()})
 }
 
 func (s *Server) handleOrgMembers(w http.ResponseWriter, r *http.Request) {
@@ -84,13 +84,38 @@ func (s *Server) handleOrgMembers(w http.ResponseWriter, r *http.Request) {
 		s.writeTenancyError(w, r, err)
 		return
 	}
-	WriteData(w, http.StatusOK, map[string]any{"members": members, "seats_max": p.Ent().Seats.Max})
+	WriteData(w, http.StatusOK, map[string]any{"members": s.rosterView(p, members), "seats_max": p.Ent().Seats.Max})
 }
 
-// handleOrgMemberAdd invites an existing account into the organisation
+// rosterView applies S10's disclosure rule: member e-mail addresses are
+// the organisation's managers' information (OWNER/ADMIN of the org, and
+// the platform operator), not something every seat — including a
+// VIEWER added yesterday — can enumerate.
+func (s *Server) rosterView(p Principal, members []tenancy.Membership) []tenancy.Membership {
+	if p.PlatformAdmin || p.OrgRole.CanManage() {
+		return members
+	}
+	out := make([]tenancy.Membership, len(members))
+	copy(out, members)
+	for i := range out {
+		out[i].Email = ""
+	}
+	return out
+}
+
+// handleOrgMemberAdd seats an EXISTING account into the organisation
 // (account creation stays with the operator's console; self-service
 // sign-up lands with T-085). seats.max counts every member; seats.roles
 // must list the lowercase role.
+//
+// Audit S10: adding a user id directly is a consent problem — the added
+// account learns this organisation's roster (and it learns theirs), and
+// the only party who never said yes is the user. Until T-085's invited
+// e-mail flow exists, the guard is: an account that already belongs to
+// ANY organisation (this one included) cannot be added here. A
+// first-time account is placed by the platform operator through the
+// users console's org_id — an explicit, audited decision by the party
+// who owns the account's creation — or waits for the invitation flow.
 func (s *Server) handleOrgMemberAdd(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserID string `json:"user_id"`
@@ -112,6 +137,22 @@ func (s *Server) handleOrgMemberAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.writeEntitlementError(w, r, p.Ent().CheckSeat(len(members), seatRole(role))) {
+		return
+	}
+	contexts, err := s.Tenancy.ContextsForUser(r.Context(), body.UserID)
+	if err != nil {
+		s.writeTenancyError(w, r, err)
+		return
+	}
+	for _, c := range contexts {
+		if c.Membership.OrgID == p.OrgID {
+			WriteError(w, http.StatusConflict, "duplicate_member", "already a member", correlationID(r))
+			return
+		}
+	}
+	if len(contexts) > 0 {
+		WriteError(w, http.StatusConflict, "user_already_member",
+			"that account already belongs to an organisation; joining another requires the account's consent (operator placement at creation, or the invitation flow)", correlationID(r))
 		return
 	}
 	if err := s.Tenancy.AddMember(r.Context(), tenancy.Membership{OrgID: p.OrgID, UserID: body.UserID, Role: role}); err != nil {

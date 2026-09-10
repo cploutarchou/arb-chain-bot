@@ -252,7 +252,15 @@ func (a *AuthStore) UpdateUserRole(ctx context.Context, id string, role auth.Rol
 	if curRole == string(auth.RoleAdmin) && !curDisabled && role != auth.RoleAdmin && otherAdmins == 0 {
 		return auth.ErrLastAdmin
 	}
-	if _, err := tx.Exec(ctx, `UPDATE users SET role = $2 WHERE id = $1`, id, string(role)); err != nil {
+	// S8: platform_admin follows the console role on every change, the
+	// same rule CreateUser applies at insert — otherwise a promoted
+	// ADMIN stays a non-platform-admin (and a demoted one keeps the
+	// flag), and every requireOnlyPlatformAdmin surface answers to a
+	// role the operator thought they had taken away. Only a platform
+	// admin can reach this route (PermUserManage + platform_admin), so
+	// the grant never escapes the operator's own action.
+	if _, err := tx.Exec(ctx, `UPDATE users SET role = $2, platform_admin = $3 WHERE id = $1`,
+		id, string(role), role == auth.RoleAdmin); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -46,13 +46,23 @@ func TestConfigReadRequiresAuthAndReturnsSnapshot(t *testing.T) {
 		t.Fatalf("unauth GET = %d", rec.Code)
 	}
 
-	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	// S5: reads need scanner:config (OPERATOR+) — a VIEWER is refused,
+	// the operator who can edit reads the snapshot.
+	viewerCookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.AddCookie(viewerCookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer GET = %d: %s", rec.Code, rec.Body.String())
+	}
+	cookie, _ := login(t, mux, "op@example.test", "op-pw")
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
 	req.AddCookie(cookie)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("viewer GET = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("operator GET = %d: %s", rec.Code, rec.Body.String())
 	}
 	var env struct {
 		Data strategy.Snapshot `json:"data"`
@@ -167,7 +177,7 @@ func TestConfigRollback(t *testing.T) {
 
 func TestConfigVersionsListAndAbsentService(t *testing.T) {
 	_, mux, _ := newConfigServer(t)
-	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	cookie, _ := login(t, mux, "op@example.test", "op-pw")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/versions?limit=5", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -178,7 +188,7 @@ func TestConfigVersionsListAndAbsentService(t *testing.T) {
 
 	// Without a service the routes answer 404 honestly.
 	_, bareMux := newTestServer(t)
-	cookie2, _ := login(t, bareMux, "viewer@example.test", "viewer-pw")
+	cookie2, _ := login(t, bareMux, "op@example.test", "op-pw")
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
 	req.AddCookie(cookie2)
 	rec = httptest.NewRecorder()

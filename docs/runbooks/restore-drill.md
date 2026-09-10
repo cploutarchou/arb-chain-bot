@@ -108,39 +108,62 @@ restore drill: source=... target=... point_in_time=...
 restore drill: success=1 duration=<s>s source=... target=...
 ```
 
-## Managed-database backup path: a decision for the operator
+## Managed-database backup path: the decision and what is implemented
 
-What exists today: provider automated backups with PITR
-(`backup_retention_days = 14` in prod, 7 in paper-test), storage
-encrypted with the environment KMS key, a final snapshot on deletion,
-`prevent_destroy` on the instance. The pgBackRest CronJobs in
-`deploy/postgres` cannot back up a managed instance (`pg1-host` has no
-data-directory access), so on the managed tier they are not applied; if
-they are, `BackupTooOld` fires and stays firing, which is the intended
-signal.
+**Decision (2026-09-10): option B.** Recorded in
+`docs/decisions/2026-09-10-backup-automation-option-b-logical-dump.md`
+with the drill evidence. What exists and what each piece is for:
 
-Choose one of the following and record the choice in
-`docs/decisions/`. The drill supports each; none is implemented here
-beyond what the table says.
+- Provider automated backups with PITR (`backup_retention_days = 14` in
+  prod, 7 in paper-test), storage encrypted with the environment KMS
+  key, a final snapshot on deletion, `prevent_destroy` on the instance —
+  the base (option A), unchanged.
+- `deploy/postgres/pgdump-cronjob.yaml` (`pg-dump-logical`, 02:15 UTC
+  daily) — the option-B addition: `pg_dump -Fc` from the backup role
+  into the `*-pg-backups` bucket as `pgdump/arb-<ts>.dump` plus an
+  overwritten `pgdump/latest.dump`, pushing `pg_dump_last_success_timestamp`
+  (and `DumpTooOld` after 36 h — `deploy/observability/platform-rules.yml`).
+  Image `deploy/docker/pg-dump.Dockerfile` (postgres 16 + aws-cli under
+  workload identity; no static keys).
+- The drill's `pgdump` source (below) restores `latest.dump` into the
+  in-pod scratch instance — exercised 2026-09-10 against a local
+  PostgreSQL 16 with migrations 000001–000021:
+  `restore drill: success=1 duration=1s source=pgdump target=loopback`,
+  and REFUSED without the disposable flag. The same exercise caught a
+  real defect: verify.sql's `CASE … 1/0` checks errored on every run
+  (PostgreSQL constant-folds constant division in a not-provably-dead
+  CASE arm); they are DO/RAISE blocks now.
+
+The options as they were framed:
 
 | Option | Adds | RPO and independence | Cost and caveats |
 |---|---|---|---|
 | A. Provider PITR and snapshots only | Nothing new. Schedule a weekly `verify-only` drill against a PITR restore (above) and a periodic cross-region snapshot copy. | RPO from the provider's continuous WAL upload (about 5 min on RDS). Copies live in the same provider account. | Lowest effort. Account-level loss or a provider outage takes the backups with the database. |
-| B. A plus a logical dump schedule | A CronJob running `pg_dump -Fc` from the read replica as `arb_backup`, written to the `*-pg-backups` bucket (object lock, KMS) under the existing retention. The drill restores the newest archive into the in-pod scratch instance as `arb_drill` (the `pgbackrest` source with `pg_restore` instead of a stanza; a small script change). | RPO of the logical copy = dump interval (daily suggested). The copy is provider-neutral and restorable anywhere `pg_restore` runs. | Replica load during the dump and bucket storage (compressed dump, roughly 10-20 % of data size). Not a replacement for PITR: point-in-time granularity stays with A. Needs no provider-specific code. |
+| B. **Chosen** — A plus a logical dump schedule | A CronJob running `pg_dump -Fc` from the read replica as `arb_backup`, written to the `*-pg-backups` bucket (object lock, KMS) under the existing retention. The drill restores the newest archive into the in-pod scratch instance as `arb_drill` with `pg_restore`. | RPO of the logical copy = dump interval (24 h as scheduled). The copy is provider-neutral and restorable anywhere `pg_restore` runs. | Replica load during the dump and bucket storage (compressed dump, roughly 10-20 % of data size). Not a replacement for PITR: point-in-time granularity stays with A. Needs no provider-specific code. |
 | C. Self-hosted tier with pgBackRest | The manifests as written (`backup-cronjob.yaml`, stanza with a real `pg1-host`/`pg1-path`): physical full/diff plus WAL archiving to the bucket. | RPO about 5 min from WAL push; fully independent of the provider. | Only if Postgres moves off the managed service (Patroni or similar). Not applicable to the current terraform. |
 
+Still not implemented on purpose: provider-specific snapshot automation
+(cross-region copies stay a provider-console task under option A), and
+the pgBackRest CronJobs remain self-hosted-tier-only — on the managed
+tier do not apply them; a stanza with no backups keeps `BackupTooOld`
+firing, which is the intended signal rather than a silent, empty backup
+chain.
+
 Not implemented here on purpose: provider-specific snapshot automation
-and the option B CronJob. Until a choice is recorded, the weekly
-CronJob's physical drill fails at the pgBackRest restore step on the
-managed tier (no usable stanza) and reports `RestoreDrillFailed`, which
-is the honest state; pointing it at production is refused regardless.
-The open decision is framed in
-`docs/decisions/2026-09-10-backup-automation-open-operator-decision.md`
-(P1-15) — record the chosen option there when it is made.
+(cross-region copies remain a provider-console task under option A). The
+pgBackRest CronJobs stay self-hosted-tier-only; on the managed tier the
+weekly CronJob should run with `RESTORE_DRILL_SOURCE=pgdump` (the
+option-B path) or `verify-only` against a provider restore — with
+`pgbackrest` set it fails at the restore step (no usable stanza) and
+reports `RestoreDrillFailed`, which is the honest state; pointing it at
+production is refused regardless. The decision is recorded in
+`docs/decisions/2026-09-10-backup-automation-option-b-logical-dump.md`.
 
 ## verify.sql checks (read-only)
 
-1. `schema_migrations` has the expected version and `dirty=false`.
+1. `schema_migrations` has a clean, non-dirty row (DO/RAISE, not
+   `CASE … 1/0` — the planner constant-folds constant division in a
+   not-provably-dead arm and would fail the check on every run).
 2. Core tables readable with plausible counts.
 3. No money column is `real`/`double precision` (decimal money math is
    a data-integrity rule, so the drill enforces it).

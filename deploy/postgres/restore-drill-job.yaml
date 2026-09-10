@@ -17,20 +17,37 @@ data:
     -- expectation breaks. The session already runs with
     -- default_transaction_read_only=on (PGOPTIONS in drill.sh); set it
     -- again here so the file is safe to run by hand.
+    -- Failure idiom: DO blocks with RAISE. A bare 1/0 inside CASE arms
+    -- does NOT work — the planner constant-folds constant division in a
+    -- not-provably-dead arm and the check errors on every run (found
+    -- while exercising the pgdump source against a clean restore).
     \set ON_ERROR_STOP on
     SET default_transaction_read_only = on;
     -- 1. all migrations applied, none dirty
-    SELECT CASE WHEN dirty THEN 1/0 ELSE version END AS migration_version FROM schema_migrations;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE NOT dirty) THEN
+        RAISE EXCEPTION 'schema_migrations has no clean row';
+      END IF;
+      IF EXISTS (SELECT 1 FROM schema_migrations WHERE dirty) THEN
+        RAISE EXCEPTION 'schema_migrations is dirty';
+      END IF;
+    END $$;
+    SELECT version AS migration_version FROM schema_migrations;
     -- 2. core tables present and readable
     SELECT count(*) AS markets FROM markets;
     SELECT count(*) AS campaign_runs FROM campaign_runs;
     SELECT count(*) AS recordings FROM market_recording_metadata;
     -- 3. money columns are numeric, never float (decimal money math)
-    SELECT CASE WHEN count(*) > 0 THEN 1/0 ELSE 0 END AS float_money_columns
-      FROM information_schema.columns
-     WHERE table_schema='public'
-       AND data_type IN ('real','double precision')
-       AND (column_name LIKE '%pnl%' OR column_name LIKE '%balance%' OR column_name LIKE '%fee%' OR column_name LIKE '%price%' OR column_name LIKE '%qty%');
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public'
+           AND data_type IN ('real','double precision')
+           AND (column_name LIKE '%pnl%' OR column_name LIKE '%balance%' OR column_name LIKE '%fee%' OR column_name LIKE '%price%' OR column_name LIKE '%qty%')
+      ) THEN
+        RAISE EXCEPTION 'float-typed money column found';
+      END IF;
+    END $$;
     -- 4. secrets table restored but still opaque (ciphertext only)
     SELECT count(*) AS vault_rows FROM secrets;
     -- 5. freshness: newest row must be within the drill target window
@@ -43,7 +60,7 @@ data:
     set -eu
 
     PUSHGW="${PUSHGATEWAY_URL:-http://prometheus-pushgateway.monitoring:9091}"
-    SOURCE="${RESTORE_DRILL_SOURCE:-pgbackrest}"        # pgbackrest | verify-only
+    SOURCE="${RESTORE_DRILL_SOURCE:-pgbackrest}"        # pgbackrest | pgdump | verify-only
     TARGET_DSN="${RESTORE_DRILL_TARGET_DSN:-postgres://arb@127.0.0.1:5433/arb}"
     TARGET="${RESTORE_TARGET:-$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)}"
     started=$(date +%s)
@@ -125,10 +142,35 @@ data:
         echo "restore drill: the scratch instance never left recovery (WAL gap?)"
         push 0 0; pg_ctl -D /pgdata -m fast stop || true; exit 1
       fi
+    elif [ "$SOURCE" = "pgdump" ]; then
+      # Backup option B (docs/runbooks/restore-drill.md): restore the
+      # newest logical archive (pg_dump -Fc) from the backups bucket into
+      # a fresh scratch cluster. The archive is mounted at
+      # RESTORE_DRILL_DUMP (fetch it with an aws-cli init container or a
+      # local file); nothing here talks to S3 itself, so the drill image
+      # needs no cloud credentials.
+      [ "$host_class" = loopback ] \
+        || refuse "source=pgdump restores into the in-pod scratch instance only; a remote scratch instance is checked with source=verify-only"
+      DUMP="${RESTORE_DRILL_DUMP:-/backup/latest.dump}"
+      [ -f "$DUMP" ] || refuse "no logical archive at $DUMP (set RESTORE_DRILL_DUMP, or mount the bucket's pgdump/latest.dump)"
+      mkdir -p /pgdata && chmod 700 /pgdata
+      initdb -D /pgdata -U arb
+      printf 'local all all trust\nhost all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\n' > /pgdata/pg_hba.conf
+      pg_ctl -D /pgdata -w start \
+        -o "-c listen_addresses=127.0.0.1 -c port=5433 -c archive_mode=off -c unix_socket_directories=/tmp"
+      for _ in $(seq 1 60); do pg_isready -h 127.0.0.1 -p 5433 && break; sleep 1; done
+      createdb -h 127.0.0.1 -p 5433 -U arb "$dbname"
+      # --no-owner/--no-privileges: the scratch arb user is not the dump's
+      # owner; the drill verifies DATA, not grants.
+      if ! pg_restore -h 127.0.0.1 -p 5433 -U arb --no-owner --no-privileges -d "$dbname" "$DUMP"; then
+        echo "restore drill: pg_restore failed (truncated or corrupt archive?)"
+        push 0 0; pg_ctl -D /pgdata -m fast stop || true; exit 1
+      fi
+      echo "restore drill: logical archive restored into the scratch instance ($dbname)"
     elif [ "$SOURCE" = "verify-only" ]; then
       echo "restore drill: verify-only against an operator-restored scratch instance"
     else
-      refuse "unknown RESTORE_DRILL_SOURCE=$SOURCE (pgbackrest | verify-only)"
+      refuse "unknown RESTORE_DRILL_SOURCE=$SOURCE (pgbackrest | pgdump | verify-only)"
     fi
 
     # --- verify, read-only ---
@@ -143,7 +185,7 @@ data:
     cat /tmp/verify.out
     echo "restore drill: success=$ok duration=$(( $(date +%s) - started ))s source=$SOURCE target=$host_class"
     push "$ok" 0
-    if [ "$SOURCE" = "pgbackrest" ]; then pg_ctl -D /pgdata -m fast stop || true; fi
+    case "$SOURCE" in pgbackrest|pgdump) pg_ctl -D /pgdata -m fast stop || true ;; esac
     [ "$ok" = 1 ]
 ---
 apiVersion: batch/v1
@@ -185,7 +227,7 @@ spec:
                 # elsewhere is still subject to the endpoint and scratch
                 # marker guards in drill.sh.
                 - {name: RESTORE_DRILL_TARGET_DISPOSABLE, value: "1"}
-                - {name: RESTORE_DRILL_SOURCE, value: pgbackrest}      # verify-only for the managed tier
+                - {name: RESTORE_DRILL_SOURCE, value: pgbackrest}      # pgdump (option B, managed tier) | verify-only
                 - {name: RESTORE_DRILL_TARGET_DSN, value: "postgres://arb@127.0.0.1:5433/arb"}
                 # Production endpoint (terraform output postgres_endpoint),
                 # compared against the target host; pg1-host from

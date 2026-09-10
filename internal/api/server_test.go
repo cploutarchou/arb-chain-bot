@@ -11,6 +11,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
+	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 )
 
 func newTestServer(t *testing.T) (*Server, *http.ServeMux) {
@@ -270,13 +271,25 @@ func TestMetricsEndpointRequiresPermission(t *testing.T) {
 		t.Fatalf("unauthenticated /metrics = %d", rec.Code)
 	}
 
-	cookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
+	// S5: metric names and label values map the platform's internals —
+	// a VIEWER's view:system no longer reaches them; only the operator
+	// (platform_admin) does.
+	viewerCookie, _ := login(t, mux, "viewer@example.test", "viewer-pw")
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	req.AddCookie(cookie)
+	req.AddCookie(viewerCookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer /metrics = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	adminCookie, _ := login(t, mux, "admin@example.test", "admin-pw")
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.AddCookie(adminCookie)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "# metrics") {
-		t.Fatalf("viewer /metrics = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("admin /metrics = %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -368,6 +381,33 @@ func TestAIAndReportsDenialMatrix(t *testing.T) {
 		// Authorized; the backing service/store is absent in this harness.
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("viewer GET %s = %d, want 404 (absent backend)", path, rec.Code)
+		}
+	}
+}
+
+// TestWSTopicAuthorization (audit S11): the socket's allow function
+// mirrors the REST gates per topic and fails closed for names that have
+// no mapping — the socket must not become the RBAC bypass.
+func TestWSTopicAuthorization(t *testing.T) {
+	viewer := Principal{Role: auth.RoleViewer}
+	operator := Principal{Role: auth.RoleOperator}
+
+	if !wsAllow(&viewer)("scanner") || !wsAllow(&viewer)("health") {
+		t.Fatal("viewer lost dashboard/system topics")
+	}
+	if wsAllow(&viewer)("cycles") || wsAllow(&viewer)("pnl") || wsAllow(&viewer)("nope") {
+		t.Fatal("unmapped topics must fail closed")
+	}
+	if !wsAllow(&operator)("campaigns") || !wsAllow(&operator)("replays") {
+		t.Fatal("operator lost system topics")
+	}
+	// The map must stay aligned with the hub's registered topics: every
+	// entry corresponds to a RegisterTopic call in the wiring
+	// (scanner/recordings in engine.go, alerts/health/campaigns/replays
+	// in components.go).
+	for _, topic := range []realtime.Topic{"scanner", "alerts", "health", "recordings", "campaigns", "replays"} {
+		if _, ok := wsTopicPerms[topic]; !ok {
+			t.Fatalf("registered topic %q has no permission mapping", topic)
 		}
 	}
 }

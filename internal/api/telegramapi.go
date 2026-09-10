@@ -36,13 +36,20 @@ type TelegramStatusView struct {
 }
 
 // telegramRoutes serves the Telegram status route (BL-21). Reads need
-// PermViewSystem, same as system/health and recordings.
+// PermViewSystem, same as system/health and recordings. The allowlist
+// (chat ids of the operator's staff) is stripped for non-platform-admins
+// regardless of role (audit S5): it is operator contact information,
+// not something a console VIEWER or a tenant seat should enumerate.
 func (s *Server) telegramRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/telegram/status", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
 		if s.Telegram == nil {
 			WriteData(w, http.StatusOK, TelegramStatusView{Enabled: false})
 			return
 		}
-		WriteData(w, http.StatusOK, s.Telegram())
+		view := s.Telegram()
+		if p, ok := PrincipalFrom(r.Context()); !ok || !p.PlatformAdmin {
+			view.Allowlist = nil
+		}
+		WriteData(w, http.StatusOK, view)
 	}))
 }

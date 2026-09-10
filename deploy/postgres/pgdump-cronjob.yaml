@@ -1,0 +1,97 @@
+# Option B of the managed-database backup decision
+# (docs/runbooks/restore-drill.md, recorded in
+# docs/decisions/2026-09-10-backup-automation-open-operator-decision.md):
+# a daily provider-neutral logical dump written next to the pgBackRest
+# repo in the *-pg-backups bucket (object-locked, KMS-encrypted).
+# pg_dump runs on the read replica / backup role (arb_backup:
+# REPLICATION + pg_read_all_data), never on the primary's write path.
+#
+# What this adds over provider PITR alone (option A): a copy restorable
+# anywhere `pg_restore` runs, independent of the provider account. What
+# it does NOT replace: point-in-time granularity stays with the
+# provider's continuous WAL upload; the logical copy's RPO is the dump
+# interval (24 h below — tighten by raising the schedule frequency).
+#
+# Skip applying this on the self-hosted tier if desired: pgBackRest
+# already covers it there; the dump is belt-and-braces and costs a
+# replica scan per run.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-dump-logical
+  namespace: arb
+  labels: {app.kubernetes.io/component: pg-backup, arb.io/backup-type: dump}
+spec:
+  schedule: "15 2 * * *"      # 02:15 UTC daily, clear of the 01:00 physical window
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 14400
+      template:
+        metadata:
+          labels: {app.kubernetes.io/component: pg-backup}
+        spec:
+          restartPolicy: Never
+          # Same workload-identity annotation as the pgbackrest jobs:
+          # scoped to the backups bucket only, no static keys.
+          serviceAccountName: pgbackrest
+          securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: dump
+              # postgres:16 + aws-cli v2; build from
+              # deploy/docker/pg-dump.Dockerfile.
+              image: ghcr.io/cploutarchou/arb-chain-bot/pg-dump:16
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  set -eu
+                  ts=$(date -u +%Y%m%d-%H%M)
+                  out=/backup/arb-$ts.dump
+                  echo "pg-dump: starting logical dump from $PGHOST as $PGUSER"
+                  pg_dump -Fc -Z 6 -f "$out" "$PGDATABASE"
+                  bytes=$(wc -c < "$out")
+                  # Object-lock note: the bucket's default retention applies;
+                  # overwrite of latest.dump is an object PUT, allowed by the
+                  # compliance-mode window chosen in terraform.
+                  aws s3 cp "$out" "s3://${BACKUPS_BUCKET}/pgdump/arb-$ts.dump"
+                  aws s3 cp "$out" "s3://${BACKUPS_BUCKET}/pgdump/latest.dump"
+                  rm -f "$out"
+                  echo "pg-dump: uploaded arb-$ts.dump ($bytes bytes)"
+                  cat <<METRICS | wget -q --post-file=- -O- "http://prometheus-pushgateway.monitoring:9091/metrics/job/pg_dump/instance/arb"
+                  # TYPE pg_dump_last_success_timestamp gauge
+                  pg_dump_last_success_timestamp $(date +%s)
+                  # TYPE pg_dump_last_size_bytes gauge
+                  pg_dump_last_size_bytes $bytes
+                  METRICS
+              env:
+                # REPLACE_POSTGRES_ENDPOINT from terraform output
+                # postgres_endpoint (the reader endpoint where one
+                # exists); credentials come from the same backup-role
+                # secret the pgbackrest jobs use.
+                - {name: PGHOST, value: REPLACE_POSTGRES_ENDPOINT}
+                - {name: PGPORT, value: "5432"}
+                - {name: PGDATABASE, value: arb}
+                - {name: PGPASSWORD, valueFrom: {secretKeyRef: {name: pgbackrest-credentials, key: PGPASSWORD}}}
+                - {name: BACKUPS_BUCKET, value: REPLACE_BACKUPS_BUCKET}
+              envFrom:
+                - {secretRef: {name: pgbackrest-credentials}}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources:
+                requests: {cpu: 250m, memory: 256Mi}
+                limits: {cpu: "2", memory: 2Gi}
+              volumeMounts:
+                - {name: backup, mountPath: /backup}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: backup
+              emptyDir: {sizeLimit: 20Gi}
+            - name: tmp
+              emptyDir: {}
+---
+# Alert companion (deploy/observability/platform-rules.yml holds the
+# series): pg_dump_last_success_timestamp older than 36 h should fire
+# DumpTooOld — the logical copy's RPO promise is the schedule below.

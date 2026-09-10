@@ -14,12 +14,16 @@ import (
 // Topic names one stream (scanner, health, cycles, pnl, alerts, …).
 type Topic string
 
-// Message is the wire frame.
+// Message is the wire frame. Error is set only on authorization
+// rejections (audit S11): a subscribe the caller's role does not permit
+// is answered with one error frame per refused topic instead of a
+// silent no-op, so a client never mistakes "not allowed" for "no data".
 type Message struct {
 	Topic    Topic           `json:"topic"`
 	Seq      uint64          `json:"seq"`
 	Snapshot bool            `json:"snapshot,omitempty"`
 	Resync   bool            `json:"resync,omitempty"`
+	Error    string          `json:"error,omitempty"`
 	Data     json.RawMessage `json:"data"`
 }
 
@@ -222,19 +226,58 @@ type ClientOp struct {
 	Topics []Topic `json:"topics"`
 }
 
-// HandleClientOp applies one inbound op to a sink.
-func (h *Hub) HandleClientOp(_ context.Context, s *Sink, raw []byte) error {
+// HandleClientOp applies one inbound op to a sink. allow is the
+// per-topic authorization the transport derives from the connection's
+// principal (audit S11): it answers "may THIS client see THAT topic".
+// Unsubscribe is always permitted (dropping a stream is never a
+// disclosure); a subscribe the allow function refuses returns one error
+// frame per refused topic to the client and subscribes nothing for it.
+// A nil allow permits everything (in-process callers; the WS transport
+// always supplies one and fails closed on unknown topics).
+func (h *Hub) HandleClientOp(_ context.Context, s *Sink, raw []byte, allow func(Topic) bool) error {
 	var op ClientOp
 	if err := json.Unmarshal(raw, &op); err != nil {
 		return err
 	}
 	switch op.Op {
 	case "subscribe":
-		return h.Subscribe(s, op.Topics...)
+		permitted := make([]Topic, 0, len(op.Topics))
+		var refused []Topic
+		for _, t := range op.Topics {
+			if allow == nil || allow(t) {
+				permitted = append(permitted, t)
+			} else {
+				refused = append(refused, t)
+			}
+		}
+		if len(permitted) > 0 {
+			if err := h.Subscribe(s, permitted...); err != nil {
+				return err
+			}
+		}
+		for _, t := range refused {
+			h.sendError(s, t, "forbidden")
+		}
 	case "unsubscribe":
 		h.Unsubscribe(s, op.Topics...)
 	}
 	return nil
+}
+
+// sendError enqueues an authorization error frame for one topic. It
+// never blocks: a full queue drops the frame — the topic was not
+// subscribed, so no data follows that could be misread anyway.
+func (h *Hub) sendError(s *Sink, t Topic, reason string) {
+	msg := Message{Topic: t, Error: reason}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.ch <- msg:
+	default:
+	}
 }
 
 // Clients reports the attached sink count (websocket_clients metric).

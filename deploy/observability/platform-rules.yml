@@ -108,6 +108,16 @@ groups:
         labels: {severity: critical, team: platform}
         annotations:
           summary: "No successful pgBackRest backup for 26h"
+      # Option B (docs/decisions/2026-09-10-backup-automation-option-b-logical-dump.md):
+      # the daily logical dump is the provider-neutral copy; its RPO
+      # promise is the 02:15 UTC schedule, so 36 h without success is a
+      # broken promise, not a hiccup.
+      - alert: DumpTooOld
+        expr: time() - pg_dump_last_success_timestamp > 36 * 3600
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "No successful logical dump for 36h (option-B RPO is 24h)"
+          runbook_url: https://github.com/cploutarchou/arb-chain-bot/blob/master/docs/runbooks/restore-drill.md
       - alert: BackupCheckStale
         expr: time() - pg_backup_check_timestamp > 1800
         labels: {severity: warning, team: platform}

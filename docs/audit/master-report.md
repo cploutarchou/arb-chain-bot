@@ -448,3 +448,59 @@ insurance) required by `docs/design/crypto-arb-platform-command.md`
 RULES (c) is recorded in `docs/decisions/`. No claim of profitability is
 made or supported by this review, and none should be inferred from the
 engineering scores above.
+
+### Addendum: the blocking items (this branch, 2026-09-10 later the same day)
+
+The review above described the merged remediation branch. Its verdict
+conditions named four things engineering could still close; all four are
+closed on this branch, with the updated ratings and evidence:
+
+- **S5** — the platform settings document (and its versions and preview
+  dry-run), the secrets inventory, and the shared-mux `/metrics` now
+  answer to `platform_admin` only; strategy config reads moved to
+  `scanner:config` (read what you can edit — OPERATOR keeps the page,
+  VIEWER loses it); the capabilities route strips the vault status and
+  the Telegram status strips the allowlist for non-platform-admins.
+- **S8** — every secret write and the whole inventory (not just the
+  exchange group) is `platform_admin`-only, and `UpdateUserRole` moves
+  `platform_admin` with the role exactly as `CreateUser` does at insert,
+  so a promoted ADMIN is never a quiet non-admin and a demotion never
+  keeps the flag.
+- **S10** — `POST /org/members` refuses accounts that already hold any
+  membership (this org included), naming the consented routes (operator
+  placement at creation, the T-085 invitation flow); roster e-mails are
+  manager-only; the org API-key inventory is manager-only.
+- **S11** — WebSocket subscribes are authorized per topic against the
+  same permissions the REST routes enforce, refused subscribes get an
+  explicit error frame, unknown topics fail closed, unsubscribe stays
+  free.
+- **P1-15** — decided and implemented: option B (recorded with evidence
+  in `docs/decisions/2026-09-10-backup-automation-option-b-logical-dump.md`):
+  a daily `pg_dump -Fc` CronJob into the object-locked bucket plus a
+  `pgdump` drill source. Exercised locally: guards hold, the archive
+  restores, the write-probe fails as required, all five checks pass
+  (`success=1 source=pgdump`), and the drill refuses without the
+  disposable flag. The exercise also caught and fixed a real defect —
+  `verify.sql`'s `CASE … 1/0` checks errored on every run because
+  PostgreSQL constant-folds constant division in a not-provably-dead
+  CASE arm; they are DO/RAISE blocks now.
+
+Ratings updated: **Security 7 → 8** (S5/S8/S10/S11 closed; S12–S15 P3
+remain), **Infra & delivery 6 → 7** (the backup decision made, the drill
+proven; I5–I15 partially). Verification for this addendum: gofmt/vet/
+golangci-lint clean, `go test -race ./...` green, the storage suite
+green against a disposable PostgreSQL 16 (000001–000021), web
+lint/typecheck/build green, Playwright 47/47.
+
+Fresh campaign evidence was produced on the remediated engine the same
+day (`docs/campaigns/01M25GET9C8XVKD9358JT15BNC/`): a 5 m 15 s live
+Binance recording, 24 scenarios, **zero qualified opportunities** — the
+fee wall rejects the entire opportunity space at Regular tier in that
+window, consistent with every prior campaign. No profitability claim is
+made; the run demonstrates the honest negative end to end.
+
+Of the verdict's original conditions, two remain, neither an engineering
+gap: a campaign showing a positive net edge (the market has not
+provided one), and the production-execution-gate review (legal,
+compliance, insurance) recorded by the operator. The verdict stays
+**NOT READY FOR LIVE TRADING**.
