@@ -10,45 +10,35 @@ this branch since the test-database cleanup fix; the secret scan is green.
 
 - **P0-1, P0-2, P0-3** — all fixed with tests (see
   `implementation-roadmap.md`, "P0 status").
-- **P1** — fixed: P1-1 … P1-9, P1-10 … P1-14, P1-16, P1-17, P1-18 … P1-23;
-  P1-15 partly (the restore drill fails closed and the managed-database
-  backup options are documented; provider automation is an operator
-  decision). P1-24 (console): F1, F2, F3, F4, F7, F8 are implemented
-  (lint, typecheck and `next build` pass; the Playwright suite passes
-  41 of 43 against a real backend, the two failures being pre-existing
-  and bound to an environment without exchange network egress); F5
-  (overview five-second test) and F6 (Paper page as a live-cycle
-  monitor) are not started.
+- **P1** — fixed: P1-1 … P1-24 complete (P1-15's engineering half is
+  fixed and the backup-automation choice is framed as an open operator
+  decision in `docs/decisions/2026-09-10-backup-automation-open-operator-decision.md`).
+  P1-24 (console): F1–F8 all implemented — F5 (overview five-second
+  test: PnL/drawdown/fees, breakers, feed state, venue clock,
+  capital-in-use) and F6 (Paper page as a live-cycle monitor over
+  `GET /api/v1/paper/active`, with reason/fees/duration on the persisted
+  cycles) landed with migration 000021; lint, typecheck, `next build`
+  and the full Playwright suite (47 tests) pass.
 - **P2 pulled forward** — F10, F11, F12, F13, F14, F16, M3, M4, M5, O6, O8,
-  T2, T4, T5, T6 (see "P2 status" in the roadmap).
+  T2, T4, T5, T6, and now T8 (metadata-diff breaker) and the S4
+  `CreateUser` org-placement follow-up; T7 is resolved by a recorded
+  decision (`docs/research/fees.md` §"Decision record": operator-configured
+  rates; the automatic per-account fetch needs a vault read that is
+  write-only by design).
+- **Breaker acknowledgement** — `POST /api/v1/risk/breakers/close`
+  (ADMIN, CSRF, audited, type-to-confirm) calls `risk.Registry.Close`;
+  the Risk Center renders the control beside each open breaker's reason.
 
 ## What remains
 
-1. Console (P1-24): implement F5 and F6 from `docs/audit/ui-ux-audit.md`
-   (F1–F8 are done; `web/src/lib/outcomes.ts`, `PaperControl.tsx`,
-   `OutcomeBadge.tsx` and `web/src/lib/decimal.ts` are the shared pieces).
-   The backend now exposes `ABORTED` as a cycle outcome, `queues.paper.dropped`,
-   `queues.outbox.write_failures`/`failing`/`unlinked_cycles`, `clock.*`
-   in `GET /api/v1/system/health`, `fees_marked` / `fees_by_asset` /
-   `fees_unmarked` in `GET /api/v1/pnl`, `memberships` in `GET /api/v1/me`,
-   the `X-Org-ID` request header, and `revalidations` /
-   `revalidation_rejects` / `invariant_violations` counters.
-2. A breaker acknowledgement endpoint: the `daily_loss`, `drawdown`,
-   `slippage` and `simulation_inconsistency` breakers stay OPEN until an
-   operator closes them, and there is no API for that yet. Add
-   `POST /api/v1/risk/breakers/close` (ADMIN, CSRF, audited, type-to-confirm)
-   calling `risk.Registry.Close`, and a Risk Center control.
-3. Remaining P2/P3 items in `implementation-roadmap.md`, in particular T7
-   (fee rates from the venue), T8 (topology and instrument rules refreshed
-   on a timer, or at least a metadata diff that opens a breaker), P1-15's
-   backup automation (operator decision), and the S4 follow-up that
-   `CreateUser` still joins every console account to organisation 1.
-4. Regression and the final review: run the full suite (below), refresh
+1. Regression and the final review: run the full suite (below), refresh
    `master-report.md` §ratings and the verdict with measured evidence,
-   update `test-plan.md` and `performance-plan.md` with the new tests and
-   the sizer measurements (exact path 1.5–1.6 ms/op, 12 048 allocs; the
-   previous search 6.8–8.1 ms/op, 108 231 allocs on the shared host), and
-   update the pull request description.
+   update `test-plan.md` and `performance-plan.md` with the new tests,
+   and update the pull request description.
+2. Optional hardening from the P2/P3 backlog (none block the review):
+   T10 (screener constraint duplication), D7–D10 database items, S5/S8/
+   S10/S11 console-RBAC and consent items, X-series scanner polish,
+   O7/O9/O10/O11 observability, F9–F19 console P2s.
 
 ## How to resume
 

@@ -134,6 +134,9 @@ and the option B CronJob. Until a choice is recorded, the weekly
 CronJob's physical drill fails at the pgBackRest restore step on the
 managed tier (no usable stanza) and reports `RestoreDrillFailed`, which
 is the honest state; pointing it at production is refused regardless.
+The open decision is framed in
+`docs/decisions/2026-09-10-backup-automation-open-operator-decision.md`
+(P1-15) — record the chosen option there when it is made.
 
 ## verify.sql checks (read-only)
 
