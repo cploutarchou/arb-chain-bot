@@ -345,6 +345,10 @@ export interface PaperStatus {
   skipped: number;
   /** Qualified opportunities refused by a full paper queue, never simulated. */
   dropped?: number;
+  /** Qualified opportunities the pre-execution re-check refused. */
+  revalidation_rejected?: number;
+  /** Ledger conservation failures; any non-zero value paused the engine. */
+  invariant_violations?: number;
 }
 
 export interface ScannerStatus {
@@ -392,11 +396,50 @@ export interface CycleRow {
   session_id: string;
   opportunity_id?: string;
   outcome: string;
+  /** Backend close reason (why an adverse outcome happened); absent on all-filled and pre-000021 rows. */
+  reason?: string;
   pnl_amount?: string;
   pnl_asset?: string;
+  realized_pnl?: string;
+  exposure_mark?: string;
+  input_consumed?: string;
+  final_amount?: string;
   slippage_bps?: string;
+  /** Per-asset fee bill as persisted (decimal strings). */
+  fees?: Record<string, string>;
   started_at: string;
   settled_at?: string;
+}
+
+// LegStage of one in-flight cycle's leg, from execution.LegStage — the
+// same vocabulary the settled orders use, projected for the live view.
+export type PaperLegStage = "PENDING" | "SUBMITTED" | "FILLED" | "FAILED";
+
+export interface PaperActiveLeg {
+  leg_no: number;
+  market: string;
+  side: string;
+  stage: PaperLegStage;
+}
+
+// PaperActiveCycle is one in-flight simulation (audit F6). The
+// expected* fields are the plan's own figures — realized PnL exists
+// only on the settled cycle.
+export interface PaperActiveCycle {
+  cycle_id: string;
+  opportunity_id: string;
+  triangle_id: string;
+  start_asset: string;
+  input: string;
+  expected_net_bps: string;
+  expected_profit: string;
+  started_at: string;
+  legs: PaperActiveLeg[];
+}
+
+export interface PaperActiveView {
+  running: boolean;
+  cycles: PaperActiveCycle[] | null;
 }
 
 export interface OrderRow {
@@ -501,14 +544,23 @@ export interface PortfolioView {
   at: string;
 }
 
+export interface PnLAssetRow {
+  asset: string;
+  realized: string;
+  exposure_mark: string;
+  net_pnl: string;
+  unmarked: string[];
+  fees: string;
+  /** Every fee asset valued in the start asset (the honest fee bill). */
+  fees_marked: string;
+  fees_by_asset: Record<string, string>;
+  fees_unmarked: string[];
+  daily_loss: string;
+  drawdown: string;
+}
+
 export interface PnLView {
-  assets: {
-    asset: string;
-    realized: string;
-    fees: string;
-    daily_loss: string;
-    drawdown: string;
-  }[];
+  assets: PnLAssetRow[];
 }
 
 // ---- PnL & Analytics (BL-19) -----------------------------------------------
@@ -782,6 +834,17 @@ export interface FeedHealth {
   api_errors: number;
   resyncs: number;
   seq_gaps: number;
+  /** Cumulative REST 429/418 count (readmodel emits it in both views). */
+  rate_limited?: number;
+}
+
+// Venue-clock monitor view (P1-8): healthy is false until the first
+// successful probe; offset_ms is RTT-halved venue-vs-local offset.
+// Present only in engine profiles with a clock monitor wired.
+export interface ClockHealth {
+  healthy: boolean;
+  offset_ms: number;
+  last_error?: string;
 }
 
 export interface HealthView {
@@ -791,6 +854,8 @@ export interface HealthView {
   feed?: FeedHealth;
   books?: { market: string; state: string; age_ms: number }[];
   paper?: PaperStatus;
+  clock?: ClockHealth;
+  queues?: { outbox?: QueueDepth; paper?: QueueDepth; recorder?: QueueDepth };
 }
 
 // ---- System Health (BL-18) -------------------------------------------------
@@ -822,6 +887,7 @@ export interface FeedHealthFull {
   api_errors: number;
   resyncs: number;
   seq_gaps: number;
+  rate_limited?: number;
   msgs_per_sec: number;
   latency_ms?: LatencySnapshot;
 }
@@ -858,6 +924,7 @@ export interface SystemHealthView {
   feed?: FeedHealthFull;
   books?: { market: string; state: string; age_ms: number }[];
   paper?: PaperStatus;
+  clock?: ClockHealth;
   queues?: { outbox?: QueueDepth; paper?: QueueDepth; recorder?: QueueDepth };
   database?: PoolStat;
   restart?: RestartStatus;
@@ -2110,6 +2177,9 @@ export const api = {
   paper: {
     pause: () => post<{ running: boolean }>("/api/v1/paper/pause"),
     resume: () => post<{ running: boolean }>("/api/v1/paper/resume"),
+    // F6: the live-cycle monitor — in-flight cycles with leg stages.
+    // 404s with paper_absent outside PAPER mode (honest, not empty).
+    active: () => get<PaperActiveView>("/api/v1/paper/active"),
     cycles: (limit = 100) =>
       get<{ cycles: CycleRow[] | null }>(`/api/v1/paper/cycles?limit=${limit}`),
     orders: (cycleID: string) =>
@@ -2147,6 +2217,17 @@ export const api = {
       ),
   },
   risk: () => get<RiskView>("/api/v1/risk"),
+  riskBreakers: {
+    // Operator acknowledgement for a breaker that stays OPEN until a
+    // human closes it (daily_loss, drawdown, slippage,
+    // simulation_inconsistency). ADMIN-only, CSRF, audited; confirm
+    // must repeat the breaker's name verbatim (type-to-confirm).
+    close: (name: string, scope = "") =>
+      post<{ name: string; scope: string; state: string }>(
+        "/api/v1/risk/breakers/close",
+        { name, scope, confirm: name },
+      ),
+  },
   riskEvents: {
     // BL-31: persisted risk-event timeline (breaker transitions +
     // rejections), unlike risk()'s in-memory reject_reason_counts.

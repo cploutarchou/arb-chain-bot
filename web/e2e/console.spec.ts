@@ -1470,3 +1470,284 @@ test.describe("Scanner Suite", () => {
     await expect(page.getByText(/SIMULATED\. Paper result/)).toBeVisible();
   });
 });
+
+// --- F5: overview five-second test -----------------------------------------
+// PnL, risk (breakers), feed state and clock join the strip: mocked to
+// deterministic payloads so the assertions pin exactly what the cells
+// render (the live engine has no exchange egress, so the real books/clock
+// sections can be absent for a long time — see mockPaperRunning's note).
+test("overview answers PnL, breakers, feed state and clock in the status strip (F5)", async ({
+  page,
+}) => {
+  await login(page);
+  await page.route("**/api/v1/pnl", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          assets: [
+            {
+              asset: "USDT",
+              realized: "-12.5",
+              exposure_mark: "0",
+              net_pnl: "-12.5",
+              unmarked: [],
+              fees: "1.1",
+              fees_marked: "1.34",
+              fees_by_asset: { USDT: "1.1", BNB: "0.0012" },
+              fees_unmarked: [],
+              daily_loss: "-12.5",
+              drawdown: "0.0012",
+            },
+          ],
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route("**/api/v1/risk", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          config_version: 1,
+          breakers: [
+            { Name: "daily_loss", Scope: "", State: "OPEN", Reason: "USDT session loss reached the limit" },
+          ],
+          reject_reason_counts: {},
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route("**/api/v1/system/health", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          ready: true,
+          triangles: 2,
+          scanner: { evaluations: 10, revalidations: 4, revalidation_rejects: 1 },
+          feed: { frames: 100, reconnects: 0, api_errors: 0, resyncs: 0, seq_gaps: 0, rate_limited: 0 },
+          books: [
+            { market: "BTCUSDT", state: "HEALTHY", age_ms: 40 },
+            { market: "ETHBTC", state: "HEALTHY", age_ms: 55 },
+            { market: "ETHUSDT", state: "STALE", age_ms: 900 },
+          ],
+          clock: { healthy: true, offset_ms: 12.5 },
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto("/overview");
+
+  // Realized PnL with the asset, toned by the backend's own sign.
+  const pnl = page.getByText("Realized PnL (session)").locator("..");
+  await expect(pnl.getByText("-12.5 USDT")).toBeVisible({ timeout: 10_000 });
+  // Breakers open, bad when > 0, with the reason one hover away.
+  const breakers = page.getByText("Breakers open").locator("..");
+  await expect(breakers.getByText("1")).toBeVisible();
+  // Feed cell: one STALE book of three → DEGRADED.
+  const feed = page.getByText("Feed", { exact: true }).locator("..");
+  await expect(feed.getByText("DEGRADED")).toBeVisible();
+  // Venue clock cell.
+  const clock = page.getByText("Venue clock").locator("..");
+  await expect(clock.getByText("OK")).toBeVisible();
+  // Fees and drawdown cells render the backend's own strings.
+  await expect(page.getByText("1.34 USDT").first()).toBeVisible();
+  await expect(page.getByText("0.0012 USDT").first()).toBeVisible();
+});
+
+test("overview explains a missing paper engine instead of a bare N/A (F5)", async ({
+  page,
+}) => {
+  await login(page);
+  await page.route("**/api/v1/scanner/status", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { data?: { paper?: unknown } | null };
+    if (body.data) delete body.data.paper;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/overview");
+  const cell = page.getByText("Paper engine").locator("..");
+  await expect(cell.getByText("NOT RUNNING")).toBeVisible({ timeout: 10_000 });
+  await expect(cell.getByText("N/A")).toHaveCount(0);
+});
+
+// --- F6: Paper page as a live-cycle monitor --------------------------------
+test("paper page shows in-flight cycles with leg badges, elapsed and the persisted reason (F6)", async ({
+  page,
+}) => {
+  await login(page);
+  await mockPaperRunning(page, true);
+  await page.route("**/api/v1/paper/active", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          running: true,
+          cycles: [
+            {
+              cycle_id: "cyc-live-1",
+              opportunity_id: "op-live-1",
+              triangle_id: "binance|USDT|BTCUSDT>ETHBTC>ETHUSDT",
+              start_asset: "USDT",
+              input: "1000",
+              expected_net_bps: "12.5000",
+              expected_profit: "1.25",
+              started_at: new Date(Date.now() - 1500).toISOString(),
+              legs: [
+                { leg_no: 1, market: "BTCUSDT", side: "BUY", stage: "FILLED" },
+                { leg_no: 2, market: "ETHBTC", side: "BUY", stage: "SUBMITTED" },
+                { leg_no: 3, market: "ETHUSDT", side: "SELL", stage: "PENDING" },
+              ],
+            },
+          ],
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route("**/api/v1/paper/cycles**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          cycles: [
+            {
+              id: "cyc-settled-1",
+              session_id: "sess-1",
+              opportunity_id: "op-1",
+              outcome: "LEG1_FILLED_LEG2_FAILED",
+              reason: "book ETHBTC is STALE at fill time",
+              pnl_amount: "-9.9",
+              pnl_asset: "USDT",
+              realized_pnl: "-10",
+              exposure_mark: "0.1",
+              slippage_bps: null,
+              fees: { BNB: "0.0012" },
+              started_at: new Date(Date.now() - 60_000).toISOString(),
+              settled_at: new Date(Date.now() - 59_900).toISOString(),
+            },
+          ],
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto("/paper");
+
+  await expect(
+    page.getByText("Live cycles (in flight)"),
+  ).toBeVisible({ timeout: 10_000 });
+  const card = page.getByTestId("active-cycle");
+  await expect(card).toBeVisible();
+  // Leg badges: the stuck leg reads SUBMITTED, later legs PENDING.
+  await expect(card.getByText("1 BTCUSDT BUY · FILLED")).toBeVisible();
+  await expect(card.getByText("2 ETHBTC BUY · SUBMITTED")).toBeVisible();
+  await expect(card.getByText("3 ETHUSDT SELL · PENDING")).toBeVisible();
+  await expect(card.getByText("1000 USDT")).toBeVisible();
+  await expect(card.getByText(/expected/)).toBeVisible();
+  // Elapsed ticks on the client clock between polls.
+  await expect(card.getByTestId("active-cycle-elapsed")).toContainText(
+    /elapsed/,
+  );
+
+  // The persisted table answers "why", carries the fee bill and the
+  // opportunity cross-link.
+  await expect(page.getByText("book ETHBTC is STALE at fill time")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText("0.0012 BNB")).toBeVisible();
+  await expect(page.getByText("Realized PnL", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "opportunity" })).toHaveAttribute(
+    "href",
+    "/opportunities/op-1",
+  );
+});
+
+// --- Breaker acknowledgement (Risk Center) ---------------------------------
+test("risk center closes an open breaker with the backend's own failure copy and a name-typed confirm", async ({
+  page,
+}) => {
+  await login(page);
+  let closeCalls = 0;
+  await page.route("**/api/v1/risk", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          config_version: 1,
+          breakers: [
+            { Name: "daily_loss", Scope: "", State: "OPEN", Reason: "USDT session loss 500 reached the limit 500" },
+          ],
+          reject_reason_counts: {},
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto("/risk");
+  await expect(page.getByText("USDT session loss 500 reached the limit 500")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const closeButton = page.getByRole("button", { name: "Close…" });
+  await expect(closeButton).toBeVisible();
+  await closeButton.click();
+
+  const dialog = page.getByRole("dialog", { name: /Close breaker daily_loss/ });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/resumes qualification on the next evaluation/i)).toBeVisible();
+
+  // The confirm is disabled until the operator types the breaker's name.
+  const confirm = dialog.getByRole("button", { name: "Close daily_loss" });
+  await expect(confirm).toBeDisabled();
+  await dialog.getByLabel(/Type the breaker name/).fill("daily_los");
+  await expect(confirm).toBeDisabled();
+  await dialog.getByLabel(/Type the breaker name/).fill("daily_loss");
+  await expect(confirm).toBeEnabled();
+
+  // Failure first: the toast must carry the backend's own status and
+  // message verbatim (same convention as the paper pause control).
+  await page.route("**/api/v1/risk/breakers/close", async (route) => {
+    closeCalls++;
+    if (closeCalls === 1) {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: null,
+          error: { code: "breaker_busy", message: "loss limit re-armed; read the reason" },
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: { name: "daily_loss", scope: "", state: "CLOSED" },
+        error: null,
+      }),
+    });
+  });
+  await confirm.click();
+  await expect(
+    page.getByText("Close failed (HTTP 409): loss limit re-armed; read the reason"),
+  ).toBeVisible();
+  await expect(dialog).toBeVisible(); // stays open on failure
+
+  await dialog.getByRole("button", { name: "Close daily_loss" }).click();
+  await expect(
+    page.getByText(/Breaker daily_loss is CLOSED/),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(dialog).toHaveCount(0);
+});

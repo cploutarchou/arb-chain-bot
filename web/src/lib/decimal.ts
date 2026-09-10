@@ -80,3 +80,48 @@ export function signedText(value: string | undefined | null): string {
   if (/^0(\.0+)?$/.test(t)) return value;
   return `+${value}`;
 }
+
+// subtractDecimalStr: exact subtraction of two finite decimal strings
+// (BigInt-scaled — digit-exact for any length the backend sends, never
+// a binary float). Display-only: the one caller is the orders table's
+// "remaining quantity" column (requested − filled), a convenience read
+// of two values the backend already sent; anything that feeds a
+// decision, a ledger or a persisted row stays server-side in
+// shopspring/decimal. null when either input is missing or malformed —
+// "unknown", never a fabricated 0.
+export function subtractDecimalStr(
+  a: string | undefined | null,
+  b: string | undefined | null,
+): string | null {
+  const parse = (v: string | undefined | null): { neg: boolean; digits: string; scale: number } | null => {
+    if (typeof v !== "string") return null;
+    const t = v.trim();
+    if (!/^-?\d+(\.\d+)?$/.test(t) || t === "-" || t === "") return null;
+    const neg = t.startsWith("-");
+    const unsigned = neg ? t.slice(1) : t;
+    const dot = unsigned.indexOf(".");
+    const intPart = dot === -1 ? unsigned : unsigned.slice(0, dot);
+    const fracPart = dot === -1 ? "" : unsigned.slice(dot + 1);
+    return {
+      neg,
+      digits: (intPart.replace(/^0+(?=\d)/, "") + fracPart) || "0",
+      scale: fracPart.length,
+    };
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  const scale = Math.max(x.scale, y.scale);
+  const scaled = (p: { neg: boolean; digits: string; scale: number }) => {
+    const d = p.scale < scale ? p.digits + "0".repeat(scale - p.scale) : p.digits;
+    const v = BigInt(d === "" ? "0" : d);
+    return p.neg ? -v : v;
+  };
+  const diff = scaled(x) - scaled(y);
+  const neg = diff < 0n;
+  const abs = (neg ? -diff : diff).toString().padStart(scale + 1, "0");
+  const intPart = scale === 0 ? abs : abs.slice(0, abs.length - scale);
+  const fracPart = scale === 0 ? "" : abs.slice(abs.length - scale).replace(/0+$/, "");
+  const body = fracPart ? `${intPart}.${fracPart}` : intPart;
+  return body === "0" ? "0" : neg ? `-${body}` : body;
+}
