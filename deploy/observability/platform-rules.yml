@@ -2,12 +2,10 @@
 # prometheus-rules.yml (engine-level rules). Load both as PrometheusRule
 # objects (kube-prometheus-stack) — see prometheusrule.yaml.
 #
-# Series marked "PENDING EXPORTER" are not yet emitted by internal/metrics
-# and are tracked as follow-up work; the rules are kept here so the
-# dashboards/alerts land together with the exporter change:
-#   - exchange_rate_limited_total{venue}  (HTTP 429 / WS -1003 responses)
-#   - db_migrations_pending                  (count of unapplied files)
-#   - campaign_runs_total{status}            (from internal/campaign)
+# The three series this header used to mark "PENDING EXPORTER"
+# (exchange_rate_limited_total{venue}, db_migrations_pending,
+# campaign_runs_total{status}) are implemented and wired — the two rules
+# below their old comments are live, not aspirational.
 groups:
   - name: arb-feed
     rules:
@@ -21,7 +19,6 @@ groups:
           description: "No book updates for 30s; qualification is suppressed. Runbook: docs/runbooks/feed-stale.md"
           runbook_url: https://github.com/cploutarchou/arb-chain-bot/blob/master/docs/runbooks/feed-stale.md
       - alert: CollectorRateLimited
-        # PENDING EXPORTER: exchange_rate_limited_total
         expr: increase(exchange_rate_limited_total[10m]) > 0
         labels: {severity: warning, team: platform}
         annotations:
@@ -33,6 +30,29 @@ groups:
         labels: {severity: critical, team: platform}
         annotations:
           summary: "Sustained rate limiting on {{ $labels.venue }}; ban risk"
+
+  - name: arb-screener
+    rules:
+      - alert: ScreenerVenueOffline
+        # O10: the venue's last poll failed (or it never succeeded since
+        # start); its quotes age out of the book after 3 missed polls
+        # (X7), so lanes quietly lose a side.
+        expr: screener_venue_online == 0
+        for: 5m
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Screener venue {{ $labels.venue }} offline for 5m"
+          description: "Last poll failing; check the collector's LastError in /api/v1/screener/status and the venue's API status page."
+      - alert: ScreenerVenueSlow
+        # O10: a poll taking a third of the default 5 s interval and
+        # staying there — the venue is degrading before it dies, and every
+        # quote it returns is that much older on arrival.
+        expr: screener_poll_latency_ms > 2000
+        for: 10m
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Screener venue {{ $labels.venue }} polls take {{ $value }} ms"
+          description: "Sustained slow polls; lanes' data-age gates will start holding events (HOLD_TIMEOUT closes in screener_alerts)."
 
   - name: arb-recorder
     rules:
@@ -54,7 +74,6 @@ groups:
   - name: arb-campaign
     rules:
       - alert: CampaignRunFailed
-        # PENDING EXPORTER: campaign_runs_total{status}
         expr: increase(campaign_runs_total{status="failed"}[1h]) > 0
         labels: {severity: warning, team: platform}
         annotations:
@@ -64,8 +83,6 @@ groups:
   - name: arb-database
     rules:
       - alert: MigrationsPending
-        # PENDING EXPORTER: db_migrations_pending. Until then the migrate
-        # hook failing aborts the release, which is the same signal.
         expr: db_migrations_pending > 0
         for: 10m
         labels: {severity: critical, team: platform}

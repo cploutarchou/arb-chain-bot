@@ -24,10 +24,17 @@ scrape_configs:
 ## Files
 
 - `prometheus-rules.yml` — alert rules grouped by subsystem (market
-  data, scanner, risk/paper, API). Thresholds assume 15s scrapes.
+  data, scanner, risk/paper, slippage, API). Thresholds assume 15s
+  scrapes.
+- `platform-rules.yml` — platform/SRE rules: feeds, collectors,
+  screener venues (offline/slow, O10), recorder, campaigns, database,
+  backups.
 - `grafana-dashboard.json` — starter dashboard: feed health, book
-  states/age, scanner throughput, qualified edge, paper outcomes and
-  PnL, API latency.
+  states/age, scanner throughput, qualified edge, realized slippage
+  p50/p95 (O7), paper outcomes and PnL, API latency.
+- `grafana-dashboard-platform.json` — SRE dashboard: feed SLOs,
+  rate limits, recorder, campaigns, screener venue health (O10), API,
+  pod/Postgres/backup panels.
 
 ## Conventions
 
