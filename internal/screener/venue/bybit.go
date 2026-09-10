@@ -203,6 +203,7 @@ func (c *bybitCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 		}
 		out = append(out, screener.Perp{Venue: screener.VenueBybit, Base: in.Base, Quote: in.Quote,
 			Mark: t.MarkPrice.Decimal, Index: t.IndexPrice.Decimal, Bid: t.Bid1Price.Decimal, Ask: t.Ask1Price.Decimal,
+			BidQty: t.Bid1Size.Decimal, AskQty: t.Ask1Size.Decimal,
 			FundingRate: t.FundingRate.Decimal, PredictedFundingRate: t.FundingRate.Decimal,
 			IntervalH: in.IntervalH, NextFundingAt: next, At: at})
 	}

@@ -44,7 +44,7 @@ func TestCarryRefusedWhenBreakevenExceedsHold(t *testing.T) {
 	// refused by below_min_edge first, which is also correct but proves
 	// nothing about breakeven).
 	svc.Book.SetPerp(screener.Perp{Venue: screener.VenueBinance, Base: "BTC", Quote: "USDT",
-		Mark: d("50050"), Index: d("49999"), Bid: d("50300"), Ask: d("50302"),
+		Mark: d("50050"), Index: d("49999"), Bid: d("50300"), Ask: d("50302"), BidQty: d("2"), AskQty: d("2"),
 		FundingRate: d("0.0001"), PredictedFundingRate: d("0.0001"), IntervalH: 8,
 		NextFundingAt: t0.Add(4 * time.Hour), At: t0})
 
@@ -75,7 +75,7 @@ func TestCarryRefusedWhenItWouldCloseImmediately(t *testing.T) {
 	// Widen the perp spread so the exit-side basis sits below close_bps
 	// while the entry-side basis still looks attractive.
 	svc.Book.SetPerp(screener.Perp{Venue: screener.VenueBinance, Base: "BTC", Quote: "USDT",
-		Mark: d("50050"), Index: d("49999"), Bid: d("50100"), Ask: d("49990"),
+		Mark: d("50050"), Index: d("49999"), Bid: d("50100"), Ask: d("49990"), BidQty: d("2"), AskQty: d("2"),
 		FundingRate: d("0.0001"), PredictedFundingRate: d("0.0001"), IntervalH: 8,
 		NextFundingAt: t0.Add(4 * time.Hour), At: t0})
 

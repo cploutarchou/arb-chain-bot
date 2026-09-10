@@ -380,3 +380,40 @@ func TestStopsFire(t *testing.T) {
 }
 
 var _ = alerts.Lane{}
+
+// TestPerpLegDepthBoundsTheFill (audit X8): the §1.3 haircut applies to
+// both legs. With deep spot depth and a thin perp bid, the fillable
+// quantity is the perp side's bound, not the spot side's — before X8
+// the executor filled at any size the spot book supported.
+func TestPerpLegDepthBoundsTheFill(t *testing.T) {
+	h := newHarness(t, nil)
+	h.balance(screener.VenueBinance, "USDT", "100000")
+	h.balance(screener.VenueBinance, "USDT:perp", "100000")
+	partial, mmr := true, d("0.005")
+	r := h.rule(carryRule(screener.RuleKindCarry, &screener.RuleParams{PartialAllowed: partial, MMR: &mmr}))
+	for i := 1; i <= 30; i++ {
+		_ = h.svc.Funding.UpsertFunding(context.Background(), screener.VenueBinance, "BTC", t0.Add(-time.Duration(i*8)*time.Hour), "0.00012")
+	}
+	// Spot ask 50 000 × 2 BTC (deep: 100 000 quote of depth); perp bid
+	// 50 100 × 0.05 BTC (2 505 quote). Size 10 000 quote must come down
+	// to the perp's 2 505 (haircut 1.0), not the spot's 100 000.
+	setSpot(h.svc.Book, screener.VenueBinance, "49998", "2", "50000", "2", t0)
+	h.svc.Book.SetPerp(screener.Perp{Venue: screener.VenueBinance, Base: "BTC", Quote: "USDT",
+		Mark: d("50050"), Index: d("49999"), Bid: d("50100"), Ask: d("50102"), BidQty: d("0.05"), AskQty: d("0.05"),
+		FundingRate: d("0.0001"), PredictedFundingRate: d("0.0001"), IntervalH: 8,
+		NextFundingAt: t0.Add(4 * time.Hour), At: t0})
+	h.open(r, t0)
+
+	pos := h.positions(r.ID)
+	if len(pos) != 1 || pos[0].Status != StatusOpen {
+		t.Fatalf("positions = %+v", pos)
+	}
+	// 2 505 quote / 50 000 per perp bid = 0.05; step-truncated to the
+	// instrument step. Before X8 the fill was the spot-bound quantity.
+	if !pos[0].Qty.LessThanOrEqual(d("0.05")) {
+		t.Fatalf("qty = %s, want bounded by the perp bid depth 0.05", pos[0].Qty)
+	}
+	if ex := h.execs(r.ID); len(ex) == 0 {
+		t.Fatal("no executions recorded")
+	}
+}
