@@ -158,3 +158,29 @@ func TestMarketTradeable(t *testing.T) {
 		}
 	}
 }
+
+// ForMarketOrders swaps in the market-order quantity filter field by
+// field, keeping the limit-order values where the venue publishes none.
+func TestForMarketOrders(t *testing.T) {
+	dec := decimal.RequireFromString
+	r := InstrumentRules{
+		QtyMode: PrecisionStep, QtyStep: dec("0.001"), MinQty: dec("0.01"), MaxQty: dec("1000"),
+		PriceMode: PrecisionStep, PriceTick: dec("0.01"),
+		MarketMaxQty: dec("50"),
+	}
+	m := r.ForMarketOrders()
+	if !m.MaxQty.Equal(dec("50")) || !m.MinQty.Equal(dec("0.01")) || !m.QtyStep.Equal(dec("0.001")) {
+		t.Fatalf("market rules = %+v", m)
+	}
+	if err := m.ValidateOrder(dec("100"), dec("60")); err == nil {
+		t.Fatal("market rules accepted a quantity above the market maximum")
+	}
+	if err := r.ValidateOrder(dec("100"), dec("60")); err != nil {
+		t.Fatalf("limit rules rejected a quantity the limit filter allows: %v", err)
+	}
+	r.MarketQtyStep, r.MarketMinQty = dec("0.1"), dec("1")
+	m = r.ForMarketOrders()
+	if !m.QtyStep.Equal(dec("0.1")) || !m.MinQty.Equal(dec("1")) {
+		t.Fatalf("market step/min = %+v", m)
+	}
+}

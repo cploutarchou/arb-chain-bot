@@ -55,6 +55,10 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 			return []AssetPnL{{Asset: "USDT", Realized: 12.5, Fees: 1.25}}
 		},
 		Recorder: func() (int64, int64) { return 100, 2 },
+		Outbox: func() *QueueStats {
+			return &QueueStats{Depth: 3, Capacity: 4096, Dropped: 1, WriteFailures: 2, Written: 40}
+		},
+		PaperQueue: func() *QueueStats { return &QueueStats{Depth: 1, Capacity: 128, Dropped: 5} },
 	}
 	if err := m.RegisterEngine(src); err != nil {
 		t.Fatal(err)
@@ -67,6 +71,14 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 	m.ObserveMessageLatency("binance", 18)
 	m.ObserveQualifiedEdge("binance", 12)
 	m.ObserveSlippage("binance", -1.5)
+	m.ObserveOrderLatency("binance", "submit_ack", 21)
+	m.ObserveOrderLatency("binance", "ack_fill", 40)
+	m.ObserveCycleDuration("binance", 180)
+	m.CountRejection("binance", "qualification", "RISK_MIN_EDGE")
+	m.CountRejection("binance", "qualification", "RISK_MIN_EDGE")
+	m.CountRejection("binance", "revalidation", "RISK_BREAKER_OPEN")
+	m.CountCycleOutcome("binance", "LEG1_PARTIAL")
+	m.CountOrderStatus("binance", "PARTIALLY_FILLED")
 
 	page := scrape(t, m)
 	for _, name := range []string{
@@ -98,6 +110,23 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		"circuit_breaker_state",
 		"recorder_frames_written_total",
 		"recorder_frames_dropped_total",
+		"paper_cycles_received_total",
+		"paper_cycles_skipped_total",
+		"outbox_queue_depth",
+		"outbox_queue_capacity",
+		"outbox_records_dropped_total",
+		"outbox_write_failures_total",
+		"outbox_records_written_total",
+		"paper_queue_depth",
+		"paper_queue_capacity",
+		"paper_queue_dropped_total",
+		"opportunities_revalidated_total",
+		"opportunities_revalidation_rejected_total",
+		"order_latency_ms_bucket",
+		"cycle_duration_ms_bucket",
+		"risk_rejections_total",
+		"paper_cycle_outcomes_total",
+		"order_outcomes_total",
 	} {
 		if !strings.Contains(page, name) {
 			t.Errorf("exposition missing %s", name)
@@ -109,6 +138,14 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		`orderbook_state{exchange="binance",market="BTCUSDT"} 1`,
 		`capital_available{asset="USDT"} 9000`,
 		`websocket_clients 7`,
+		`outbox_write_failures_total 2`,
+		`paper_queue_dropped_total 5`,
+		`risk_rejections_total{exchange="binance",reason="RISK_MIN_EDGE",stage="qualification"} 2`,
+		`risk_rejections_total{exchange="binance",reason="RISK_BREAKER_OPEN",stage="revalidation"} 1`,
+		`paper_cycle_outcomes_total{exchange="binance",outcome="LEG1_PARTIAL"} 1`,
+		`order_outcomes_total{exchange="binance",status="PARTIALLY_FILLED"} 1`,
+		`order_latency_ms_count{exchange="binance",stage="submit_ack"} 1`,
+		`cycle_duration_ms_count{exchange="binance"} 1`,
 	} {
 		if !strings.Contains(page, frag) {
 			t.Errorf("exposition missing series %q", frag)
@@ -196,6 +233,9 @@ func TestScreenerAndPlatformSeries(t *testing.T) {
 			return []PaperExecStat{{Strategy: "cross_venue_spot", Outcome: "executed", Count: 4},
 				{Strategy: "cross_venue_spot", Outcome: "skipped", Count: 2}}
 		},
+		Lanes: func() *LaneStat {
+			return &LaneStat{Universe: 601, Lanes: 500, Truncated: 101, TruncatedTotal: 101, Holding: 3, HoldTimeoutCloses: 2}
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +257,11 @@ func TestScreenerAndPlatformSeries(t *testing.T) {
 		`screener_alerts_total{rule_kind="carry"} 1`,
 		`screener_paper_executions_total{outcome="executed",strategy="cross_venue_spot"} 4`,
 		`screener_paper_executions_total{outcome="skipped",strategy="cross_venue_spot"} 2`,
+		`screener_lane_universe 601`,
+		`screener_lanes_evaluated 500`,
+		`screener_lanes_truncated_total 101`,
+		`screener_lanes_holding 3`,
+		`screener_hold_timeout_closes_total 2`,
 		`db_migrations_pending 1`,
 		`campaign_runs_total{status="done"} 3`,
 		`campaign_runs_total{status="failed"} 1`,

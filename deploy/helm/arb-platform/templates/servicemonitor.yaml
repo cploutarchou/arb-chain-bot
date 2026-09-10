@@ -21,6 +21,8 @@ spec:
       relabelings:
         - sourceLabels: [__meta_kubernetes_pod_label_arb_io_mode]
           targetLabel: mode
+        - sourceLabels: [__meta_kubernetes_pod_label_arb_io_canary]
+          targetLabel: canary
         - targetLabel: environment
           replacement: {{ .Values.global.environment }}
 {{- end }}

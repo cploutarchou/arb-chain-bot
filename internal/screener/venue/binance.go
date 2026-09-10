@@ -37,6 +37,14 @@ import (
 // (Mark-Price doc), so it is reported as both FundingRate and
 // PredictedFundingRate; there is no separate settled-rate field in the
 // bulk response.
+//
+// The USDⓈ-M exchangeInfo lists USDT- AND USDC-margined perpetuals
+// (quoteAsset and marginAsset agree on every PERPETUAL row of the
+// 2026-08-27 recording: AAVEUSDT quote USDT, AAVEUSDC quote USDC, 5 USDC
+// contracts among 55). Perps() reports each with its own Quote and does
+// not choose between them: the Poller keeps one contract per (venue,
+// base) by settings.perp_quote_preference, so the choice is one
+// configurable policy for every venue instead of a filter hidden here.
 type binanceCollector struct {
 	opts     Options
 	spotBase string

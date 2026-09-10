@@ -121,4 +121,24 @@ func TestScreenerPaperLedgerRoundTrip(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("count = %d err=%v", n, err)
 	}
+
+	// Close reason (audit X3): stored with the close and read back; an
+	// event closed through the plain path has none.
+	if err := ev.InsertEvent(ctx, screener.Event{ID: "evt-2", RuleID: "r1", Kind: screener.RuleKindSpread, Base: "ETH", Quote: "USDT", OpenedAt: t0.Add(time.Minute), PeakNetBps: "15"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ev.CloseEventWithReason(ctx, "evt-2", t0.Add(2*time.Minute), 60, "16", "HOLD_TIMEOUT"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ev.CloseEventWithReason(ctx, "nope", t0, 0, "0", "x"); err != screener.ErrNotFound {
+		t.Fatalf("close missing with reason = %v", err)
+	}
+	events, _ = ev.ListEvents(ctx, "r1", 10)
+	reasons := map[string]string{}
+	for _, e := range events {
+		reasons[e.ID] = e.CloseReason
+	}
+	if reasons["evt-2"] != "HOLD_TIMEOUT" || reasons["evt-1"] != "" {
+		t.Fatalf("close reasons = %v", reasons)
+	}
 }

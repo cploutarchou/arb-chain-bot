@@ -12,6 +12,7 @@ import { api, ApiError, type Report } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { Await, Badge, Button, ErrorBox, Loading, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
 function downloadJSON(report: Report) {
@@ -207,7 +208,7 @@ function ReportDetailView({ report }: { report: Report }) {
           <Table
             head={["Cycle", "Outcome"]}
             empty="failed cycles"
-            rows={report.failed_cycles.map((f) => [f.id, f.outcome])}
+            rows={report.failed_cycles.map((f) => [f.id, <OutcomeBadge key="o" code={f.outcome} />])}
           />
         </div>
       )}

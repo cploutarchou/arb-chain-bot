@@ -12,16 +12,26 @@ places orders by design (`ErrLiveTradingDisabled`).
 - A host with Docker + Compose v2, outbound internet, and disk for
   recordings (see sizing below).
 - This repository checked out.
-- Optional `.env` next to `docker-compose.yml`:
+- A `.env` next to `docker-compose.yml` (copy `.env.example`). It is
+  not optional: the database has no default password and compose
+  refuses to start until `POSTGRES_PASSWORD` is set.
 
 ```dotenv
-POSTGRES_PASSWORD=change-me
+POSTGRES_PASSWORD=<output of: openssl rand -base64 24>
 ARB_SYMBOLS=BTCUSDT,ETHUSDT,ETHBTC,BTCUSDC,ETHUSDC,USDCUSDT
 ARB_STARTING_ASSETS=USDT,USDC
 # only for the paper profile:
 ARB_ADMIN_EMAIL=you@example.com
-ARB_ADMIN_PASSWORD=a-strong-password
+ARB_ADMIN_PASSWORD=a-strong-password-of-12-or-more-characters
 ```
+
+Scope of this stack: one operator on one host. Postgres is published
+on `127.0.0.1:5432` only (host tools reach it, nothing off-host can),
+and the API and console on `:8080` are plaintext HTTP, so keep them on
+loopback or put a TLS-terminating reverse proxy in front before
+exposing them. `docker compose config` shows the database publication
+with `host_ip: 127.0.0.1`; there is no `0.0.0.0` binding for 5432.
+Multi-user or internet-facing deployments use the Kubernetes path in §6.
 
 ## 2. Start recording
 
@@ -186,6 +196,18 @@ install and are ignored afterward. Open **Settings** in the console:
   campaign run is in progress or a recording is active without
   `stop_recording`, and while a restart is already under way.
 
+- **The paper ledger survives a restart.** After every settled cycle the
+  engine writes a ledger snapshot (cash per start asset, realized PnL,
+  equity peak, drawdown, fees, stranded exposure, cycle counters) through
+  the outbox into `virtual_balances`, `balance_snapshots` and
+  `pnl_snapshots`. A restart — console-driven or a process restart —
+  resumes the latest open paper session from that snapshot when the
+  configured starting balances still match it, so a restart can never
+  reset a loss, a drawdown or an exposure; capital the old process still
+  had reserved is released to available and logged. Changing the paper
+  balances in **Settings** or using **Reset paper** ends the session and
+  starts a fresh one.
+
 ## 3d. Operating mode, AI advisor, log level, origin and secrets (T-059..T-061)
 
 The same versioned document (`platform_settings`) now also carries the
@@ -283,8 +305,10 @@ it configures:
 | `ARB_SECRET_KEY` | Master key for the vault; storing it in the vault is circular. |
 | `ARB_HTTP_ADDR`, `ARB_METRICS_ADDR` | Listen addresses; bound before the database is reachable. |
 | `ARB_RECORDING_DIR` | Filesystem path of the recordings volume (container mount). |
-| `ARB_ADMIN_EMAIL`, `ARB_ADMIN_PASSWORD` | First-boot admin bootstrap only; ignored once a user exists. |
+| `ARB_ADMIN_EMAIL`, `ARB_ADMIN_PASSWORD` | First-boot admin bootstrap only: the admin is created when absent and never updated afterwards, so a later password change, demotion or disable survives every restart. The password must be at least 12 characters and not the old placeholder, or the process refuses to boot. |
+| `ARB_TRUSTED_PROXIES` | CIDRs/addresses of the reverse proxies whose `X-Forwarded-For`/`X-Real-IP` the API trusts for the client address (login throttling keys on it, audit and risk-acknowledgement records store it). Empty means the TCP peer is the client. Set it only for the proxy actually in front of the API. |
 | `ARB_SHUTDOWN_GRACE` | Read during shutdown; never a trading parameter. |
+| `ARB_METADATA_CHECK_INTERVAL` | Venue-metadata monitor (audit T8): re-fetch `exchangeInfo` and diff against the running topology/instrument rules on this cadence (default `1h`). A material change (delisting, status change, filter change on a configured symbol) opens the operator-closed `metadata_changed` breaker instead of executing on constraints the venue no longer enforces; restart to rebuild, or close it from the Risk Center knowing the diff (it re-opens on the next tick while the change persists). `0` disables the monitor. |
 | `ARB_REPLAY_SESSION`, `ARB_SEED` | CLI batch tools only (`replay`/`campaign` binaries); the console passes them per job. |
 | `ARB_MODE`, `ARB_SYMBOLS`, `ARB_STARTING_ASSETS`, `ARB_PAPER_BALANCE`, `ARB_LOG_LEVEL`, `ARB_ALLOWED_ORIGIN`, `ARB_AI_*`, `ARB_TELEGRAM_*`, `ANTHROPIC_API_KEY` | **Seed version 1 only**; ignored once the settings document exists. Safe to delete from `.env` after first boot. |
 
@@ -297,7 +321,9 @@ docker compose --profile paper up -d --build
 Runs the complete engine (scanner, risk, paper trading, API on :8080)
 against live feeds, with the console servable separately via
 `cd web && npm run build && npm start`. Set the admin credentials in
-`.env` first; the API refuses logins without configured users.
+`.env` first; the API refuses logins without configured users. Same
+single-operator scope as §1: the API stays plaintext on `:8080` and
+Postgres stays on loopback with the password from `.env`.
 
 ## 5. Operational notes
 
@@ -311,6 +337,38 @@ against live feeds, with the console servable separately via
   rules), the recording catalog, and the stream table the campaign
   needs — keep the `pgdata` volume alongside the `recordings` volume.
 
+### Circuit breakers
+
+The engine manages six breakers (`docs/risk.md` §3): `persistence`
+(opens on a failed database write, closes when a write or the outbox's
+probe succeeds), `feed_instability` (five coalesced book faults in a
+minute; probes and closes itself), and four that stay open until an
+operator acts — `daily_loss`, `drawdown`, `slippage` and
+`simulation_inconsistency`. Any OPEN breaker pauses qualification. The
+Risk Center and `GET /api/v1/risk` show the board; transitions are
+CRITICAL alerts and `risk_events` rows. An engine restart rebuilds the
+registry (closing the operator-acknowledged breakers), but the
+ledger-based limits keep rejecting through the risk gate because the
+session loss and drawdown are resumed with the ledger; a
+`simulation_inconsistency` or `slippage` breaker cleared by a restart
+should be treated as an incident to investigate, not as recovery.
+
+### Retention worker
+
+`cmd/worker` runs a nightly retention sweep (`RETENTION_RUN_AT_UTC`,
+default `03:00`) over telemetry-class tables only: qualified and
+rejected opportunities no cycle references
+(`RETENTION_OPPORTUNITIES_QUALIFIED` 90d, `RETENTION_OPPORTUNITIES_REJECTED`
+14d), `exchange_health` (30d), `system_events` (30d), `funding_history`
+(180d), expired sessions (30d) and closed recording metadata
+(`RETENTION_RECORDING_METADATA`, disabled by default). Deletes run in
+batches of `RETENTION_BATCH_SIZE` (500) with `RETENTION_BATCH_SLEEP`
+(200ms) between them under `RETENTION_STATEMENT_TIMEOUT` (5s);
+`RETENTION_DRY_RUN=true` only reports counts. Cycles, orders, fills,
+paper sessions, ledger snapshots, audit and risk events have no
+retention setting at all, and `audit_events`/`risk_events` refuse
+UPDATE and DELETE at the database level (migration 000018).
+
 ## 6. Environments
 
 Three environments run the same image digests with per-environment
@@ -321,7 +379,7 @@ configuration only. Everything is code under `deploy/`
 | | dev | paper-test | prod |
 |---|---|---|---|
 | Where | docker compose (§1–§4) or a local cluster with `values-dev.yaml` | managed k8s, `values-paper-test.yaml` | managed k8s, `values-prod.yaml` |
-| Postgres | compose `db` / in-cluster | managed HA (multi-AZ), 7-day PITR | managed HA (multi-AZ) + read replica, 14-day PITR, pgBackRest weekly full/daily diff, weekly restore drill |
+| Postgres | compose `db` (loopback only, password from `.env`) / in-cluster | managed HA (multi-AZ), 7-day provider PITR | managed HA (multi-AZ) + read replica, 14-day provider PITR; weekly restore drill into a scratch instance (`docs/runbooks/restore-drill.md`); the pgBackRest manifests apply to a self-hosted tier only |
 | Secrets | `.env` (never committed) | External Secrets from the KMS store, prefix `arb/paper-test/` | same, prefix `arb/prod/` |
 | Ingress | none | TLS (staging issuer), WAF + rate limit | TLS, WAF + rate limit, canary annotations |
 | arbd | 1 replica | 1 replica, ServiceMonitor on | 1 replica (single-writer), anti-affinity, zone spread, PDB maxUnavailable=0 |
@@ -340,12 +398,24 @@ Promotion flow (`deploy.yml`):
    mode check). Failure -> `helm rollback`.
 3. `prod-approval`: a GitHub environment with required reviewers. A
    human approves the exact digests that passed paper-test.
-4. `prod-canary`: second release `arb-canary` — console at 10 % of
-   traffic (nginx canary weight) and a shadow arbd in REPLAY mode.
-   Smoke, then a 15-minute bake polling Alertmanager
-   (`deploy/scripts/bake.sh`); any of `APIAvailabilityBurnFast`,
-   `FeedStale`, `PodCrashLooping`, `MigrateJobFailed`, `ArbdNotReady`
-   firing uninstalls the canary and stops the pipeline.
+4. `prod-canary`: second release `arb-canary`
+   (`deploy/helm/canary-values.yaml`) — the new arbd in PAPER mode
+   against live feeds with persistence disabled (in-memory: no DSN is
+   projected, `ARB_DATABASE_URL` is pinned empty, and the chart refuses
+   a canary that references the primary's database key, runs any other
+   mode, enables the migrate hook, claims the recordings volume or takes
+   weighted traffic) plus the new console. It takes no share of user
+   traffic: reviewers reach it with the `X-Arb-Canary: always` header,
+   because its sessions and settings are separate from the primary's.
+   `deploy/scripts/canary-check.sh` proves rollout, `/healthz`,
+   `/readyz`, the isolation (empty `ARB_DATABASE_URL` or a different
+   database target than the primary, no shared secret key, no canary
+   weight) and fresh `orderbook_age_ms` series; then a 15-minute bake
+   polls Alertmanager (`deploy/scripts/bake.sh`); any of
+   `APIAvailabilityBurnFast`, `FeedStale`, `PodCrashLooping`,
+   `MigrateJobFailed`, `ArbdNotReady` firing uninstalls the canary and
+   stops the pipeline. `deploy/helm/test-canary-guards.sh` proves the
+   chart refusals with `helm template` in the chart job.
 5. `prod-full`: atomic upgrade of the main release, smoke, 10-minute
    bake, canary removed. Failure -> automatic `helm rollback` to the
    previous revision followed by a smoke test of the rolled-back state.

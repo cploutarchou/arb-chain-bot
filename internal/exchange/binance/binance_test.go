@@ -214,6 +214,7 @@ const exchangeInfoBody = `{
       "filters": [
         {"filterType": "PRICE_FILTER", "minPrice": "0.01", "maxPrice": "1000000", "tickSize": "0.01"},
         {"filterType": "LOT_SIZE", "minQty": "0.00001000", "maxQty": "9000.0", "stepSize": "0.00001000"},
+        {"filterType": "MARKET_LOT_SIZE", "minQty": "0.00000000", "maxQty": "143.5", "stepSize": "0.00000000"},
         {"filterType": "NOTIONAL", "minNotional": "5.00000000", "applyMinToMarket": true, "maxNotional": "9000000"},
         {"filterType": "PERCENT_PRICE_BY_SIDE", "bidMultiplierUp": "5"}
       ]
@@ -251,6 +252,15 @@ func TestParseExchangeInfo(t *testing.T) {
 	if !btc.Rules.MinQty.Equal(d("0.00001")) || !btc.Rules.MinNotional.Equal(d("5")) || !btc.Rules.MaxNotional.Equal(d("9000000")) {
 		t.Fatalf("limits = %+v", btc.Rules)
 	}
+	// MARKET_LOT_SIZE: the market-order quantity cap is parsed, and a
+	// zero step or minimum means "same as LOT_SIZE" (audit T4).
+	if !btc.Rules.MarketMaxQty.Equal(d("143.5")) || !btc.Rules.MarketQtyStep.IsZero() || !btc.Rules.MarketMinQty.IsZero() {
+		t.Fatalf("market lot size = %+v", btc.Rules)
+	}
+	market := btc.Rules.ForMarketOrders()
+	if !market.MaxQty.Equal(d("143.5")) || !market.QtyStep.Equal(d("0.00001")) || !market.MinQty.Equal(d("0.00001")) {
+		t.Fatalf("market rules = %+v", market)
+	}
 	// Legacy MIN_NOTIONAL shape + halted status.
 	old := markets[1]
 	if old.Status != exchange.MarketHalted || !old.Rules.MinNotional.Equal(d("10")) {
@@ -258,6 +268,9 @@ func TestParseExchangeInfo(t *testing.T) {
 	}
 	if old.Tradeable() {
 		t.Fatal("BREAK market must not be tradeable")
+	}
+	if !old.Rules.ForMarketOrders().MaxQty.Equal(d("100000")) {
+		t.Fatal("without MARKET_LOT_SIZE the limit filter applies to market orders")
 	}
 }
 

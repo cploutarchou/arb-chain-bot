@@ -272,7 +272,10 @@ func (x *Executor) managePosition(ctx context.Context, r screener.Rule, pos Posi
 		return
 	}
 	venue := pos.VenueA
-	p, okP := x.svc.Book.PerpFor(venue, pos.Base)
+	// The position's quote is the contract's margin asset: a USDT
+	// position is marked and closed against the USDT contract even when
+	// the venue also lists a USDC one on the same base.
+	p, okP := x.svc.Book.PerpFor(venue, pos.Base, pos.Quote)
 	q, okQ := x.svc.Book.QuotesFor(pos.Base, pos.Quote)[venue]
 	changed := false
 

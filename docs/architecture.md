@@ -319,10 +319,16 @@ events; only `internal/notification` talks to Telegram.
 
 - PostgreSQL via `pgx`; repositories in `internal/storage`; forward-only
   SQL migrations in `migrations/` (golang-migrate compatible naming).
-- Hot path decoupling: an in-process outbox (bounded channel + batching
-  writer) persists opportunities, cycles, orders, fills, snapshots. The
-  writer batches inserts (COPY/multi-row) on a tick; overflow increments a
-  drop counter and trips the persistence breaker per policy.
+- Hot path decoupling: an in-process outbox (bounded channel + single
+  writer) persists opportunities, cycles, orders, fills and risk events
+  one record per insert. Every record that does not land is counted —
+  refused at a full or closed queue (`outbox_records_dropped_total`),
+  refused by the database (`outbox_write_failures_total`), or persisted
+  without its opportunity row (`unlinked_cycles`). A failed write trips
+  the global `persistence` breaker, which pauses qualification until a
+  write or the outbox's probe succeeds; shutdown cancels the outbox only
+  after the producers have returned, so in-flight paper cycles settle
+  (`ABORTED`) and are written before the drain window closes.
 - Raw market data is NOT stored row-wise: append-only compressed segment
   files (see `data-flow.md` §5) with only metadata registered in
   `market_recording_metadata`.
@@ -447,7 +453,7 @@ quality. Dashboards + alert rules in `deploy/observability/`.
 | REST snapshot failing | init/resync errors | book stays SYNCING; alert after N attempts | backoff retries |
 | Clock drift | NTP/server-time divergence | data marked unsafe; qualification suspended; alert | drift clears → resume |
 | Dirty-queue saturation | queue depth watermark | breaker: pause qualification (safe default: do nothing) | drain + manual/auto reset per policy |
-| DB degraded | outbox overflow/errors | persistence breaker; qualification continues or pauses per config; alert | DB recovers → flush |
+| DB degraded | outbox write failure | global `persistence` breaker opens: qualification pauses; CRITICAL alert; failures counted | a write or the outbox probe succeeds → breaker closes |
 | AI provider down | request failures | advisor features unavailable; scanner unaffected | provider recovers |
 | Telegram down | send failures | notifications queue/drop per severity; alert via web | resume |
 | Paper-engine inconsistency | invariant checks (balance conservation) | halt paper engine; CRITICAL alert; state preserved for forensics | operator action |

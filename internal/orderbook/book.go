@@ -78,19 +78,57 @@ func (b *Book) Meta() Meta {
 	return Meta{State: b.state, LastUpdateID: b.lastUpdateID, Initialized: b.initialized}
 }
 
-// ApplySnapshot replaces the book contents and marks it HEALTHY.
+// ApplySnapshot replaces the book contents and marks it HEALTHY — unless
+// the snapshot itself fails the integrity checks (a non-positive price,
+// or a crossed top of book), in which case the book is CORRUPTED and
+// needs a fresh snapshot: a venue anomaly must surface as a state, never
+// as a price the pricing engine trusts.
 func (b *Book) ApplySnapshot(ev DepthEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if reason := invalidLevels(ev); reason != "" {
+		b.initialized = false
+		b.setStateLocked(StateCorrupted, reason)
+		return
+	}
 	b.bids = b.bids.reset(ev.Bids, true)
 	b.asks = b.asks.reset(ev.Asks, false)
 	b.truncateLocked()
 	b.lastUpdateID = ev.FinalUpdateID
-	b.initialized = true
 	b.version++
 	b.lastEventTime = ev.EventTime
 	b.lastReceiveTime = ev.ReceiveTime
+	if b.crossedLocked() {
+		b.initialized = false
+		b.setStateLocked(StateCorrupted, "crossed book")
+		return
+	}
+	b.initialized = true
 	b.setStateLocked(StateHealthy, "snapshot")
+}
+
+// invalidLevels reports a malformed level in the event ("" when clean).
+// Zero and negative quantities are deletions by the venue's contract;
+// a non-positive price is never meaningful.
+func invalidLevels(ev DepthEvent) string {
+	for _, l := range ev.Bids {
+		if l.Price.Sign() <= 0 {
+			return "non-positive bid price"
+		}
+	}
+	for _, l := range ev.Asks {
+		if l.Price.Sign() <= 0 {
+			return "non-positive ask price"
+		}
+	}
+	return ""
+}
+
+// crossedLocked reports a best bid at or above the best ask. Two
+// decimal comparisons per applied event; the check is the whole point
+// of holding a local book rather than trusting whatever arrives.
+func (b *Book) crossedLocked() bool {
+	return len(b.bids) > 0 && len(b.asks) > 0 && b.bids[0].Price.GreaterThanOrEqual(b.asks[0].Price)
 }
 
 // Apply routes one event through the venue validator and merges or reacts
@@ -117,6 +155,11 @@ func (b *Book) Apply(ev DepthEvent, v SequenceValidator) Action {
 func (b *Book) applyDelta(ev DepthEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if reason := invalidLevels(ev); reason != "" {
+		b.initialized = false
+		b.setStateLocked(StateCorrupted, reason)
+		return
+	}
 	for _, l := range ev.Bids {
 		b.bids = b.bids.apply(l, true)
 	}
@@ -128,6 +171,11 @@ func (b *Book) applyDelta(ev DepthEvent) {
 	b.version++
 	b.lastEventTime = ev.EventTime
 	b.lastReceiveTime = ev.ReceiveTime
+	if b.crossedLocked() {
+		b.initialized = false
+		b.setStateLocked(StateCorrupted, "crossed book")
+		return
+	}
 	// A fresh applied update restores STALE → HEALTHY; SYNCING stays until
 	// a snapshot arrives (delta-before-init is a validator bug caught in tests).
 	if b.state == StateStale || b.state == StateHealthy {

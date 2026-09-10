@@ -15,7 +15,17 @@ import { Badge, Button, ErrorBox, Loading, PageTitle, Section, VirtualTable, fmt
 type ListState =
   | { kind: "loading" }
   | { kind: "error"; message: string; status?: number; code?: string }
-  | { kind: "ready"; rows: FillListRow[]; nextCursor?: string; loadingMore: boolean };
+  | {
+      kind: "ready";
+      rows: FillListRow[];
+      nextCursor?: string;
+      loadingMore: boolean;
+      // A failed "Load more" keeps the rows already on screen (audit F7 —
+      // unlike the initial load, a pagination failure must never blank a
+      // table that already has real data) and reports what failed next
+      // to the button, which doubles as the retry action.
+      loadMoreError?: { message: string; status?: number; code?: string };
+    };
 
 const STATUSES = ["", "NEW", "FILLED", "PARTIAL", "REJECTED", "CANCELED"];
 
@@ -69,7 +79,7 @@ function FillsPageInner() {
 
   const loadMore = async () => {
     if (state.kind !== "ready" || !state.nextCursor) return;
-    setState({ ...state, loadingMore: true });
+    setState({ ...state, loadingMore: true, loadMoreError: undefined });
     try {
       const page = await api.fills.list(filter(state.nextCursor));
       setState((prev) =>
@@ -77,8 +87,19 @@ function FillsPageInner() {
           ? { kind: "ready", rows: [...prev.rows, ...(page.fills ?? [])], nextCursor: page.next_cursor, loadingMore: false }
           : prev,
       );
-    } catch {
-      setState((prev) => (prev.kind === "ready" ? { ...prev, loadingMore: false } : prev));
+    } catch (err: unknown) {
+      setState((prev) =>
+        prev.kind === "ready"
+          ? {
+              ...prev,
+              loadingMore: false,
+              loadMoreError:
+                err instanceof ApiError
+                  ? { message: err.message, status: err.status, code: err.apiError?.code }
+                  : { message: "Backend unreachable" },
+            }
+          : prev,
+      );
     }
   };
 
@@ -206,6 +227,13 @@ function FillsPageInner() {
                 <Button onClick={loadMore} disabled={state.loadingMore}>
                   {state.loadingMore ? "Loading…" : "Load more"}
                 </Button>
+                {state.loadMoreError && (
+                  <p className="mt-2 text-[12px] text-[var(--critical)]">
+                    Load more failed
+                    {state.loadMoreError.status ? ` (HTTP ${state.loadMoreError.status})` : ""}:{" "}
+                    {state.loadMoreError.message}
+                  </p>
+                )}
               </div>
             )}
           </>

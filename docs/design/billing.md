@@ -67,9 +67,24 @@ without the engine knowing about tenants.
 | `execution.live` | code (`ErrLiveTradingDisabled`); validator rejects any document with `live=true` | n/a |
 
 `GET /api/v1/me` (alias `GET /api/v1/auth/me`) returns `user_id`, `role`,
-`platform_admin`, `org`, `org_role`, `risk_ack_required`, `risk_ack_version`
-and `entitlements` (with `entitlements.status`: subscription state, read-only
-flag, effective package, trial end).
+`platform_admin`, `org`, `org_role`, `memberships`, `risk_ack_required`,
+`risk_ack_version` and `entitlements` (with `entitlements.status`:
+subscription state, read-only flag, effective package, trial end).
+
+`memberships` lists every organisation the account belongs to
+(`[{org_id, role, suspended}]`, tenant organisations first, the platform
+organisation last). By default a session acts in the first of them: a member
+of both a tenant organisation and the platform organisation is scoped to the
+tenant, and the platform organisation is the default only for accounts that
+belong to nothing else. The `X-Org-ID: <id>` request header selects another
+membership explicitly (403 `org_forbidden` when the account holds none there;
+400 `bad_org` when malformed); it is the only way a platform member who also
+belongs to a tenant reaches the platform scope. API keys ignore it: a key
+acts in the organisation it was minted in. Mutations that land in the
+platform organisation (screener settings, rules, reports run, roster, API
+keys, billing) additionally require `platform_admin` and answer 403
+`platform_admin_required` otherwise — an org-1 membership role is not
+authority over the operator's own data.
 
 ### 1.3 Platform admin vs tenant (compliance #1)
 

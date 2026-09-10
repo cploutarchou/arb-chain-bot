@@ -1,3 +1,5 @@
+{{- /* Render-time assertions (mode, REPLAY session, single writer, persistence, canary isolation). */ -}}
+{{- include "arb.guards" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

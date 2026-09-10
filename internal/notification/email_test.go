@@ -1,8 +1,10 @@
 package notification
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -117,5 +119,45 @@ func TestSMTPTransportDialFailureIsWrapped(t *testing.T) {
 	tr := &SMTPTransport{URL: func(context.Context) string { return "smtp://user:pass@127.0.0.1:9" }}
 	if err := tr.Send(context.Background(), "a@example.test", []string{"b@example.test"}, []byte("x")); err == nil {
 		t.Fatal("expected a dial error")
+	}
+}
+
+// TestSMTPTransportMalformedURLNeverLeaksCredential is the regression
+// for audit S2/P1-11: url.Parse's *url.Error embeds the exact string it
+// failed to parse, so wrapping it used to put the smtp_url password
+// into whatever the caller did with the returned error. The caller
+// (screener/alerts dispatch) both logs the error and persists its
+// .Error() verbatim as a delivery outcome's Reason (later served by an
+// authenticated read route to any viewer) — so this asserts the secret
+// is unrecoverable from every one of those uses, not just the error
+// value itself.
+func TestSMTPTransportMalformedURLNeverLeaksCredential(t *testing.T) {
+	const password = "S3cr3tP%zzPass" // "%zz" is not a valid percent-escape: url.Parse fails on it
+	malformed := "smtp://alerts:" + password + "@smtp.example.test:587"
+	tr := &SMTPTransport{URL: func(context.Context) string { return malformed }}
+
+	err := tr.Send(context.Background(), "a@example.test", []string{"b@example.test"}, []byte("x"))
+	if err == nil {
+		t.Fatal("malformed smtp_url must fail to send")
+	}
+	if !errors.Is(err, ErrInvalidSMTPURL) {
+		t.Fatalf("err = %v, want ErrInvalidSMTPURL", err)
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Fatalf("returned error leaks the password: %v", err)
+	}
+
+	// "no log line": a buffer-backed handler stands in for the real
+	// logger the dispatch path uses.
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	log.Warn("screener alerts: channel delivery failed", "channel", "email", "error", err)
+	if strings.Contains(buf.String(), password) {
+		t.Fatalf("log line leaks the password: %s", buf.String())
+	}
+
+	// "no persisted reason": the dispatch path stores err.Error() as-is.
+	if reason := err.Error(); strings.Contains(reason, password) {
+		t.Fatalf("persisted reason leaks the password: %s", reason)
 	}
 }

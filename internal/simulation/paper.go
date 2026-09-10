@@ -13,9 +13,11 @@ package simulation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -84,6 +86,11 @@ type Config struct {
 	MarketOrders      bool            // true: ignore limit, eat available depth
 	Depth             int             // book view depth (0 = full)
 	Seed              int64           // determinism root; per-cycle RNG derives from it
+	// MaxBookAge, when positive, fails a leg whose fill-time book is older
+	// than this (a HEALTHY state is always required). Live paper sets it
+	// to the scanner's age budget; replay and backtests leave it zero and
+	// rely on the state alone.
+	MaxBookAge time.Duration
 }
 
 // Engine is the simulated executor core.
@@ -97,6 +104,34 @@ type Engine struct {
 	cfg    Config
 	shadow bool
 	idGen  func() string
+
+	// progress, when set, receives one event per leg-stage transition
+	// (audit F6: the console's live-cycle monitor). Fire-and-forget by
+	// contract: the paper engine's registry update is a short mutex'd
+	// write, and a slow callback would tax the very latency model this
+	// engine exists to model. Never consulted on any execution decision.
+	progress   func(execution.CycleProgress)
+	progressMu sync.Mutex
+}
+
+// SetProgressHook installs the leg-stage observer. The setter exists so
+// the paper engine (constructed after the executor it owns) can wire its
+// registry without the constructor needing a forward reference.
+func (e *Engine) SetProgressHook(fn func(execution.CycleProgress)) {
+	e.progressMu.Lock()
+	e.progress = fn
+	e.progressMu.Unlock()
+}
+
+// report is the nil-safe progress emit; a missing hook costs one lock
+// read, an installed one must not block execution.
+func (e *Engine) report(cycleID, opportunityID string, legNo int, stage execution.LegStage, at time.Time) {
+	e.progressMu.Lock()
+	fn := e.progress
+	e.progressMu.Unlock()
+	if fn != nil {
+		fn(execution.CycleProgress{CycleID: cycleID, OpportunityID: opportunityID, LegNo: legNo, Stage: stage, At: at})
+	}
 }
 
 // Compile-time boundary checks.
@@ -186,19 +221,22 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 			order.Type = "MARKET"
 		}
 
+		e.report(plan.CycleID, op.ID, i+1, execution.LegStageSubmitted, e.clock.Now())
+
 		if err := e.wait.Wait(ctx, e.cfg.Latency.submit(rng)); err != nil {
-			return e.timeout(res, order, cur, leg, i, "submit wait: "+err.Error()), nil
+			return e.interrupted(res, order, cur, leg, i, "submit wait", err), nil
 		}
 		order.AckedAt = e.clock.Now()
 		order.Status = execution.OrderAcked
 
 		lq, ferr := e.fillLeg(leg, planned, cur, &order)
 		if err := e.wait.Wait(ctx, e.cfg.Latency.fill(rng)); err != nil {
-			return e.timeout(res, order, cur, leg, i, "fill wait: "+err.Error()), nil
+			return e.interrupted(res, order, cur, leg, i, "fill wait", err), nil
 		}
 		now := e.clock.Now()
 
 		if ferr != nil {
+			e.report(plan.CycleID, op.ID, i+1, execution.LegStageFailed, now)
 			order.Status = execution.OrderRejected
 			order.Reason = ferr.Error()
 			res.Orders = append(res.Orders, order)
@@ -225,6 +263,7 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 			BookVersion: lq.BookVersion, At: now,
 		})
 		res.Orders = append(res.Orders, order)
+		e.report(plan.CycleID, op.ID, i+1, execution.LegStageFilled, now)
 
 		if lq.FeeAmount.IsPositive() {
 			res.Fees[lq.FeeAsset] = res.Fees[lq.FeeAsset].Add(lq.FeeAmount)
@@ -241,11 +280,31 @@ func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (ex
 	res.FinalAmount = cur
 	res.Outcome = cycleOutcome(res.Orders)
 	e.settle(&res)
-	if op.EstimatedFinal.IsPositive() && res.InputConsumed.IsPositive() {
-		res.SlippageBps = op.EstimatedFinal.Sub(res.FinalAmount).
-			Div(res.InputConsumed).Mul(decimal.NewFromInt(10_000))
-	}
+	res.PlannedReturnBps, res.ActualReturnBps, res.SlippageBps = slippageVsPlan(op.Quote, res.InputConsumed, res.FinalAmount)
 	return res, nil
+}
+
+// slippageVsPlan measures how far the cycle's realized return fell short of
+// the plan's return, in bps: planned − actual, positive = worse.
+//
+// Two things are deliberately NOT in this number. The plan's return is the
+// un-buffered quote (Quote.FinalAmount / Quote.InputConsumed): buffers are a
+// risk allowance, not a prediction, and folding them in would report a
+// cycle that filled exactly as planned as "−10 bps slippage". And both
+// returns are ratios of their own deployed input: a partial leg-1 fill
+// shrinks the cycle proportionally, and comparing the smaller final amount
+// with the full-size estimate would report thousands of bps of "slippage"
+// at byte-identical prices. Non-positive inputs (mid-cycle failures with
+// nothing returned, rejected plans) yield zeros; persistence and reports
+// additionally gate on the outcome.
+func slippageVsPlan(plan pricing.CycleQuote, inputConsumed, finalAmount decimal.Decimal) (plannedBps, actualBps, slippage decimal.Decimal) {
+	if !plan.InputConsumed.IsPositive() || !inputConsumed.IsPositive() || !finalAmount.IsPositive() {
+		return decimal.Zero, decimal.Zero, decimal.Zero
+	}
+	tenK := decimal.NewFromInt(10_000)
+	plannedBps = plan.FinalAmount.Div(plan.InputConsumed).Sub(decimal.NewFromInt(1)).Mul(tenK)
+	actualBps = finalAmount.Div(inputConsumed).Sub(decimal.NewFromInt(1)).Mul(tenK)
+	return plannedBps, actualBps, plannedBps.Sub(actualBps)
 }
 
 // fillLeg reads the fill-time book, applies limit-IOC filtering, and
@@ -255,12 +314,39 @@ func (e *Engine) fillLeg(leg graph.Leg, planned pricing.LegQuote, input decimal.
 	if !ok {
 		return pricing.LegQuote{}, fmt.Errorf("no book for %s", leg.Market)
 	}
+	// Fill-time health: the plan was priced on a HEALTHY book, but the
+	// fill happens tens of milliseconds later. A book that has since gone
+	// STALE, CORRUPTED, DISCONNECTED or back to SYNCING carries no
+	// knowable price, and filling against its last levels would invent an
+	// execution. The leg fails instead — REJECTED before anything is
+	// deployed, stranded exposure afterwards — which is the honest
+	// outcome for a system that cannot see the market.
+	if view.State != orderbook.StateHealthy {
+		return pricing.LegQuote{}, fmt.Errorf("book %s is %s at fill time", leg.Market, view.State)
+	}
+	if e.cfg.MaxBookAge > 0 {
+		if age := view.Age(e.clock.Now()); age > e.cfg.MaxBookAge {
+			return pricing.LegQuote{}, fmt.Errorf("book %s is %s old at fill time (max %s)", leg.Market, age, e.cfg.MaxBookAge)
+		}
+	}
 	rules, ok := e.rules.Rules(leg.Market)
 	if !ok {
 		return pricing.LegQuote{}, fmt.Errorf("no instrument rules for %s", leg.Market)
 	}
+	if e.cfg.MarketOrders {
+		// MARKET orders are validated against the venue's market-order
+		// quantity filter, which is volume-derived and usually far
+		// tighter than the limit-order one (audit T4).
+		rules = rules.ForMarketOrders()
+	}
 	if !e.cfg.MarketOrders {
 		limit := limitPrice(planned.AvgPrice, e.cfg.LimitToleranceBps, leg.Side)
+		// The venue accepts prices on its tick only; rounding toward the
+		// planned price (down for a buy, up for a sell) keeps the limit
+		// inside the tolerance rather than a fraction of a tick beyond it.
+		if q, err := quantizeLimit(rules, limit, leg.Side); err == nil {
+			limit = q
+		}
 		order.LimitPrice = limit
 		view = filterByLimit(view, leg.Side, limit)
 	}
@@ -283,11 +369,21 @@ func (e *Engine) legFailure(res execution.CycleResult, held decimal.Decimal, leg
 	return res
 }
 
-func (e *Engine) timeout(res execution.CycleResult, order execution.SimOrder, held decimal.Decimal, leg graph.Leg, legIdx int, reason string) execution.CycleResult {
+// interrupted settles a cycle whose latency wait ended with an error.
+// A deadline is a TIMEOUT; a cancellation is the engine stopping
+// (shutdown, restart) and settles as ABORTED, so the ledger and the
+// cycle history never read a controlled stop as an exchange timing
+// failure. Either way whatever leg 1 deployed is exposure.
+func (e *Engine) interrupted(res execution.CycleResult, order execution.SimOrder, held decimal.Decimal, leg graph.Leg, legIdx int, stage string, cause error) execution.CycleResult {
+	reason := stage + ": " + cause.Error()
+	e.report(res.CycleID, res.OpportunityID, legIdx+1, execution.LegStageFailed, e.clock.Now())
 	order.Status = execution.OrderExpired
 	order.Reason = reason
 	res.Orders = append(res.Orders, order)
 	res.Outcome = execution.OutcomeTimeout
+	if errors.Is(cause, context.Canceled) {
+		res.Outcome = execution.OutcomeAborted
+	}
 	res.Reason = reason
 	if legIdx > 0 {
 		res.Exposure[leg.From] = res.Exposure[leg.From].Add(held)
@@ -342,6 +438,15 @@ func limitPrice(plannedVWAP, tolBps decimal.Decimal, side exchange.Side) decimal
 		return plannedVWAP.Mul(decimal.NewFromInt(1).Add(frac))
 	}
 	return plannedVWAP.Mul(decimal.NewFromInt(1).Sub(frac))
+}
+
+// quantizeLimit snaps a limit price to the instrument's tick on the
+// conservative side of the tolerance (audit T5).
+func quantizeLimit(rules exchange.InstrumentRules, limit decimal.Decimal, side exchange.Side) (decimal.Decimal, error) {
+	if side == exchange.SideBuy {
+		return rules.QuantizePriceDown(limit)
+	}
+	return rules.QuantizePriceUp(limit)
 }
 
 // filterByLimit trims the consumable side to levels within the limit.

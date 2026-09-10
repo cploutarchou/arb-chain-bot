@@ -152,7 +152,10 @@ func QuoteLeg(leg graph.Leg, md MarketData, sched *fees.Schedule, input decimal.
 			return LegQuote{}, fmt.Errorf("%w: %s bids", ErrNoDepth, leg.Market)
 		}
 		vwap := proceeds.Div(soldQty)
-		if err := md.Rules.ValidateOrder(vwap, soldQty); err != nil {
+		// The venue validates the order as submitted, not as filled: a
+		// depth-limited fill is a partial (DepthExhausted, dust stranded),
+		// never a rule violation (audit T6).
+		if err := md.Rules.ValidateOrder(vwap, orderQty); err != nil {
 			return LegQuote{}, fmt.Errorf("%w: %s: %s", ErrRuleViolation, leg.Market, err)
 		}
 		q.OrderQty = soldQty

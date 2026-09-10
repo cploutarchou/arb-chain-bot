@@ -10,9 +10,12 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/report"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
-// ScreenerReports adapts the store to report.Store (migration 000012).
+// ScreenerReports adapts the store to report.Store (migrations 000012
+// and 000017): rows carry the organisation of the generating run and
+// scoped reads see only their own organisation's rows (orgFilter).
 type ScreenerReports struct{ s *Store }
 
 func (s *Store) ScreenerReports() *ScreenerReports { return &ScreenerReports{s: s} }
@@ -25,9 +28,9 @@ func (c *ScreenerReports) InsertReport(ctx context.Context, r report.Report) err
 		return err
 	}
 	_, err = c.s.Pool.Exec(ctx, `
-		INSERT INTO screener_reports (id, period_start, period_end, strategy, rule_id, payload, md, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		r.ID, r.PeriodStart, r.PeriodEnd, string(r.Strategy), r.RuleID, payload, r.Markdown, r.CreatedAt)
+		INSERT INTO screener_reports (id, period_start, period_end, strategy, rule_id, payload, md, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		r.ID, r.PeriodStart, r.PeriodEnd, string(r.Strategy), r.RuleID, payload, r.Markdown, r.CreatedAt, tenancy.OrgOrPlatform(ctx))
 	return err
 }
 
@@ -35,9 +38,10 @@ func (c *ScreenerReports) ListReports(ctx context.Context, limit int) ([]report.
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	where, args := orgFilter(ctx, "org_id", 2)
 	rows, err := c.s.Pool.Query(ctx, `
 		SELECT id, period_start, period_end, strategy, rule_id, payload, created_at
-		FROM screener_reports ORDER BY created_at DESC, id DESC LIMIT $1`, limit)
+		FROM screener_reports WHERE TRUE`+where+` ORDER BY created_at DESC, id DESC LIMIT $1`, append([]any{limit}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -64,9 +68,10 @@ func (c *ScreenerReports) GetReport(ctx context.Context, id string) (report.Repo
 	var strategy string
 	var payload []byte
 	var created time.Time
+	where, args := orgFilter(ctx, "org_id", 2)
 	err := c.s.Pool.QueryRow(ctx, `
 		SELECT id, period_start, period_end, strategy, rule_id, payload, md, created_at
-		FROM screener_reports WHERE id = $1`, id).
+		FROM screener_reports WHERE id = $1`+where, append([]any{id}, args...)...).
 		Scan(&r.ID, &r.PeriodStart, &r.PeriodEnd, &strategy, &r.RuleID, &payload, &r.Markdown, &created)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return report.Report{}, screener.ErrNotFound

@@ -28,6 +28,7 @@ import {
   type VenueProfile,
 } from "@/lib/api/client";
 import { useAuth, useEntitlement } from "@/lib/auth";
+import { percentToFractionStr } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { GatedControl } from "@/components/GatedControl";
 import {
@@ -261,10 +262,14 @@ export default function OnboardingPage() {
         kind: ruleKind,
         min_spread_bps: ruleKind === "spread" ? threshold.trim() : undefined,
         // Wire contract is a fraction (e.g. 0.10 = 10%); the field below
-        // is labelled "%" for the operator.
+        // is labelled "%" for the operator. percentToFractionStr shifts
+        // the decimal point on the digits themselves — never
+        // `Number(x) / 100`, which persists float noise (a typed "1.1"
+        // becoming "0.011000000000000001") on a threshold that gates
+        // automatic paper execution.
         min_carry_apr:
           ruleKind !== "spread" && threshold.trim()
-            ? String(Number(threshold) / 100)
+            ? percentToFractionStr(threshold.trim())
             : undefined,
         min_liquidity_quote: "0",
         min_lifetime_s: 0,

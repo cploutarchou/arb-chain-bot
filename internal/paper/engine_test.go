@@ -354,3 +354,262 @@ func TestResetRequiresIdleEngine(t *testing.T) {
 		t.Fatalf("post-reset stats = %+v, want zero", st)
 	}
 }
+
+// --- pre-execution revalidation and ledger invariants ------------------------
+
+// A plan the revalidation refuses is skipped before any capital is
+// reserved and never reaches the executor; the reject hook fires.
+func TestRevalidationRejectSkipsWithoutReserving(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, resv, _ := harness(t, exec)
+	var rejected atomic.Int32
+	var reason atomic.Value
+	e.Revalidate = func(op opportunity.Opportunity) (opportunity.Opportunity, risk.Decision, bool) {
+		return op, risk.Decision{ReasonCode: risk.ReasonMinEdge}, true
+	}
+	e.OnRevalidationReject = func(_ opportunity.Opportunity, dec risk.Decision) {
+		rejected.Add(1)
+		reason.Store(dec.ReasonCode)
+	}
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().RevalidationRejected == 1 })
+	cancel()
+	wait()
+
+	st := e.Snapshot()
+	if st.Started != 0 || st.Skipped != 1 || st.Revalidated != 1 {
+		t.Fatalf("stats = %+v", st)
+	}
+	if avail, reserved := resv.Balance("USDT"); !avail.Equal(d("10000")) || !reserved.IsZero() {
+		t.Fatalf("ledger touched: available=%s reserved=%s", avail, reserved)
+	}
+	if exec.peak.Load() != 0 {
+		t.Fatal("executor ran a refused plan")
+	}
+	if rejected.Load() != 1 || reason.Load() != risk.ReasonMinEdge {
+		t.Fatalf("reject hook: calls=%d reason=%v", rejected.Load(), reason.Load())
+	}
+}
+
+// The executor receives the re-priced plan, and the ledger settles on
+// the re-priced input.
+func TestRevalidationRefreshesThePlan(t *testing.T) {
+	var seen atomic.Value
+	exec := &scriptedExecutor{result: func(plan execution.CyclePlan) execution.CycleResult {
+		seen.Store(plan.Opportunity.Quote.InputConsumed.String())
+		return completed(plan)
+	}}
+	e, in, resv, _ := harness(t, exec)
+	e.Revalidate = func(op opportunity.Opportunity) (opportunity.Opportunity, risk.Decision, bool) {
+		fresh := op
+		fresh.Quote.InputConsumed = d("900")
+		fresh.Quote.FinalAmount = d("904")
+		return fresh, risk.Decision{Allowed: true}, true
+	}
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+	cancel()
+	wait()
+
+	if seen.Load() != "900" {
+		t.Fatalf("executor saw input %v, want the re-priced 900", seen.Load())
+	}
+	// completed() returns input + 4: 10000 - 900 + 904.
+	if avail, _ := resv.Balance("USDT"); !avail.Equal(d("10004")) {
+		t.Fatalf("available = %s, want 10004", avail)
+	}
+}
+
+// A revalidation that cannot run (unknown triangle, missing book) is a
+// rejection, never a pass.
+func TestRevalidationUnavailableIsARejection(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, _, _ := harness(t, exec)
+	var reason atomic.Value
+	e.Revalidate = func(op opportunity.Opportunity) (opportunity.Opportunity, risk.Decision, bool) {
+		return op, risk.Decision{}, false
+	}
+	e.OnRevalidationReject = func(_ opportunity.Opportunity, dec risk.Decision) { reason.Store(dec.ReasonCode) }
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().RevalidationRejected == 1 })
+	cancel()
+	wait()
+	if exec.peak.Load() != 0 || reason.Load() != risk.ReasonRevalidation {
+		t.Fatalf("executor ran=%v reason=%v", exec.peak.Load() != 0, reason.Load())
+	}
+}
+
+// A ledger invariant failure after a settlement pauses the engine before
+// another cycle can start and reports through the hook.
+func TestInvariantViolationPausesEngine(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, _, _ := harness(t, exec)
+	var got atomic.Value
+	e.Invariants = func() error { return errors.New("conservation broken") }
+	e.OnInvariantViolation = func(err error) { got.Store(err.Error()) }
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().InvariantViolations == 1 })
+	if e.Running() {
+		t.Fatal("engine still running after an invariant violation")
+	}
+	in <- qualifiedEvent("op-2", "1000")
+	waitFor(t, func() bool { return e.Snapshot().Received == 2 })
+	cancel()
+	wait()
+
+	st := e.Snapshot()
+	if st.Started != 1 || st.Skipped != 1 {
+		t.Fatalf("second cycle ran on a broken ledger: %+v", st)
+	}
+	if got.Load() != "conservation broken" {
+		t.Fatalf("hook = %v", got.Load())
+	}
+}
+
+// The default check is the ledger's own; a healthy settlement passes it.
+func TestDefaultInvariantCheckPassesOnHealthySettlement(t *testing.T) {
+	exec := &scriptedExecutor{result: completed}
+	e, in, _, _ := harness(t, exec)
+	cancel, wait := runEngine(t, e)
+	in <- qualifiedEvent("op-1", "1000")
+	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+	cancel()
+	wait()
+	if st := e.Snapshot(); st.InvariantViolations != 0 || !e.Running() {
+		t.Fatalf("healthy settlement flagged: %+v running=%v", st, e.Running())
+	}
+}
+
+// Two events with one opportunity id arriving while the first is still
+// executing: the second must not run (audit F10). The reservation
+// refuses the duplicate key while the original hold is active.
+func TestConcurrentDuplicateRunsOnce(t *testing.T) {
+	exec := &scriptedExecutor{result: completed, block: make(chan struct{})}
+	e, in, resv, _ := harness(t, exec)
+	var results atomic.Int32
+	e.OnResult = func(execution.CycleResult) { results.Add(1) }
+	cancel, wait := runEngine(t, e)
+
+	in <- qualifiedEvent("op-dup", "500")
+	waitFor(t, func() bool { return exec.inFlight.Load() == 1 })
+	in <- qualifiedEvent("op-dup", "500")
+	waitFor(t, func() bool { return e.Snapshot().Skipped == 1 })
+	close(exec.block)
+	waitFor(t, func() bool { return results.Load() == 1 })
+	cancel()
+	wait()
+
+	if exec.peak.Load() != 1 || results.Load() != 1 {
+		t.Fatalf("duplicate executed: peak=%d results=%d", exec.peak.Load(), results.Load())
+	}
+	if avail, reserved := resv.Balance("USDT"); !avail.Equal(d("10004")) || !reserved.IsZero() {
+		t.Fatalf("ledger = %s/%s", avail, reserved)
+	}
+	if err := resv.CheckInvariants(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// blockingProgressExecutor stalls inside ExecuteCycle and reports leg
+// stages through the hook the way the simulation engine does, so the
+// live registry can be observed mid-cycle (audit F6).
+type blockingProgressExecutor struct {
+	entered chan struct{}
+	release chan struct{}
+	report  func(execution.CycleProgress)
+}
+
+func (b *blockingProgressExecutor) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (execution.CycleResult, error) {
+	// The engine registers the entry before calling the executor; the
+	// leg events must find it.
+	b.report(execution.CycleProgress{CycleID: plan.CycleID, OpportunityID: plan.Opportunity.ID, LegNo: 1, Stage: execution.LegStageSubmitted, At: t0})
+	b.report(execution.CycleProgress{CycleID: plan.CycleID, OpportunityID: plan.Opportunity.ID, LegNo: 1, Stage: execution.LegStageFilled, At: t0})
+	b.report(execution.CycleProgress{CycleID: plan.CycleID, OpportunityID: plan.Opportunity.ID, LegNo: 2, Stage: execution.LegStageSubmitted, At: t0})
+	close(b.entered)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return execution.CycleResult{}, ctx.Err()
+	}
+	return completed(plan), nil
+}
+
+// TestActiveCyclesTracksLegStages is the F6 core: while a cycle is in
+// flight the registry shows it with its legs and the hook's stage
+// transitions, and once it settles the entry is gone.
+func TestActiveCyclesTracksLegStages(t *testing.T) {
+	exec := &blockingProgressExecutor{entered: make(chan struct{}), release: make(chan struct{})}
+	e, in, _, _ := harness(t, exec)
+	exec.report = e.TrackLeg
+	cancel, wait := runEngine(t, e)
+
+	in <- qualifiedEvent("op-live", "1000")
+	<-exec.entered
+
+	cycles := e.ActiveCycles()
+	if len(cycles) != 1 {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("active cycles = %d, want 1", len(cycles))
+	}
+	c := cycles[0]
+	if c.OpportunityID != "op-live" || c.TriangleID != triID || c.StartAsset != "USDT" {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("active cycle identity = %+v", c)
+	}
+	if c.Input != "1000" {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("input = %s", c.Input)
+	}
+	if len(c.Legs) != 3 {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("legs = %d", len(c.Legs))
+	}
+	want := []string{"FILLED", "SUBMITTED", "PENDING"}
+	for i, stage := range want {
+		if c.Legs[i].Stage != stage {
+			close(exec.release)
+			cancel()
+			wait()
+			t.Fatalf("leg %d stage = %s, want %s", i+1, c.Legs[i].Stage, stage)
+		}
+	}
+	if c.Legs[0].Market != "BTCUSDT" || c.Legs[0].Side != "BUY" {
+		close(exec.release)
+		cancel()
+		wait()
+		t.Fatalf("leg 1 = %+v", c.Legs[0])
+	}
+
+	close(exec.release)
+	waitFor(t, func() bool { return e.Snapshot().Completed == 1 })
+	cancel()
+	wait()
+
+	if got := e.ActiveCycles(); len(got) != 0 {
+		t.Fatalf("settled cycle still active: %+v", got)
+	}
+}
+
+// TestActiveCyclesIgnoredBeforeRegistration: a progress event for an
+// unknown cycle (settled, or from an executor sharing the hook shape)
+// must be a no-op, never a panic — the monitor observes execution, it
+// must never be able to disturb it.
+func TestActiveCyclesIgnoredBeforeRegistration(t *testing.T) {
+	e := &Engine{}
+	e.TrackLeg(execution.CycleProgress{CycleID: "ghost", LegNo: 1, Stage: execution.LegStageFilled, At: t0})
+	if got := e.ActiveCycles(); len(got) != 0 {
+		t.Fatalf("unregistered engine reported cycles: %+v", got)
+	}
+}

@@ -60,6 +60,12 @@ type SpreadRow struct {
 	SellFeeBps decimal.Decimal `json:"sell_fee_bps"`
 
 	Networks SpreadNetworks `json:"networks"`
+
+	// stale is set when SpreadFilters.MaxLegAge is given and the two
+	// legs fail DataAgeOK against it; it only steers the ranking (a
+	// stale row never outranks a fresh one) and is not a wire field —
+	// the ages above are, and the evaluator applies the gate itself.
+	stale bool
 }
 
 // SpreadNetworks is the per-row deposit/withdraw status pair (design §7:
@@ -88,6 +94,18 @@ type SpreadFilters struct {
 	BasesAllow map[string]bool
 	BasesDeny  map[string]bool
 	Limit      int // <=0 = default (200), capped at 500
+	// NoLimit returns every filtered row regardless of Limit. The page
+	// cap is a table page size; the alert evaluator sets NoLimit because
+	// an evaluation universe bounded by a page size hides every lane
+	// ranked past it (the evaluator applies its own, configurable cap
+	// after the ranking below).
+	NoLimit bool
+	// MaxLegAge, when > 0, marks rows whose legs fail DataAgeOK against
+	// it and ranks them after every fresh row. Rows are always ranked
+	// clean-before-suspect/unknown-liquidity, then by net bps; with a
+	// MaxLegAge the stale rows join the back of the queue, so a cap
+	// (Limit or the evaluator's) cuts artefacts before genuine lanes.
+	MaxLegAge time.Duration
 
 	// IncludeSuspect keeps rows the asset-identity guard flagged
 	// (default false: excluded, counted in SpreadsResult.ExcludedSuspect).
@@ -243,6 +261,9 @@ func ComputeSpreads(book *Book, fees VenueFeeLookup, tracker *LifetimeTracker, n
 				if g.LiquidityUnknown {
 					row.LiquidityUnknown, row.LiquidityQuote = true, nil
 				}
+				if f.MaxLegAge > 0 {
+					row.stale = !DataAgeOK(now.Sub(buyQ.At), now.Sub(sellQ.At), f.MaxLegAge)
+				}
 				if row.Suspect && !f.IncludeSuspect {
 					excludedSuspect++
 					continue
@@ -290,22 +311,44 @@ func ComputeSpreads(book *Book, fees VenueFeeLookup, tracker *LifetimeTracker, n
 		filtered = append(filtered, row)
 	}
 
+	// Quality before size: a row the guard flagged, whose liquidity is
+	// unknown, or whose legs are stale (MaxLegAge) can carry the largest
+	// net bps in the book precisely BECAUSE it is an artefact (a
+	// mismatched ticker, a fresh leg against a stale one). Ranking such
+	// rows first meant a cap kept the artefacts and cut the real lanes;
+	// they now sort after every clean row, and by net bps within each
+	// group.
 	sort.SliceStable(filtered, func(i, j int) bool {
+		ri, rj := spreadRank(filtered[i]), spreadRank(filtered[j])
+		if ri != rj {
+			return ri < rj
+		}
 		return filtered[i].SpreadBpsNet.GreaterThan(filtered[j].SpreadBpsNet)
 	})
 
 	total := len(filtered)
-	limit := f.Limit
-	if limit <= 0 {
-		limit = defaultSpreadsLimit
-	}
-	if limit > maxSpreadsLimit {
-		limit = maxSpreadsLimit
-	}
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
+	if !f.NoLimit {
+		limit := f.Limit
+		if limit <= 0 {
+			limit = defaultSpreadsLimit
+		}
+		if limit > maxSpreadsLimit {
+			limit = maxSpreadsLimit
+		}
+		if len(filtered) > limit {
+			filtered = filtered[:limit]
+		}
 	}
 	return SpreadsResult{Rows: filtered, Total: total, ExcludedSuspect: excludedSuspect, ExcludedLiquidityUnknown: excludedUnknown}
+}
+
+// spreadRank is the ranking group of a row: 0 for a clean, fresh lane,
+// 1 for anything the guard or the data-age gate would refuse.
+func spreadRank(row SpreadRow) int {
+	if row.Suspect || row.LiquidityUnknown || row.stale {
+		return 1
+	}
+	return 0
 }
 
 func buildSpreadRow(pair PairKey, buyVenue, sellVenue Venue, buyQ, sellQ Quote, buyFeeBps, sellFeeBps decimal.Decimal, now time.Time) SpreadRow {

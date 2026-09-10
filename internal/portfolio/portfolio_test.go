@@ -11,6 +11,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/execution"
+	"github.com/cploutarchou/arb-chain-bot/internal/fees"
 	"github.com/cploutarchou/arb-chain-bot/internal/orderbook"
 	"github.com/cploutarchou/arb-chain-bot/internal/reservation"
 )
@@ -163,14 +164,55 @@ func TestDailyLossOnlyCountsLosses(t *testing.T) {
 	p := New(resv, map[exchange.Asset]decimal.Decimal{"USDT": d("1000")})
 	win := completedCycle("c1", "100", "110")
 	_ = p.ApplyCycle(win, false)
-	if !p.DailyLoss("USDT").IsZero() {
-		t.Fatalf("profit counted as loss: %s", p.DailyLoss("USDT"))
+	if !p.DailyLoss("USDT", nil).IsZero() {
+		t.Fatalf("profit counted as loss: %s", p.DailyLoss("USDT", nil))
 	}
 	loss := completedCycle("c2", "100", "70")
 	_ = p.ApplyCycle(loss, false)
 	// Net realized = +10 - 30 = -20 → loss magnitude 20.
-	if !p.DailyLoss("USDT").Equal(d("20")) {
-		t.Fatalf("daily loss = %s", p.DailyLoss("USDT"))
+	if !p.DailyLoss("USDT", nil).Equal(d("20")) {
+		t.Fatalf("daily loss = %s", p.DailyLoss("USDT", nil))
+	}
+}
+
+// A mid-cycle failure strands the deployed input in an intermediate
+// asset. Cash-basis realized books the whole input as a loss; the loss a
+// risk limit and the console should see is the marked one — the input
+// minus what the stranded asset is worth. Unmarkable exposure stays at
+// zero, which is the conservative side.
+func TestDailyLossNetsMarkedExposure(t *testing.T) {
+	p := New(newResv("1000"), map[exchange.Asset]decimal.Decimal{"USDT": d("1000")})
+	failed := execution.CycleResult{
+		CycleID: "f1", Outcome: execution.OutcomeLeg1FilledLeg2Failed, StartAsset: "USDT",
+		InputConsumed: d("100"), FinalAmount: decimal.Zero,
+		Exposure: map[exchange.Asset]decimal.Decimal{"BTC": d("0.001")},
+		Fees:     map[exchange.Asset]decimal.Decimal{},
+	}
+	failed.RealizedPnL = failed.FinalAmount.Sub(failed.InputConsumed)
+	_ = p.ApplyCycle(failed, false)
+
+	// Cash basis: the full 100 left the start asset.
+	if !p.Realized("USDT").Equal(d("-100")) || !p.DailyLoss("USDT", nil).Equal(d("100")) {
+		t.Fatalf("cash basis: realized %s loss %s", p.Realized("USDT"), p.DailyLoss("USDT", nil))
+	}
+	// Marked: 0.001 BTC is worth 99 USDT, so the economic loss is 1.
+	marker := fakeMarker{"BTC": d("99000")}
+	mark, unmarked := p.ExposureMark("USDT", marker)
+	if !mark.Equal(d("99")) || len(unmarked) != 0 {
+		t.Fatalf("mark = %s unmarked = %v", mark, unmarked)
+	}
+	net, _ := p.NetPnL("USDT", marker)
+	if !net.Equal(d("-1")) || !p.DailyLoss("USDT", marker).Equal(d("1")) {
+		t.Fatalf("net = %s loss = %s", net, p.DailyLoss("USDT", marker))
+	}
+	// A marker that cannot value BTC reports it and falls back to the
+	// cash-basis loss.
+	mark, unmarked = p.ExposureMark("USDT", fakeMarker{})
+	if !mark.IsZero() || len(unmarked) != 1 || unmarked[0] != "BTC" {
+		t.Fatalf("unmarkable: mark = %s unmarked = %v", mark, unmarked)
+	}
+	if !p.DailyLoss("USDT", fakeMarker{}).Equal(d("100")) {
+		t.Fatalf("unmarkable loss = %s", p.DailyLoss("USDT", fakeMarker{}))
 	}
 }
 
@@ -248,5 +290,124 @@ func TestResetRestartsSession(t *testing.T) {
 	}
 	if dd := snap.Drawdown["USDT"]; !dd.IsZero() {
 		t.Fatalf("fabricated drawdown after reset: %s", dd)
+	}
+}
+
+// fakeMarker values an asset in the start asset at a fixed rate; assets
+// absent from the map are unmarkable.
+type fakeMarker map[exchange.Asset]decimal.Decimal
+
+func (f fakeMarker) Mark(asset exchange.Asset, amount decimal.Decimal, _ exchange.Asset) (decimal.Decimal, bool) {
+	rate, ok := f[asset]
+	if !ok {
+		return decimal.Zero, false
+	}
+	return amount.Mul(rate), true
+}
+
+// Restore reproduces a session's accounting state exactly; a start asset
+// without a persisted peak keeps its initial balance as the mark.
+func TestStateRestoreRoundTrip(t *testing.T) {
+	cash := newResv("10000")
+	if r, err := cash.Reserve("op-1", "USDT", d("1000"), "tri", nil); err != nil {
+		t.Fatal(err)
+	} else if err := cash.Settle(r.ID, d("1000")); err != nil {
+		t.Fatal(err)
+	}
+	p := New(cash, map[exchange.Asset]decimal.Decimal{"USDT": d("10000")})
+	if err := p.ApplyCycle(execution.CycleResult{
+		Outcome: execution.OutcomeLeg1FilledLeg2Failed, StartAsset: "USDT",
+		InputConsumed: d("1000"), RealizedPnL: d("-1000"),
+		Exposure: map[exchange.Asset]decimal.Decimal{"BTC": d("0.01")},
+		Fees:     map[exchange.Asset]decimal.Decimal{"BTC": d("0.00001")},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	p.TakeSnapshot(time.Now(), nil)
+	st := p.State()
+	if !st.Realized["USDT"].Equal(d("-1000")) || !st.Exposure["BTC"].Equal(d("0.01")) ||
+		!st.Peak["USDT"].Equal(d("10000")) || !st.Drawdown["USDT"].Equal(d("0.1")) || st.Cycles != 1 || st.Failed != 1 {
+		t.Fatalf("state = %+v", st)
+	}
+
+	q := New(cash, map[exchange.Asset]decimal.Decimal{"USDT": d("10000"), "BTC": d("1")})
+	q.Restore(st)
+	if got := q.State(); !got.Realized["USDT"].Equal(st.Realized["USDT"]) || !got.Exposure["BTC"].Equal(st.Exposure["BTC"]) ||
+		!got.Fees["BTC"].Equal(st.Fees["BTC"]) || !got.Peak["USDT"].Equal(d("10000")) || !got.Peak["BTC"].Equal(d("1")) ||
+		!got.Drawdown["USDT"].Equal(d("0.1")) || got.Cycles != 1 || got.Failed != 1 {
+		t.Fatalf("restored = %+v", got)
+	}
+	// Mutating the returned state must not touch the portfolio.
+	st.Realized["USDT"] = d("0")
+	if !q.Realized("USDT").Equal(d("-1000")) {
+		t.Fatal("State returned a shared map")
+	}
+}
+
+// With a fee schedule the mark is a liquidation value: the position is
+// walked through the depth net of the taker fee, and depth the book
+// does not show counts for nothing (audit F16).
+func TestBookMarkerLiquidationValue(t *testing.T) {
+	books := orderbook.NewSet()
+	id := exchange.MarketID{Exchange: "binance", Symbol: "ETHUSDT"}
+	b := orderbook.New(id, 0)
+	b.ApplySnapshot(orderbook.DepthEvent{Market: id, IsSnapshot: true, FinalUpdateID: 1,
+		Bids: []orderbook.Level{{Price: d("100"), Qty: d("1")}, {Price: d("99"), Qty: d("1")}},
+		Asks: []orderbook.Level{{Price: d("101"), Qty: d("1")}}})
+	books.Add(b)
+	sched, err := fees.NewSchedule("binance", exchange.FeeInReceived, fees.Rate{Maker: d("0.001"), Taker: d("0.001")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := exchange.InstrumentRules{QtyMode: exchange.PrecisionStep, QtyStep: d("0.001"),
+		PriceMode: exchange.PrecisionStep, PriceTick: d("0.01")}
+	markets := []exchange.Market{{ID: id, Base: "ETH", Quote: "USDT", Rules: rules}}
+
+	top := BookMarker{Books: books, Markets: markets}
+	if v, ok := top.Mark("ETH", d("2"), "USDT"); !ok || !v.Equal(d("200")) {
+		t.Fatalf("top-of-book mark = %s %v", v, ok)
+	}
+	liq := BookMarker{Books: books, Markets: markets, Fees: sched}
+	// 1 ETH at 100 + 1 ETH at 99 = 199 USDT, minus the 0.1% taker fee.
+	if v, ok := liq.Mark("ETH", d("2"), "USDT"); !ok || !v.Equal(d("198.801")) {
+		t.Fatalf("liquidation mark = %s %v, want 198.801", v, ok)
+	}
+	// Beyond the visible depth only the fillable part is valued.
+	if v, ok := liq.Mark("ETH", d("5"), "USDT"); !ok || !v.Equal(d("198.801")) {
+		t.Fatalf("mark past depth = %s %v, want 198.801", v, ok)
+	}
+	// Inverse pair: 202 USDT buys 2 ETH at 101, fee in ETH.
+	if v, ok := liq.Mark("USDT", d("101"), "ETH"); !ok || !v.Equal(d("0.999")) {
+		t.Fatalf("inverse liquidation mark = %s %v, want 0.999", v, ok)
+	}
+	// Dust the quantity step cannot express falls back to the top level.
+	if v, ok := liq.Mark("ETH", d("0.0001"), "USDT"); !ok || !v.Equal(d("0.01")) {
+		t.Fatalf("dust mark = %s %v", v, ok)
+	}
+}
+
+// Fees charged in intermediate assets are valued in the start asset;
+// the raw map stays visible and unmarkable fee assets are listed.
+func TestFeesMarkValuesEveryFeeAsset(t *testing.T) {
+	p := New(newResv("10000"), map[exchange.Asset]decimal.Decimal{"USDT": d("10000")})
+	res := completedCycle("c1", "1000", "1002")
+	res.Fees = map[exchange.Asset]decimal.Decimal{"BTC": d("0.00001"), "ETH": d("0.001"), "USDT": d("1.02"), "DOGE": d("5")}
+	if err := p.ApplyCycle(res, false); err != nil {
+		t.Fatal(err)
+	}
+	total, byAsset, unmarked := p.FeesMark("USDT", fakeMarker{"BTC": d("100000"), "ETH": d("2000")})
+	// 0.00001 BTC = 1, 0.001 ETH = 2, USDT 1.02 itself; DOGE unmarkable.
+	if !total.Equal(d("4.02")) {
+		t.Fatalf("fees marked = %s, want 4.02", total)
+	}
+	if !byAsset["DOGE"].Equal(d("5")) || len(byAsset) != 4 {
+		t.Fatalf("raw fee map = %v", byAsset)
+	}
+	if len(unmarked) != 1 || unmarked[0] != "DOGE" {
+		t.Fatalf("unmarked = %v", unmarked)
+	}
+	// Without a marker only the start asset's own slice is valued.
+	if total, _, unmarked := p.FeesMark("USDT", nil); !total.Equal(d("1.02")) || len(unmarked) != 3 {
+		t.Fatalf("nil marker: total=%s unmarked=%v", total, unmarked)
 	}
 }

@@ -1,15 +1,156 @@
 "use client";
 
+// Risk Center. Since the breaker-acknowledgement endpoint landed, this
+// is also where an ADMIN closes a breaker that the policies
+// deliberately leave OPEN (daily_loss, drawdown, slippage,
+// simulation_inconsistency — docs/risk.md §5: automatic resume is off):
+// the close control sits beside the breaker's own reason, requires
+// typing the breaker's name, and reports the backend's message verbatim
+// on failure. Nothing here can change a limit — that stays on the
+// versioned strategy config.
+
 import { useState } from "react";
-import { api } from "@/lib/api/client";
+import { api, ApiError, type RiskView } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
+import { useAuth, can } from "@/lib/auth";
+import { useToast } from "@/components/Toast";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, Badge, PageTitle, Section, Table, fmtTime } from "@/components/ui";
+import { Await, Badge, Button, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
 const WINDOWS = [24, 72, 168, 720] as const;
 
+function BreakerCloseDialog({
+  breaker,
+  onClose,
+  onClosed,
+}: {
+  breaker: { Name: string; Scope: string; State: string; Reason: string };
+  onClose: () => void;
+  onClosed: () => void;
+}) {
+  const toast = useToast();
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const res = await api.riskBreakers.close(breaker.Name, breaker.Scope);
+      toast.push({
+        tone: "ok",
+        text: `Breaker ${res.name} is ${res.state} — qualification resumes on the next evaluation.`,
+      });
+      onClosed();
+      onClose();
+    } catch (err: unknown) {
+      toast.push({
+        tone: "bad",
+        text:
+          err instanceof ApiError
+            ? `Close failed (HTTP ${err.status}): ${err.message}`
+            : "Close failed: backend unreachable.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Close breaker ${breaker.Name}`}
+    >
+      <div className="w-full max-w-md rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-4">
+        <h3 className="mb-2 text-sm font-semibold text-[var(--critical)]">
+          Close breaker {breaker.Name}?
+        </h3>
+        <p className="mb-2 text-[13px] text-[var(--text-dim)]">
+          It is {breaker.State} because: {breaker.Reason || "(no reason recorded)"}. Closing it
+          resumes qualification on the next evaluation even though the condition that opened it
+          is not proven gone — the loss and drawdown breakers re-open immediately at their
+          limits, but read the reason first.
+        </p>
+        <label
+          className="mb-1 block text-[12px] text-[var(--text-dim)]"
+          htmlFor="breaker-close-confirm"
+        >
+          Type the breaker name (<strong>{breaker.Name}</strong>) to confirm:
+        </label>
+        <input
+          id="breaker-close-confirm"
+          autoFocus
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          spellCheck={false}
+          className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--critical)]"
+        />
+        <div className="mt-3 flex justify-end gap-2">
+          <Button onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={run} danger disabled={typed !== breaker.Name || busy}>
+            {busy ? "Closing…" : `Close ${breaker.Name}`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BreakersTable({
+  view,
+  role,
+  onClosed,
+}: {
+  view: RiskView;
+  role: string | undefined;
+  onClosed: () => void;
+}) {
+  const [closing, setClosing] = useState<{ Name: string; Scope: string; State: string; Reason: string } | null>(null);
+  const mayClose = can(role, "risk:config");
+  const breakers = view.breakers ?? [];
+
+  return (
+    <>
+      <Table
+        head={["Name", "Scope", "State", "Reason", ""]}
+        empty="registered breakers"
+        rows={breakers.map((b) => [
+          b.Name,
+          b.Scope || "global",
+          <Badge key="s" tone={b.State === "OPEN" ? "bad" : b.State === "HALF_OPEN" ? "warn" : "ok"}>
+            {b.State}
+          </Badge>,
+          b.Reason || "—",
+          mayClose && b.State !== "CLOSED" ? (
+            <Button key="c" onClick={() => setClosing(b)}>
+              Close…
+            </Button>
+          ) : (
+            "—"
+          ),
+        ])}
+      />
+      {mayClose && breakers.length > 0 && breakers.every((b) => b.State === "CLOSED") && (
+        <p className="mt-2 text-[11px] text-[var(--text-dim)]">
+          Breakers that trip on loss, drawdown, slippage or ledger inconsistency stay OPEN
+          until an operator closes them here — automatic resume is deliberately off.
+        </p>
+      )}
+      {closing && (
+        <BreakerCloseDialog breaker={closing} onClose={() => setClosing(null)} onClosed={onClosed} />
+      )}
+    </>
+  );
+}
+
 export default function RiskPage() {
-  const risk = usePoll(() => api.risk(), 5000);
+  const { state: auth } = useAuth();
+  const role = auth.kind === "authenticated" ? auth.me.role : undefined;
+  const [riskRefresh, setRiskRefresh] = useState(0);
+  const risk = usePoll(() => api.risk(), 5000, [riskRefresh]);
   const [hours, setHours] = useState<number>(24);
   const events = usePoll(() => api.riskEvents.list(hours, 200), 10000, [hours]);
 
@@ -27,18 +168,7 @@ export default function RiskPage() {
               />
             </Section>
             <Section title="Circuit breakers">
-              <Table
-                head={["Name", "Scope", "State", "Reason"]}
-                empty="registered breakers"
-                rows={(r.breakers ?? []).map((b) => [
-                  b.Name,
-                  b.Scope || "global",
-                  <Badge key="s" tone={b.State === "OPEN" ? "bad" : b.State === "HALF_OPEN" ? "warn" : "ok"}>
-                    {b.State}
-                  </Badge>,
-                  b.Reason || "—",
-                ])}
-              />
+              <BreakersTable view={r} role={role} onClosed={() => setRiskRefresh((n) => n + 1)} />
             </Section>
             <Section title="Rejection reasons (session)">
               <Table
@@ -59,6 +189,7 @@ export default function RiskPage() {
             <button
               key={w}
               onClick={() => setHours(w)}
+              aria-pressed={hours === w}
               className={`rounded border px-2 py-0.5 text-[12px] ${
                 hours === w ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
               }`}
@@ -77,7 +208,7 @@ export default function RiskPage() {
                 maxHeight={480}
                 rows={(res.events ?? []).map((ev) => [
                   fmtTime(ev.ts),
-                  <Badge key="k" tone={ev.kind === "breaker" ? "warn" : "dim"}>
+                  <Badge key="k" tone={ev.kind === "breaker_transition" ? "warn" : "dim"}>
                     {ev.kind}
                   </Badge>,
                   ev.subject ?? "—",

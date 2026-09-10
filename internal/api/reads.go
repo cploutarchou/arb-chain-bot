@@ -21,6 +21,11 @@ type ReadModel interface {
 	PnL() (any, bool)
 	Risk() any
 	Health() any
+	// PaperActive snapshots the paper engine's in-flight cycles for the
+	// console's live-cycle monitor (audit F6). ok=false: no paper engine
+	// in this profile (mode is not PAPER) — an honest 404, not a fake
+	// empty list.
+	PaperActive() (any, bool)
 }
 
 // readRoutes finish the T-024 route groups: opportunities, paper
@@ -75,6 +80,14 @@ func (s *Server) readRoutes(mux *http.ServeMux) {
 		default:
 			WriteData(w, http.StatusOK, detail)
 		}
+	})))
+	mux.HandleFunc("GET /api/v1/paper/active", s.requirePerm(auth.PermViewPortfolio, needEngine(func(w http.ResponseWriter, r *http.Request) {
+		data, ok := s.Reads.PaperActive()
+		if !ok {
+			WriteError(w, http.StatusNotFound, "paper_absent", "paper engine not running (mode is not PAPER)", correlationID(r))
+			return
+		}
+		WriteData(w, http.StatusOK, data)
 	})))
 	mux.HandleFunc("GET /api/v1/paper/cycles", s.requirePerm(auth.PermViewPortfolio, needStore(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.Store.ListCycles(r.Context(), r.URL.Query().Get("session_id"), limitOf(r))

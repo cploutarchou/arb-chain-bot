@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
@@ -66,21 +67,65 @@ func (r readModel) Portfolio() (any, bool) {
 func (r readModel) PnL() (any, bool) {
 	r.e.mu.RLock()
 	port := r.e.port
+	marker := r.e.marker
 	r.e.mu.RUnlock()
 	if port == nil {
 		return nil, false
 	}
-	rows := make([]map[string]string, 0, 2)
+	rows := make([]map[string]any, 0, 2)
 	for _, a := range r.e.startAssets() {
-		rows = append(rows, map[string]string{
-			"asset":      string(a),
-			"realized":   port.Realized(a).String(),
-			"fees":       port.FeesPaid(a).String(),
-			"daily_loss": port.DailyLoss(a).String(),
-			"drawdown":   port.CurrentDrawdown(a).StringFixed(4),
+		// realized is cash basis (what came back minus what was deployed);
+		// exposure_mark values the intermediate assets still held; net_pnl
+		// is their sum and the figure daily_loss is measured on. unmarked
+		// lists exposure assets no book can value (counted at zero).
+		mark, unmarked := port.ExposureMark(a, marker)
+		net, _ := port.NetPnL(a, marker)
+		if unmarked == nil {
+			unmarked = []exchange.Asset{}
+		}
+		// fees is the slice charged in the start asset itself (kept for
+		// readers that predate the valuation); fees_marked values every
+		// fee asset in the start asset, fees_by_asset is the raw map, and
+		// fees_unmarked lists fee assets no book can value.
+		feesMarked, feesByAsset, feesUnmarked := port.FeesMark(a, marker)
+		byAsset := make(map[string]string, len(feesByAsset))
+		for fa, v := range feesByAsset {
+			byAsset[string(fa)] = v.String()
+		}
+		if feesUnmarked == nil {
+			feesUnmarked = []exchange.Asset{}
+		}
+		rows = append(rows, map[string]any{
+			"asset":         string(a),
+			"realized":      port.Realized(a).String(),
+			"exposure_mark": mark.String(),
+			"net_pnl":       net.String(),
+			"unmarked":      unmarked,
+			"fees":          port.FeesPaid(a).String(),
+			"fees_marked":   feesMarked.String(),
+			"fees_by_asset": byAsset,
+			"fees_unmarked": feesUnmarked,
+			"daily_loss":    port.DailyLoss(a, marker).String(),
+			"drawdown":      port.CurrentDrawdown(a).StringFixed(4),
 		})
 	}
 	return map[string]any{"assets": rows}, true
+}
+
+// PaperActive snapshots the paper engine's in-flight cycles (audit F6:
+// the console's live-cycle monitor). ok=false when no paper engine
+// exists in this profile.
+func (r readModel) PaperActive() (any, bool) {
+	r.e.mu.RLock()
+	pap := r.e.pap
+	r.e.mu.RUnlock()
+	if pap == nil {
+		return nil, false
+	}
+	return map[string]any{
+		"running": pap.Running(),
+		"cycles":  pap.ActiveCycles(),
+	}, true
 }
 
 func (r readModel) Risk() any {
@@ -116,6 +161,7 @@ func (r readModel) Health() any {
 		"scanner": map[string]int64{
 			"evaluations": st.Evaluations, "qualified": st.Qualified,
 			"rejected": st.Rejected, "skipped": st.Skipped, "dropped": st.Dropped,
+			"revalidations": st.Revalidations, "revalidation_rejects": st.RevalidationRejects,
 		},
 	}
 	r.e.mu.RLock()
@@ -157,22 +203,46 @@ func (r readModel) Health() any {
 	if st.Paper != nil {
 		out["paper"] = st.Paper
 	}
+	// P1-8: the venue clock offset the RISK_CLOCK_UNSAFE gate reads.
+	// healthy is false until the first successful probe.
+	if clock := r.e.currentClock(); clock != nil {
+		clockView := map[string]any{
+			"healthy":   clock.Healthy(),
+			"offset_ms": float64(clock.Offset().Microseconds()) / 1000,
+		}
+		if err := clock.LastError(); err != nil {
+			clockView["last_error"] = err.Error()
+		}
+		out["clock"] = clockView
+	}
 	// BL-18: queue depths (outbox persistence, paper's inbound event
 	// channel) — the engine-derived half; recorder queue depth and
 	// process/DB stats are assembled at the API layer, which has no
 	// engine dependency to reach them.
+	// P0-3: every way a financial record can fail to land is a number
+	// here — refused at the queue (dropped), refused by the database
+	// (write_failures), persisted without its opportunity row
+	// (unlinked_cycles) — plus whether the writer is currently failing.
 	queues := map[string]any{}
 	if ob := r.e.currentOutbox(); ob != nil {
-		queues["outbox"] = map[string]any{
+		outbox := map[string]any{
 			"depth": ob.Depth(), "capacity": ob.Capacity(),
 			"dropped": ob.Dropped(), "written": ob.Written(),
+			"write_failures": ob.WriteFailures(), "failing": ob.Failing(),
 		}
+		if r.e.Store != nil {
+			outbox["unlinked_cycles"] = r.e.Store.UnlinkedCycles()
+		}
+		queues["outbox"] = outbox
 	}
 	r.e.mu.RLock()
 	pap := r.e.pap
 	r.e.mu.RUnlock()
 	if pap != nil {
-		queues["paper"] = map[string]any{"depth": pap.QueueDepth(), "capacity": pap.QueueCapacity()}
+		queues["paper"] = map[string]any{
+			"depth": pap.QueueDepth(), "capacity": pap.QueueCapacity(),
+			"dropped": r.e.paperDropped.Load(),
+		}
 	}
 	if len(queues) > 0 {
 		out["queues"] = queues

@@ -340,7 +340,7 @@ func (x *Executor) queueSlip(execID string, fills []Fill) {
 
 func (x *Executor) sidePrice(venue screener.Venue, market, side, base, quote string) (decimal.Decimal, bool) {
 	if market == "perp" {
-		p, ok := x.svc.Book.PerpFor(venue, base)
+		p, ok := x.svc.Book.PerpFor(venue, base, quote)
 		if !ok {
 			return decimal.Decimal{}, false
 		}

@@ -32,22 +32,51 @@ func (m *MemoryStore) SetRuleOrg(ruleID string, orgID int64) {
 	m.rules[ruleID] = orgID
 }
 
-func (m *MemoryStore) ContextForUser(_ context.Context, userID string) (Context, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var best *Membership
-	for _, ms := range m.members {
-		if mem, ok := ms[userID]; ok {
-			if best == nil || mem.CreatedAt.Before(best.CreatedAt) || (mem.CreatedAt.Equal(best.CreatedAt) && mem.OrgID < best.OrgID) {
-				c := mem
-				best = &c
-			}
-		}
+func (m *MemoryStore) ContextForUser(ctx context.Context, userID string) (Context, error) {
+	cs, err := m.ContextsForUser(ctx, userID)
+	if err != nil {
+		return Context{}, err
 	}
-	if best == nil {
+	if len(cs) == 0 {
 		return Context{}, ErrNoMembership
 	}
-	return Context{Org: m.orgs[best.OrgID], Membership: *best}, nil
+	return cs[0], nil
+}
+
+// ContextsForUser orders tenant memberships before the platform one so
+// that a platform membership never shadows an organisation membership
+// (the pgx store sorts the same way).
+func (m *MemoryStore) ContextsForUser(_ context.Context, userID string) ([]Context, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []Context
+	for orgID, ms := range m.members {
+		if mem, ok := ms[userID]; ok {
+			out = append(out, Context{Org: m.orgs[orgID], Membership: mem})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].Membership, out[j].Membership
+		if (a.OrgID == PlatformOrgID) != (b.OrgID == PlatformOrgID) {
+			return b.OrgID == PlatformOrgID
+		}
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.OrgID < b.OrgID
+	})
+	return out, nil
+}
+
+func (m *MemoryStore) ListOrgIDs(context.Context) ([]int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]int64, 0, len(m.orgs))
+	for id := range m.orgs {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }
 
 func (m *MemoryStore) Org(_ context.Context, id int64) (Org, error) {
@@ -193,6 +222,22 @@ func (m *MemoryStore) RemoveMember(_ context.Context, orgID int64, userID string
 	}
 	delete(ms, userID)
 	return nil
+}
+
+// MembershipFor resolves one (org_id, user_id) membership row (audit
+// S3/P1-12: API-key authentication re-checks this on every request).
+func (m *MemoryStore) MembershipFor(_ context.Context, orgID int64, userID string) (Membership, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ms, ok := m.members[orgID]
+	if !ok {
+		return Membership{}, ErrUnknownOrg
+	}
+	mem, ok := ms[userID]
+	if !ok {
+		return Membership{}, ErrNoMembership
+	}
+	return mem, nil
 }
 
 func (m *MemoryStore) OrgOfRule(_ context.Context, ruleID string) (int64, error) {

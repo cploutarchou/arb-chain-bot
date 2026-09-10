@@ -1,18 +1,41 @@
-# Canary overlay for prod: a second release "<release>-canary" that
-# runs the stateless console at ~10% of traffic via nginx canary
-# annotations and a shadow arbd in REPLAY mode (no live feeds, no
-# writes of new sessions). The primary arbd is untouched until
-# prod-full. Recordings PVC is not shared.
+# Canary overlay for prod. Applied on top of values-prod.yaml as a second
+# release ("<release>-canary") for the bake in deploy.yml.
+#
+# What it is: the new arbd digest in PAPER mode against live feeds with
+# persistence DISABLED (sessions, settings and paper state in memory; no
+# DSN is projected and ARB_DATABASE_URL is pinned to "" on the pod), plus
+# the new console digest. The chart refuses (templates/_helpers.tpl,
+# "arb.guards") a canary that references the primary's database key,
+# runs any mode but PAPER, enables the migrate hook, claims the
+# recordings volume, or takes weighted ingress traffic.
+# deploy/helm/test-canary-guards.sh proves each of those refusals.
+#
+# Cost of the design: one extra Binance WS/REST client from the cluster
+# egress IP for the bake window. Nothing is recorded (mode PAPER, the
+# recordings mount is an emptyDir) and nothing is written to any database.
+#
+# Why no traffic weight: state is separate from the primary's, so a user
+# split 90/10 would be logged out on one call in ten. Traffic is opt-in:
+# send the header `X-Arb-Canary: always` to reach the canary,
+# `X-Arb-Canary: never` to force the primary.
+canary:
+  enabled: true
+  # Unused while persistence is disabled. If a canary ever needs a
+  # database, point this at a remote key holding a DSN to a scratch
+  # database (never database-url) and set arbd.persistence.enabled=true.
+  databaseRemoteKey: ""
 arbd:
-  mode: REPLAY
+  mode: PAPER
   replicas: 1
+  persistence:
+    enabled: false
   recordings:
     enabled: false
   pdb:
     enabled: false
-  extraEnv:
-    - name: ARB_REPLAY_SESSION
-      value: ""            # pipeline sets the latest closed session id
+  extraEnv: []
+migrate:
+  enabled: false        # nothing to migrate; the hook would otherwise run against the projected DSN
 web:
   replicas: 1
   hpa:
@@ -22,9 +45,17 @@ web:
 ingress:
   enabled: true
   host: console.example.com
+  tls:
+    enabled: false      # the primary Ingress owns the host's certificate; a second one would request a duplicate
   annotations:
     nginx.ingress.kubernetes.io/canary: "true"
-    nginx.ingress.kubernetes.io/canary-weight: "10"
+    nginx.ingress.kubernetes.io/canary-by-header: "X-Arb-Canary"
+    # No canary-weight on purpose (see above); the chart refuses one.
+    # Inherited annotations that another controller would act on are
+    # removed: cert-manager must not issue a second certificate for the
+    # same host. nginx ignores the remaining non-canary annotations on a
+    # canary Ingress and takes them from the primary.
+    cert-manager.io/cluster-issuer: null
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"

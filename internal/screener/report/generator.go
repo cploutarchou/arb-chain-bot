@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/alerts"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
 // Notifier is the notification.Service seam (Notify never blocks).
@@ -30,6 +32,9 @@ type Generator struct {
 	Ledger paperexec.Ledger
 	Store  Store // nil → reports are written to disk / returned only
 	Notify Notifier
+	// Orgs lists the organisations an unscoped (scheduled) run covers;
+	// nil covers the platform organisation only.
+	Orgs OrgSource
 	// Dir is the recordings directory; reports go to
 	// <Dir>/screener-reports/<YYYY-MM-DD>/. "" → no files.
 	Dir   string
@@ -39,14 +44,19 @@ type Generator struct {
 	// Seed for the bootstrap (reproducible; default 1).
 	Seed int64
 
-	mu      sync.Mutex
-	lastRun *RunResult
-	seq     int64 // fallback id counter when IDGen is nil
+	mu           sync.Mutex
+	lastRun      *RunResult
+	lastRunByOrg map[int64]*RunResult
+	seq          int64 // fallback id counter when IDGen is nil
 }
 
-// RunResult is what a run produced.
+// RunResult is what a run produced. OrgID is set on a single-
+// organisation result (LastRunFor, the on-demand run); a scheduled run
+// over several organisations merges their reports and errors and
+// leaves it 0.
 type RunResult struct {
 	Day       string    `json:"day"` // the UTC day reported (previous day)
+	OrgID     int64     `json:"org_id,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	Duration  int64     `json:"duration_ms"`
 	Reports   []Summary `json:"reports"`
@@ -79,10 +89,37 @@ func (g *Generator) LastRun() *RunResult {
 	return &cp
 }
 
+// LastRunFor returns one organisation's most recent result (nil before
+// any run covered it). The API serves this, never LastRun: a merged
+// result would show one tenant the other tenants' rule ids and PnL.
+func (g *Generator) LastRunFor(orgID int64) *RunResult {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	r, ok := g.lastRunByOrg[orgID]
+	if !ok {
+		return nil
+	}
+	cp := *r
+	return &cp
+}
+
 // Run generates every report for the UTC day BEFORE now (the nightly
 // contract: at 00:05 the previous day is complete) plus the cumulative
 // window, for each strategy and each rule, files them and sends one
 // Telegram summary. Errors on one report are collected, not fatal.
+//
+// Reports are produced per organisation. A scoped ctx (the API's
+// on-demand run) covers that organisation only; an unscoped ctx (the
+// scheduler) covers every organisation Orgs lists, the platform
+// organisation alone when Orgs is nil. Each organisation's run reads
+// its own rules, ledger rows, alert events and settings document (fee
+// table, paper capital) and files its rows in its own scope. There is
+// deliberately no platform-wide aggregate: a figure computed over every
+// tenant's paper activity is exactly the commingling the report must
+// not do, and the platform organisation's own report already covers
+// the operator's ledger. One organisation's failure is recorded and
+// the others still run; a single-organisation run reports it as the
+// error, as before.
 func (g *Generator) Run(ctx context.Context, now time.Time) (RunResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -91,7 +128,67 @@ func (g *Generator) Run(ctx context.Context, now time.Time) (RunResult, error) {
 	dayEnd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	dayStart := dayEnd.Add(-24 * time.Hour)
 	res := RunResult{Day: dayStart.Format("2006-01-02"), StartedAt: started}
+	if g.Dir != "" {
+		res.Dir = filepath.Join(g.Dir, "screener-reports", res.Day)
+	}
 
+	orgs, err := g.orgs(ctx)
+	if err != nil {
+		return res, err
+	}
+	if g.lastRunByOrg == nil {
+		g.lastRunByOrg = map[int64]*RunResult{}
+	}
+	var perOrg []RunResult
+	for _, org := range orgs {
+		or, err := g.runOrg(tenancy.WithOrg(ctx, org), org, now, res.Day, dayStart, dayEnd, started)
+		if err != nil {
+			if len(orgs) == 1 {
+				return res, err
+			}
+			res.Errors = append(res.Errors, "org "+strconv.FormatInt(org, 10)+": "+err.Error())
+			continue
+		}
+		cp := or
+		g.lastRunByOrg[org] = &cp
+		perOrg = append(perOrg, or)
+		res.Reports = append(res.Reports, or.Reports...)
+		res.Errors = append(res.Errors, or.Errors...)
+		if len(orgs) == 1 {
+			res.OrgID, res.Dir = or.OrgID, or.Dir
+		}
+	}
+	res.Duration = g.now().Sub(started).Milliseconds()
+	g.notifySummary(res, perOrg, now)
+	cp := res
+	g.lastRun = &cp
+	g.log().Info("screener reports generated", "day", res.Day, "organisations", len(orgs), "reports", len(res.Reports), "errors", len(res.Errors), "dir", res.Dir)
+	return res, nil
+}
+
+// orgs decides a run's scope: the organisation in ctx, else every
+// organisation Orgs lists, else the platform organisation alone.
+func (g *Generator) orgs(ctx context.Context) ([]int64, error) {
+	if id, ok := tenancy.OrgFrom(ctx); ok {
+		return []int64{id}, nil
+	}
+	if g.Orgs == nil {
+		return []int64{tenancy.PlatformOrgID}, nil
+	}
+	ids, err := g.Orgs.ListOrgIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		ids = []int64{tenancy.PlatformOrgID}
+	}
+	return ids, nil
+}
+
+// runOrg produces one organisation's reports; ctx is scoped to it so
+// every store read and the report rows stay inside that organisation.
+func (g *Generator) runOrg(ctx context.Context, org int64, now time.Time, day string, dayStart, dayEnd, started time.Time) (RunResult, error) {
+	res := RunResult{Day: day, OrgID: org, StartedAt: started}
 	rules, err := g.rules(ctx)
 	if err != nil {
 		return res, err
@@ -166,15 +263,30 @@ func (g *Generator) Run(ctx context.Context, now time.Time) (RunResult, error) {
 
 	outDir := ""
 	if g.Dir != "" {
-		outDir = filepath.Join(g.Dir, "screener-reports", res.Day)
-		if err := os.MkdirAll(outDir, 0o700); err != nil {
-			res.Errors = append(res.Errors, "mkdir: "+err.Error())
-			outDir = ""
+		dir := filepath.Join(g.Dir, "screener-reports", day)
+		if org != tenancy.PlatformOrgID {
+			// Tenants nest under the day directory so file names cannot
+			// collide across organisations; the platform keeps the
+			// original layout. A tenant with nothing to report gets no
+			// directory.
+			dir = filepath.Join(dir, "org-"+strconv.FormatInt(org, 10))
+		}
+		if org == tenancy.PlatformOrgID || len(ordered) > 0 {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				res.Errors = append(res.Errors, "mkdir: "+err.Error())
+			} else {
+				outDir = dir
+			}
 		}
 		res.Dir = outDir
 	}
-	capital := g.capital()
-	snap := g.Svc.Current()
+	// The organisation's own document prices its report: its fee table
+	// and its paper balances (capital).
+	snap, err := g.Svc.SnapshotFor(ctx)
+	if err != nil {
+		return res, err
+	}
+	capital := capitalOf(snap)
 	spotFee := func(v screener.Venue) (decimal.Decimal, bool) {
 		vs, ok := snap.Settings.Venues[v]
 		if !ok {
@@ -241,10 +353,6 @@ func (g *Generator) Run(ctx context.Context, now time.Time) (RunResult, error) {
 	}
 	res.Reports = summaries
 	res.Duration = g.now().Sub(started).Milliseconds()
-	g.notifySummary(res, summaries, now)
-	cp := res
-	g.lastRun = &cp
-	g.log().Info("screener reports generated", "day", res.Day, "reports", len(summaries), "errors", len(res.Errors), "dir", outDir)
 	return res, nil
 }
 
@@ -281,21 +389,29 @@ func (g *Generator) build(in Inputs, ruleID, ruleName string, now time.Time, eve
 	}
 }
 
-// notifySummary sends ONE Telegram message per run: one line per
-// (strategy, cumulative) with the measurements and the gate count.
-func (g *Generator) notifySummary(res RunResult, summaries []Summary, now time.Time) {
+// notifySummary sends ONE Telegram message per run (the operator's
+// channel): one line per (organisation, strategy, cumulative) with the
+// measurements and the gate count; the organisation is named only when
+// the run covered more than one.
+func (g *Generator) notifySummary(res RunResult, perOrg []RunResult, now time.Time) {
 	if g.Notify == nil {
 		return
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Paper report for %s UTC (previous day) and cumulative.\n", res.Day)
-	for _, s := range summaries {
-		if s.RuleID != "" {
-			continue
+	for _, or := range perOrg {
+		prefix := ""
+		if len(perOrg) > 1 {
+			prefix = "org " + strconv.FormatInt(or.OrgID, 10) + " "
 		}
-		fmt.Fprintf(&b, "%s %s: n=%d, net %s quote, gate %d/%d pass\n", s.Strategy, s.PeriodLabel, s.N, s.NetPnLQuote.StringFixed(4), s.GatePassed, s.GateTotal)
+		for _, s := range or.Reports {
+			if s.RuleID != "" {
+				continue
+			}
+			fmt.Fprintf(&b, "%s%s %s: n=%d, net %s quote, gate %d/%d pass\n", prefix, s.Strategy, s.PeriodLabel, s.N, s.NetPnLQuote.StringFixed(4), s.GatePassed, s.GateTotal)
+		}
 	}
-	if len(summaries) == 0 {
+	if len(res.Reports) == 0 {
 		b.WriteString("No strategy has rules or ledger rows yet: nothing measured.\n")
 	}
 	if len(res.Errors) > 0 {
@@ -318,11 +434,11 @@ func (g *Generator) rules(ctx context.Context) ([]screener.Rule, error) {
 	return g.Svc.Rules.ListRules(ctx)
 }
 
-// capital sums the settings' paper balances in quote assets (USDT,
-// USDC, FDUSD, USD and their ":perp" wallets) across venues.
-func (g *Generator) capital() decimal.Decimal {
+// capitalOf sums a settings document's paper balances in quote assets
+// (USDT, USDC, FDUSD, USD and their ":perp" wallets) across venues.
+func capitalOf(snap screener.Snapshot) decimal.Decimal {
 	total := decimal.Zero
-	for _, bal := range g.Svc.Current().Settings.Paper.Balances {
+	for _, bal := range snap.Settings.Paper.Balances {
 		for asset, amt := range bal {
 			base := strings.TrimSuffix(asset, paperexec.PerpWalletSuffix)
 			switch base {

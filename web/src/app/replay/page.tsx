@@ -10,11 +10,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, ApiError, isNotReady, request, type ReplayRun } from "@/lib/api/client";
-import { usePoll } from "@/lib/usePoll";
+import { usePoll, type PollState } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { connectHub, type HubMessage } from "@/lib/ws";
 import { flatten } from "@/lib/diff";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { Await, Badge, Button, ErrorBox, Loading, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
 interface ConfigSnapshotFull {
@@ -95,7 +96,11 @@ export default function ReplayPage() {
   // retryable mirrors campaigns' handling of a 503 not_ready right after
   // boot (the replay runner's background context isn't wired yet).
   const [runMsg, setRunMsg] = useState<{ ok: boolean; text: string; retryable?: boolean } | null>(null);
-  const [detail, setDetail] = useState<ReplayRun | null>(null);
+  // detailID/detailState split loading/error/ready the same way usePoll
+  // does (audit F7) — a failed "View" used to silently clear the result
+  // section instead of saying the fetch failed.
+  const [detailID, setDetailID] = useState<string | null>(null);
+  const [detailState, setDetailState] = useState<PollState<ReplayRun>>({ kind: "loading" });
 
   const submitRun = async () => {
     setRunMsg(null);
@@ -124,11 +129,17 @@ export default function ReplayPage() {
   };
 
   const viewRun = async (id: string) => {
+    setDetailID(id);
+    setDetailState({ kind: "loading" });
     try {
       const res = await api.replays.get(id);
-      setDetail(res.run);
-    } catch {
-      setDetail(null);
+      setDetailState({ kind: "ready", data: res.run });
+    } catch (err: unknown) {
+      setDetailState(
+        err instanceof ApiError
+          ? { kind: "error", message: err.message, status: err.status, code: err.apiError?.code }
+          : { kind: "error", message: "Backend unreachable" },
+      );
     }
   };
 
@@ -297,8 +308,12 @@ export default function ReplayPage() {
               run.started_at ? fmtTime(run.started_at) : "—",
               run.finished_at ? fmtTime(run.finished_at) : "—",
               run.actor ?? "—",
-              <Button key="v" onClick={() => viewRun(run.id)}>
-                View
+              <Button
+                key="v"
+                onClick={() => viewRun(run.id)}
+                disabled={detailID === run.id && detailState.kind === "loading"}
+              >
+                {detailID === run.id && detailState.kind === "loading" ? "loading…" : "View"}
               </Button>,
             ])}
           />
@@ -306,43 +321,47 @@ export default function ReplayPage() {
         </div>
       </Section>
 
-      {detail && (
-        <Section title={`Run ${detail.id} result`}>
-          {detail.status === "failed" ? (
-            <p className="text-[13px] text-[var(--critical)]">{detail.error || "Run failed."}</p>
-          ) : (
-            <>
-              <div className="mb-3 grid max-w-xl grid-cols-3 gap-3">
-                <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
-                  <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">Opportunities</div>
-                  <div className="mt-1 text-sm font-medium">{detail.opportunities}</div>
-                </div>
-                <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
-                  <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">Qualified</div>
-                  <div className="mt-1 text-sm font-medium">{detail.qualified}</div>
-                </div>
-                <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
-                  <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">Cycles</div>
-                  <div className="mt-1 text-sm font-medium">{detail.cycles}</div>
-                </div>
-              </div>
-              <Table
-                head={["Opportunity", "Triangle", "Outcome", "Net bps", "At"]}
-                empty="executed cycles (top, ranked by net bps — not raw qualified opportunities)"
-                rows={(detail.top ?? []).map((t) => [
-                  <Link key="o" href={`/opportunities/${encodeURIComponent(t.opportunity_id)}`} className="text-[var(--accent)] underline">
-                    {t.opportunity_id}
-                  </Link>,
-                  <Link key="t" href={`/triangles/${encodeURIComponent(t.triangle_id)}`} className="text-[var(--accent)] underline">
-                    {t.triangle_id}
-                  </Link>,
-                  t.outcome,
-                  t.net_bps,
-                  fmtTime(t.at),
-                ])}
-              />
-            </>
-          )}
+      {detailID && (
+        <Section title={`Run ${detailID} result`}>
+          <Await state={detailState} what={`replay run ${detailID}`}>
+            {(detail) =>
+              detail.status === "failed" ? (
+                <p className="text-[13px] text-[var(--critical)]">{detail.error || "Run failed."}</p>
+              ) : (
+                <>
+                  <div className="mb-3 grid max-w-xl grid-cols-3 gap-3">
+                    <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">Opportunities</div>
+                      <div className="mt-1 text-sm font-medium">{detail.opportunities}</div>
+                    </div>
+                    <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">Qualified</div>
+                      <div className="mt-1 text-sm font-medium">{detail.qualified}</div>
+                    </div>
+                    <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">Cycles</div>
+                      <div className="mt-1 text-sm font-medium">{detail.cycles}</div>
+                    </div>
+                  </div>
+                  <Table
+                    head={["Opportunity", "Triangle", "Outcome", "Net bps", "At"]}
+                    empty="executed cycles (top, ranked by net bps — not raw qualified opportunities)"
+                    rows={(detail.top ?? []).map((t) => [
+                      <Link key="o" href={`/opportunities/${encodeURIComponent(t.opportunity_id)}`} className="text-[var(--accent)] underline">
+                        {t.opportunity_id}
+                      </Link>,
+                      <Link key="t" href={`/triangles/${encodeURIComponent(t.triangle_id)}`} className="text-[var(--accent)] underline">
+                        {t.triangle_id}
+                      </Link>,
+                      <OutcomeBadge key="o" code={t.outcome} />,
+                      t.net_bps,
+                      fmtTime(t.at),
+                    ])}
+                  />
+                </>
+              )
+            }
+          </Await>
         </Section>
       )}
 

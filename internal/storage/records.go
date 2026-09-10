@@ -14,12 +14,13 @@ import (
 // Record is one outbox item. Kind selects the writer; payloads are the
 // domain structs (already immutable evidence).
 type Record struct {
-	Kind        string // "opportunity" | "cycle" | "risk_event"
+	Kind        string // "opportunity" | "cycle" | "risk_event" | "ledger_snapshot"
 	Opportunity *opportunity.Opportunity
 	Decision    *risk.Decision
 	Cycle       *execution.CycleResult
 	SessionID   string
 	RiskEvent   *RiskEvent
+	Ledger      *LedgerSnapshot
 }
 
 // RiskEvent is one persisted risk-engine event (BL-31): a circuit-breaker
@@ -168,22 +169,52 @@ func (s *Store) InsertCycle(ctx context.Context, sessionID string, res *executio
 	if err != nil {
 		return err
 	}
-	// SlippageBps is realized-vs-plan and only meaningful for cycles
-	// that reached leg 3 (a mid-cycle failure would persist a ~+10000
-	// artifact); other outcomes store NULL.
-	var slippage any
+	// SlippageBps (planned return − realized return, both per unit of
+	// input actually deployed) is only meaningful for cycles that
+	// converted back to the start asset; other outcomes store NULL.
+	var slippage, plannedBps, actualBps any
 	if slippageMeasurable(res.Outcome) {
 		slippage = res.SlippageBps
+		plannedBps = res.PlannedReturnBps
+		actualBps = res.ActualReturnBps
 	}
+	// The opportunity row may never have landed (dropped by a full
+	// outbox, refused by the database, lost at shutdown). Letting the FK
+	// fail the cycle insert would lose the cycle's own orders and fills
+	// too — the record of money moving — so the cycle is written
+	// unlinked (NULL opportunity_id), counted, and logged.
+	oppRef := nullStr(res.OpportunityID)
+	if res.OpportunityID != "" {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM opportunities WHERE id = $1)`,
+			res.OpportunityID).Scan(&exists); err != nil {
+			return fmt.Errorf("storage: opportunity lookup: %w", err)
+		}
+		if !exists {
+			oppRef = nil
+			s.unlinkedCycles.Add(1)
+			s.logger().Warn("storage: cycle persisted without its opportunity row",
+				"cycle_id", res.CycleID, "opportunity_id", res.OpportunityID,
+				"unlinked_total", s.unlinkedCycles.Load())
+		}
+	}
+	// pnl_amount stays the marked total for readers that predate the
+	// breakdown; realized_pnl (cash basis) and exposure_mark are the two
+	// components, persisted separately so a mark-to-market estimate can
+	// never be summed as if it were realized.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO paper_cycles (
 			id, session_id, opportunity_id, outcome, pnl_amount, pnl_asset,
-			fees, slippage_bps, exposure, started_at, settled_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			fees, slippage_bps, exposure, started_at, settled_at,
+			realized_pnl, exposure_mark, input_consumed, final_amount,
+			planned_return_bps, actual_return_bps, reason
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		ON CONFLICT (id) DO NOTHING`,
-		res.CycleID, sessionID, nullStr(res.OpportunityID), string(res.Outcome),
+		res.CycleID, sessionID, oppRef, string(res.Outcome),
 		res.TotalPnL, string(res.StartAsset), fees, slippage, exposure,
-		res.StartedAt, res.SettledAt); err != nil {
+		res.StartedAt, res.SettledAt,
+		res.RealizedPnL, res.ExposureMark, res.InputConsumed, res.FinalAmount,
+		plannedBps, actualBps, nullStr(res.Reason)); err != nil {
 		return fmt.Errorf("storage: cycle: %w", err)
 	}
 	for _, o := range res.Orders {

@@ -3,6 +3,8 @@ package screener
 import (
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -31,6 +33,67 @@ type Settings struct {
 	MaxPlausibleSpreadBps decimal.Decimal         `json:"max_plausible_spread_bps"`
 	Venues                map[Venue]VenueSettings `json:"venues"`
 	Paper                 PaperSettings           `json:"paper"`
+	// PerpQuotePreference orders the quote/margin assets the poller
+	// prefers when ONE venue lists several perpetuals on the same base
+	// (Binance USDⓈ-M: AAVEUSDT and AAVEUSDC). The suite tracks one
+	// contract per (venue, base) because funding_history is keyed
+	// (venue, base, at) (migration 000010) and the carry/harvest models
+	// read it by (venue, base); the first listed asset the venue offers
+	// wins, an asset not listed here ranks last, and a base with a
+	// single contract is always kept whatever its quote. Default
+	// ["USDT"] (the suite's documented perp scope); hot. Empty in a
+	// stored document (predating the field) means the default.
+	PerpQuotePreference []string `json:"perp_quote_preference"`
+	// Alerts tunes the alert evaluator (internal/screener/alerts); hot.
+	Alerts AlertSettings `json:"alerts"`
+}
+
+// AlertSettings is the evaluator section of the settings document.
+type AlertSettings struct {
+	// MaxLanesPerRule caps how many cross-venue spot lanes one rule
+	// evaluates per tick, taken from the quality-ranked universe (lanes
+	// passing the guard and the data-age gate first, then by net bps).
+	// 0 = unbounded (default): the evaluator sees every lane its filters
+	// admit; the cap exists for operators who must bound CPU on a very
+	// large book, and every lane it cuts is counted in GET
+	// /screener/status (automation.alerts.truncated). 0..100000.
+	MaxLanesPerRule int `json:"max_lanes_per_rule"`
+	// StaleHoldS is how long a lane whose legs fail the data-age gate is
+	// HELD (lifetime preserved, open event kept open) before the
+	// evaluator gives up and closes the event with reason HOLD_TIMEOUT.
+	// A poll that lands a few seconds late on one venue is not a market
+	// event: at a 5 s poll the slowest enabled venues in the 2026-08-28
+	// soak averaged 10.2 s per poll (max 25.1 s), so their quotes fail a
+	// 5 s gate on most ticks. Default 30 s (one missed poll of the slowest
+	// venue); 1..600; 0 in a stored document means the default.
+	StaleHoldS int `json:"stale_hold_s"`
+}
+
+// DefaultStaleHoldS is AlertSettings.StaleHoldS when unset.
+const DefaultStaleHoldS = 30
+
+const (
+	maxLanesPerRuleCeiling = 100000
+	maxStaleHoldS          = 600
+	maxPerpQuotePreference = 8
+)
+
+// EffectiveStaleHold returns stale_hold_s as a duration, or the default
+// when the document has none.
+func (a AlertSettings) EffectiveStaleHold() time.Duration {
+	if a.StaleHoldS <= 0 {
+		return DefaultStaleHoldS * time.Second
+	}
+	return time.Duration(a.StaleHoldS) * time.Second
+}
+
+// EffectivePerpQuotePreference returns perp_quote_preference, or the
+// default ["USDT"] when the document has none.
+func (s Settings) EffectivePerpQuotePreference() []string {
+	if len(s.PerpQuotePreference) == 0 {
+		return []string{"USDT"}
+	}
+	return append([]string(nil), s.PerpQuotePreference...)
 }
 
 var (
@@ -52,6 +115,8 @@ func (s Settings) EffectiveMaxPlausibleSpreadBps() decimal.Decimal {
 func (s Settings) Normalised() Settings {
 	c := s.Clone()
 	c.MaxPlausibleSpreadBps = s.EffectiveMaxPlausibleSpreadBps()
+	c.PerpQuotePreference = s.EffectivePerpQuotePreference()
+	c.Alerts.StaleHoldS = int(s.Alerts.EffectiveStaleHold() / time.Second)
 	return c
 }
 
@@ -97,6 +162,9 @@ func (s Settings) Clone() Settings {
 			c.Paper.Balances[venue] = cp
 		}
 	}
+	if s.PerpQuotePreference != nil {
+		c.PerpQuotePreference = append([]string(nil), s.PerpQuotePreference...)
+	}
 	return c
 }
 
@@ -113,6 +181,25 @@ func (s Settings) Validate() error {
 	}
 	if v := s.MaxPlausibleSpreadBps; !v.IsZero() && (v.LessThan(minPlausibleSpreadBps) || v.GreaterThan(maxPlausibleSpreadBps)) {
 		return fmt.Errorf("%w: max_plausible_spread_bps must be 100..100000, got %s", ErrInvalid, v)
+	}
+	if len(s.PerpQuotePreference) > maxPerpQuotePreference {
+		return fmt.Errorf("%w: perp_quote_preference must list at most %d assets", ErrInvalid, maxPerpQuotePreference)
+	}
+	seenQuote := map[string]bool{}
+	for _, q := range s.PerpQuotePreference {
+		if q == "" || q != strings.TrimSpace(q) || q != strings.ToUpper(q) {
+			return fmt.Errorf("%w: perp_quote_preference entries must be upper-case asset codes, got %q", ErrInvalid, q)
+		}
+		if seenQuote[q] {
+			return fmt.Errorf("%w: perp_quote_preference lists %q twice", ErrInvalid, q)
+		}
+		seenQuote[q] = true
+	}
+	if s.Alerts.MaxLanesPerRule < 0 || s.Alerts.MaxLanesPerRule > maxLanesPerRuleCeiling {
+		return fmt.Errorf("%w: alerts.max_lanes_per_rule must be 0..%d, got %d", ErrInvalid, maxLanesPerRuleCeiling, s.Alerts.MaxLanesPerRule)
+	}
+	if s.Alerts.StaleHoldS < 0 || s.Alerts.StaleHoldS > maxStaleHoldS {
+		return fmt.Errorf("%w: alerts.stale_hold_s must be 0..%d, got %d", ErrInvalid, maxStaleHoldS, s.Alerts.StaleHoldS)
 	}
 	if len(s.Venues) == 0 {
 		return fmt.Errorf("%w: at least one venue must be configured", ErrInvalid)
@@ -233,6 +320,8 @@ func Defaults() Settings {
 		MaxPlausibleSpreadBps: DefaultMaxPlausibleSpreadBps,
 		Venues:                venues,
 		Paper:                 PaperSettings{Balances: map[Venue]map[string]decimal.Decimal{}},
+		PerpQuotePreference:   []string{"USDT"},
+		Alerts:                AlertSettings{MaxLanesPerRule: 0, StaleHoldS: DefaultStaleHoldS},
 	}
 }
 
@@ -249,6 +338,11 @@ func FieldTiming(s Settings) map[string]string {
 		"min_liquidity_quote":    "hot",
 		// guard.go reads the active snapshot on every request/tick.
 		"max_plausible_spread_bps": "hot",
+		// venue.Poller re-reads the snapshot on every poll; the alert
+		// evaluator on every tick.
+		"perp_quote_preference":     "hot",
+		"alerts.max_lanes_per_rule": "hot",
+		"alerts.stale_hold_s":       "hot",
 	}
 	ids := make([]Venue, 0, len(s.Venues))
 	for id := range s.Venues {

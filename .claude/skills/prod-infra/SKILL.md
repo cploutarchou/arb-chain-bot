@@ -1,9 +1,9 @@
 ---
 name: prod-infra
-description: Environments and operations: compose dev, paper-test staging, Kubernetes production with HA Postgres, Redis, object storage, CI/CD staged deploys, backups/restore drills, observability, SLOs, alerting, hardening. Use for "production", "robust infra", "deploy", "backups", "monitoring".
-when_to_use: "production", "infra", "kubernetes", "deploy", "backup", "monitoring", "SLO", "HA"
+description: 'Environments and operations: compose dev, paper-test staging, Kubernetes production with HA Postgres, Redis, object storage, CI/CD staged deploys, backups/restore drills, observability, SLOs, alerting, hardening. Use for "production", "robust infra", "deploy", "backups", "monitoring". Use when the request mentions: production, infra, kubernetes, deploy, backup, monitoring, SLO, HA.'
+when_to_use: [production, infra, kubernetes, deploy, backup, monitoring, SLO, HA]
 allowed-tools: Read Grep Glob Write Edit Bash Agent WebFetch WebSearch
-argument-hint: [task]
+argument-hint: '[task]'
 ---
 
 # Production infrastructure workflow

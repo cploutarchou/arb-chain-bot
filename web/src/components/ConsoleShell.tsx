@@ -6,6 +6,7 @@ import {
   api,
   ApiError,
   type RecorderStatus,
+  type ScannerStatus,
   type SystemStatus,
 } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
@@ -15,6 +16,7 @@ import { Button, ConfirmDialog } from "@/components/ui";
 import { MoonIcon, NavIcon, SunIcon } from "@/components/icons";
 import { IconRail, NavGroupHeader } from "@/components/IconRail";
 import { GatedControl } from "@/components/GatedControl";
+import { PaperControl } from "@/components/PaperControl";
 import {
   NotificationBell,
   useNotificationItems,
@@ -291,15 +293,24 @@ function useModeState(): {
   return { status, configured };
 }
 
+// ModeBanner always renders the operating mode as visible text (never
+// color alone, never hidden in a title tooltip) — the full form for the
+// sidebar/overlay, and a `compact` dot+word form that fits the mobile top
+// bar (F1: the mode must announce itself at every width, not just when
+// the hamburger menu is open).
 function ModeBanner({
   status,
   configured,
+  compact,
 }: {
   status: PollState<SystemStatus>;
   configured: string | null;
+  compact?: boolean;
 }) {
   if (status.kind === "loading") {
-    return (
+    return compact ? (
+      <span className="text-[11px] text-[var(--text-dim)]">Mode…</span>
+    ) : (
       <div className="mb-3 rounded border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-dim)]">
         Loading mode…
       </div>
@@ -308,7 +319,11 @@ function ModeBanner({
   if (status.kind === "error") {
     // Chrome-level banner never shows an ErrorBox; degrade quietly — the
     // page body underneath still surfaces the real error.
-    return (
+    return compact ? (
+      <span className="text-[11px] text-[var(--text-dim)]">
+        Mode unknown
+      </span>
+    ) : (
       <div className="mb-3 rounded border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-dim)]">
         Mode unknown (backend unreachable)
       </div>
@@ -323,6 +338,27 @@ function ModeBanner({
   // settings document has been changed but not yet applied (restart
   // pending), annotates it with the CONFIGURED one.
   const showsPending = configured && configured !== mode;
+  if (compact) {
+    return (
+      <span
+        className="inline-flex min-w-0 items-center gap-1.5 rounded border px-1.5 py-0.5 text-[11px] font-semibold leading-none"
+        style={{ borderColor: copy.color, color: copy.color }}
+        title={copy.text}
+      >
+        <span
+          className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: copy.color }}
+          aria-hidden
+        />
+        <span className="truncate">{mode}</span>
+        {showsPending && (
+          <span className="shrink-0 text-[var(--warn)]" aria-label="restart pending">
+            *
+          </span>
+        )}
+      </span>
+    );
+  }
   return (
     <div
       className="mb-3 flex items-start gap-2 rounded border px-2 py-1.5 text-[11px] font-medium leading-snug"
@@ -721,6 +757,12 @@ export function ConsoleShell({
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
   const modeState = useModeState();
+  // Hoisted once for the whole shell, same reasoning as modeState above:
+  // the mobile top bar, the mobile overlay and the desktop sidebar each
+  // mount their own PaperControl (CSS shows/hides them per breakpoint,
+  // all three exist in the tree at once), and must not each open a
+  // separate poll of the same endpoint.
+  const paperStatus = usePoll<ScannerStatus>(() => api.scanner.status(), 5000);
   // One alerts+rule-events poll for the whole shell (see
   // useNotificationItems' own comment) — shared by both bell mounts
   // below, same pattern as modeState feeding both ModeBanner mounts.
@@ -729,23 +771,36 @@ export function ConsoleShell({
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       {/* Mobile top bar (< md): hamburger reveals the full nav as an
-          overlay; the desktop sidebar below is hidden at this width. */}
-      <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 md:hidden">
-        <span className="text-sm font-semibold tracking-wide text-[var(--text)]">
-          ARB CONSOLE
-        </span>
-        <div className="flex items-center gap-2">
-          <NotificationBell items={notificationItems} />
-          <ThemeToggle />
-          <button
-            type="button"
-            aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
-            aria-expanded={mobileOpen}
-            onClick={() => setMobileOpen((v) => !v)}
-            className="rounded border border-[var(--border)] px-2 py-1 text-[13px] text-[var(--text)]"
-          >
-            {mobileOpen ? "Close ✕" : "Menu ☰"}
-          </button>
+          overlay; the desktop sidebar below is hidden at this width. A
+          second row keeps the mode and the paper pause/resume control
+          visible on every page at every width (F1/F2) — neither waits
+          for the hamburger menu to open. */}
+      <div className="border-b border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 md:hidden">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold tracking-wide text-[var(--text)]">
+            ARB CONSOLE
+          </span>
+          <div className="flex items-center gap-2">
+            <NotificationBell items={notificationItems} />
+            <ThemeToggle />
+            <button
+              type="button"
+              aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen((v) => !v)}
+              className="rounded border border-[var(--border)] px-2 py-1 text-[13px] text-[var(--text)]"
+            >
+              {mobileOpen ? "Close ✕" : "Menu ☰"}
+            </button>
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <ModeBanner
+            status={modeState.status}
+            configured={modeState.configured}
+            compact
+          />
+          <PaperControl status={paperStatus} role={role} compact />
         </div>
       </div>
       {mobileOpen && (
@@ -764,6 +819,7 @@ export function ConsoleShell({
                 status={modeState.status}
                 configured={modeState.configured}
               />
+              <PaperControl status={paperStatus} role={role} />
             </div>
             <NavContent
               active={active}
@@ -789,6 +845,7 @@ export function ConsoleShell({
             status={modeState.status}
             configured={modeState.configured}
           />
+          <PaperControl status={paperStatus} role={role} />
         </div>
         <NavContent active={active} role={role} rail />
       </aside>

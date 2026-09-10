@@ -8,7 +8,9 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
+import { signTone, signedText } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { Await, Badge, PageTitle, Section, Stat, fmtTime } from "@/components/ui";
 
 export default function OpportunityDetailPage() {
@@ -27,6 +29,12 @@ export default function OpportunityDetailPage() {
             )}
 
             <Section title="Economics">
+              <p className="mb-3 max-w-2xl text-[12px] text-[var(--text-dim)]">
+                Every figure below already has trading fees removed. The two
+                labelled &ldquo;before buffers&rdquo; still have the execution buffer
+                (a latency/risk margin) in them; the Net figures have that buffer
+                taken out too — the Net-to-before-buffers gap is buffer, not fees.
+              </p>
               <div className="grid max-w-4xl grid-cols-2 gap-3 md:grid-cols-4">
                 <Stat
                   label="Status"
@@ -46,12 +54,28 @@ export default function OpportunityDetailPage() {
                 />
                 <Stat label="Exchange" value={d.exchange_id} />
                 <Stat label="Starting" value={`${d.starting_amount} ${d.starting_asset}`} />
-                <Stat label="Gross final" value={d.gross_final_amount ?? "—"} />
-                <Stat label="Estimated final" value={d.estimated_final_amount ?? "—"} />
-                <Stat label="Gross profit" value={d.gross_profit ?? "—"} />
-                <Stat label="Net profit" value={d.net_profit ?? "—"} tone={d.net_profit && Number(d.net_profit) > 0 ? "ok" : undefined} />
-                <Stat label="Gross return bps" value={d.gross_return_bps ?? "—"} />
-                <Stat label="Net return bps" value={d.net_return_bps ?? "—"} />
+                <Stat
+                  label="Net profit (after buffers)"
+                  value={signedText(d.net_profit)}
+                  tone={signTone(d.net_profit)}
+                />
+                <Stat
+                  label="Net return bps (after buffers)"
+                  value={signedText(d.net_return_bps)}
+                  tone={signTone(d.net_return_bps)}
+                />
+                <Stat label="Estimated final (after fees & buffers)" value={d.estimated_final_amount ?? "—"} />
+                <Stat label="Final (after fees, before buffers)" value={d.gross_final_amount ?? "—"} tone="dim" />
+                <Stat
+                  label="Profit (after fees, before buffers)"
+                  value={signedText(d.gross_profit)}
+                  tone="dim"
+                />
+                <Stat
+                  label="Return bps (after fees, before buffers)"
+                  value={signedText(d.gross_return_bps)}
+                  tone="dim"
+                />
                 <Stat label="Data quality" value={d.data_quality ?? "—"} />
                 <Stat label="Config version" value={d.config_version ? `v${d.config_version}` : "—"} />
                 <Stat label="Detected" value={fmtTime(d.detected_at)} />
@@ -110,11 +134,7 @@ export default function OpportunityDetailPage() {
                     />
                     <Stat
                       label="Outcome"
-                      value={
-                        <Badge tone={d.simulation.outcome === "COMPLETED" ? "ok" : d.simulation.outcome === "FAILED" ? "bad" : "dim"}>
-                          {d.simulation.outcome}
-                        </Badge>
-                      }
+                      value={<OutcomeBadge code={d.simulation.outcome} showDescription />}
                     />
                     <Stat label="P&L" value={d.simulation.pnl_amount ? `${d.simulation.pnl_amount} ${d.simulation.pnl_asset ?? ""}` : "—"} />
                     <Stat label="Slippage bps" value={d.simulation.slippage_bps ?? "—"} />

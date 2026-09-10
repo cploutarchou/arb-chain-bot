@@ -77,3 +77,37 @@ func (m *MemoryStore) Touch(_ context.Context, id string, at time.Time) error {
 	m.rows[id] = k
 	return nil
 }
+
+// RevokeByOwner revokes every live key owned by userID, across every
+// organisation (audit S3/P1-12: cascades an account disable).
+func (m *MemoryStore) RevokeByOwner(_ context.Context, userID string, at time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, k := range m.rows {
+		if k.UserID == userID && k.RevokedAt == nil {
+			t := at
+			k.RevokedAt = &t
+			m.rows[id] = k
+			n++
+		}
+	}
+	return n, nil
+}
+
+// RevokeByMembership revokes every live key owned by userID scoped to
+// orgID (audit S3/P1-12: cascades a membership removal).
+func (m *MemoryStore) RevokeByMembership(_ context.Context, orgID int64, userID string, at time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, k := range m.rows {
+		if k.OrgID == orgID && k.UserID == userID && k.RevokedAt == nil {
+			t := at
+			k.RevokedAt = &t
+			m.rows[id] = k
+			n++
+		}
+	}
+	return n, nil
+}

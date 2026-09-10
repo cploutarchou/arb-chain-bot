@@ -10,6 +10,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange/binance"
 	"github.com/cploutarchou/arb-chain-bot/internal/notification"
+	"github.com/cploutarchou/arb-chain-bot/internal/portfolio"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
 	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 	"github.com/cploutarchou/arb-chain-bot/internal/telegram"
@@ -102,6 +103,7 @@ func (t telegramServices) Balances() []telegram.BalanceView {
 func (t telegramServices) PnL() []telegram.PnLView {
 	t.e.mu.RLock()
 	port := t.e.port
+	marker := t.e.marker
 	t.e.mu.RUnlock()
 	if port == nil {
 		return nil
@@ -111,8 +113,8 @@ func (t telegramServices) PnL() []telegram.PnLView {
 		out = append(out, telegram.PnLView{
 			Asset:    string(a),
 			Realized: port.Realized(a).String(),
-			Fees:     port.FeesPaid(a).String(),
-			Loss:     port.DailyLoss(a).String(),
+			Fees:     feesMarked(port, a, marker),
+			Loss:     port.DailyLoss(a, marker).String(),
 			Drawdown: port.CurrentDrawdown(a).StringFixed(4),
 		})
 	}
@@ -269,4 +271,12 @@ func (e *Engine) startAssets() []exchange.Asset {
 		out = append(out, exchange.Asset(a))
 	}
 	return out
+}
+
+// feesMarked is every fee asset's cumulative fees valued in the start
+// asset (the figure the console, reports, Telegram and the AI context
+// all show as "fees").
+func feesMarked(port *portfolio.Portfolio, start exchange.Asset, marker portfolio.Marker) string {
+	total, _, _ := port.FeesMark(start, marker)
+	return total.String()
 }
