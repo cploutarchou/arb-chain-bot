@@ -77,13 +77,13 @@ func TestPollerFillsBookAndStatus(t *testing.T) {
 	}
 	// Funding history: a NextFundingAt advance records the previous rate.
 	first := screener.Perp{Venue: screener.VenueBinance, Base: "BTC", FundingRate: dec("0.0001"), NextFundingAt: time.Unix(1000, 0)}
-	p.recordFunding(ctx, first)
-	p.recordFunding(ctx, first) // unchanged → nothing
+	p.recordFunding(ctx, nil, first)
+	p.recordFunding(ctx, nil, first) // unchanged → nothing
 	series, _ := funding.ListFunding(ctx, "BTC", []screener.Venue{screener.VenueBinance}, time.Time{})
 	if len(series) != 0 && len(series[0].Points) != 0 {
 		t.Fatalf("premature funding row: %+v", series)
 	}
-	p.recordFunding(ctx, screener.Perp{Venue: screener.VenueBinance, Base: "BTC", FundingRate: dec("0.0002"), NextFundingAt: time.Unix(29800, 0)})
+	p.recordFunding(ctx, nil, screener.Perp{Venue: screener.VenueBinance, Base: "BTC", FundingRate: dec("0.0002"), NextFundingAt: time.Unix(29800, 0)})
 	series, _ = funding.ListFunding(ctx, "BTC", []screener.Venue{screener.VenueBinance}, time.Time{})
 	if len(series) != 1 || len(series[0].Points) != 1 || series[0].Points[0].Rate != "0.0001" || !series[0].Points[0].At.Equal(time.Unix(1000, 0)) {
 		t.Fatalf("funding series = %+v", series)

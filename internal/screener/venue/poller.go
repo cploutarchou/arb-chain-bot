@@ -261,7 +261,7 @@ func (p *Poller) pollOnce(ctx context.Context, c Collector, st *screener.VenueSt
 		}
 		for _, pp := range perps {
 			p.Book.SetPerp(pp)
-			p.recordFunding(ctx, pp)
+			p.recordFunding(ctx, c, pp)
 		}
 		p.logDropped(dropped, perps)
 	} else if ctx.Err() == nil {
@@ -373,12 +373,15 @@ func (p *Poller) logDropped(dropped, kept []screener.Perp) {
 
 // recordFunding appends a funding_history row when a contract's settled
 // rate changes: the venue's NextFundingAt advancing past the previously
-// seen one means the previously reported rate settled at that time.
-// The last-seen state is per contract (venue, base, quote) so a second
+// seen one means a rate settled at that time. WHICH rate depends on the
+// collector's bulk-field semantics (audit X4): for accruing-rate venues
+// it is the previously seen one; for venues whose field reports the
+// previous period's settled rate it is the newly observed one. The
+// last-seen state is per contract (venue, base, quote) so a second
 // contract on the same base can never advance — or be attributed —
 // another contract's settlement; the store itself is (venue, base)
 // keyed, which is why pollOnce admits one contract per base.
-func (p *Poller) recordFunding(ctx context.Context, pp screener.Perp) {
+func (p *Poller) recordFunding(ctx context.Context, c Collector, pp screener.Perp) {
 	if p.Funding == nil || pp.NextFundingAt.IsZero() {
 		return
 	}
@@ -391,7 +394,11 @@ func (p *Poller) recordFunding(ctx context.Context, pp screener.Perp) {
 	if !seen || !pp.NextFundingAt.After(prev.next) {
 		return
 	}
-	if err := p.Funding.UpsertFunding(ctx, pp.Venue, pp.Base, prev.next, prev.rate); err != nil && ctx.Err() == nil {
+	settled := prev.rate
+	if fp, ok := c.(PreviousPeriodFundingReporter); ok && fp.FundingIsPreviousPeriod() {
+		settled = rate
+	}
+	if err := p.Funding.UpsertFunding(ctx, pp.Venue, pp.Base, prev.next, settled); err != nil && ctx.Err() == nil {
 		p.Log.Warn("funding history upsert failed", "venue", pp.Venue, "base", pp.Base, "error", err)
 	}
 }

@@ -270,6 +270,11 @@ func (c *cryptocomCollector) Perps(ctx context.Context) ([]screener.Perp, error)
 }
 
 // Networks: currency/network status is key-gated (research §4).
+// FundingIsPreviousPeriod implements PreviousPeriodFundingReporter
+// (audit X4): funding_hist is "the funding rate settled in past hourly
+// settlement" — the last row is the previous period's settled rate.
+func (c *cryptocomCollector) FundingIsPreviousPeriod() bool { return true }
+
 func (c *cryptocomCollector) Networks(ctx context.Context) (map[string]screener.NetworkStatus, error) {
 	return c.inst.keyGatedNetworks(ctx)
 }
