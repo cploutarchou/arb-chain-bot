@@ -348,8 +348,8 @@ AS IT NOW STANDS; the body of this document above remains the audit of
 | Market data | 7 | 9 | M1–M5 fixed (backoff reset, clock manager, replay staleness, crossed-book corruption, session-scoped resyncs); M6/M7 hygiene remain |
 | Execution simulation | 5 | 8 | F4 revalidation, F5 fill-time health, F7 ABORTED + staged shutdown, F10/F11/F12/F14/F16 fixed; no unwind path (documented exposure-mark model), F17 dead code remains |
 | Risk controls | 3 | 8 | P1-1 breakers trip for real (feed, persistence, loss, drawdown, slippage, inconsistency, metadata), P1-2 limits fed, P1-5 invariants halt the engine, operator acknowledgement endpoint + Risk Center control; pre-trade slippage stays post-hoc by design |
-| Persistence & database | 5 | 7 | P0-3 no silent loss (counted drops/refusals/unlinks, persistence breaker), P1-6 ledger resume, P1-18 retention, P1-19 immutability; D7–D10 (indexes, CHECKs, pool sizing) remain |
-| Security | 6 | 7 | S1–S4 (+ the CreateUser follow-up), S6, S9 fixed; S5 (VIEWER breadth), S8, S10 (consent), S11 (WS topics), S12–S15 remain |
+| Persistence & database | 5 | 8 | P0-3 no silent loss (counted drops/refusals/unlinks, persistence breaker), P1-6 ledger resume, P1-18 retention, P1-19 immutability; D7–D10 closed on the follow-up branch (console-query indexes, pool statement_timeout + warm floor, retention-clamped and LIMIT-bounded funding query, CHECK bounds on financial columns) |
+| Security | 6 | 8 | S1–S4 (+ the CreateUser follow-up), S6, S9 fixed; S5 (VIEWER breadth), S8, S10 (consent), S11 (WS topics) closed on the remediation tail, S12 (Argon2 clamp + rehash-on-login) and S13 (HTTP server envelope) on the follow-up branch; S14/S15 (CI pinning/npm audit, marketing-site headers) remain |
 | Observability | 5 | 7 | O1/O2/O3/O5/O6/O8 closed — drop/refusal counters, live breaker metric, latency histograms, outcome/reason labels, queue depths; O7/O9/O10/O11 remain |
 | Infra & delivery | 5 | 6 | P1-16 compose exposure, P1-17 canary guards, P1-18 worker, P1-19 done; P1-15 backup automation is an open operator decision (framed in `docs/decisions/`), I5–I15 partially |
 | Scanner Suite | 6 | 7 | P1-20/21/22 fixed (perp collision, lane cap, data-age hold with close reasons); X4/X5/X7/X8/X9 and the P3 cluster remain |
@@ -390,11 +390,10 @@ type-to-confirm) and a Risk Center control.
 4. **Two paper stacks remain** (`internal/simulation` and the
    screener's `paperexec`, F17/T10): the screener's fill model can drift
    from the engine's exact one.
-5. **Security remainder:** VIEWER breadth on platform surfaces (S5),
-   promoted-ADMIN writes to provider-group secrets (S8), member-add
-   without consent (S10), unauthorised WebSocket topics (S11), Argon2
-   clamp and HTTP server timeouts (S12/S13), unpinned CI and `npm
-   audit` highs (S14).
+5. **Security remainder:** Argon2 clamp and HTTP server timeouts
+   (S12/S13) are closed on the follow-up branch; what stays open is the
+   supply-chain and marketing tail — unpinned CI and `npm audit` highs
+   (S14), marketing-site headers and the markdown sanitiser (S15).
 6. **Operational polish:** the reservation mutex and `AnyOpen`'s
    per-evaluation allocation still sit on the evaluator path
    (performance plan items 2–3), `internal/api`'s race suite takes
@@ -491,6 +490,37 @@ proven; I5–I15 partially). Verification for this addendum: gofmt/vet/
 golangci-lint clean, `go test -race ./...` green, the storage suite
 green against a disposable PostgreSQL 16 (000001–000021), web
 lint/typecheck/build green, Playwright 47/47.
+
+## FOLLOW-UP ADDENDUM: P3 hardening (S12/S13, D7–D10)
+
+Branch `claude/p3-hardening-s12-s13-d7-d10` closes six more findings.
+S12: `VerifyPassword` validates and clamps the Argon2id parameters it
+parses from a stored hash (memory ≤ 256 MiB, iterations ≤ 10,
+parallelism ≤ 8, salt and key length bounded) so a tampered
+`users.password_hash` row fails closed instead of becoming an
+allocation bomb, and rows still carrying weaker-than-current parameters
+are upgraded transparently on the next successful login. S13: the API
+listener bounds every phase a client can stretch (read 30 s, write
+60 s, idle 120 s, 64 KiB headers), with the construction asserted by a
+test — the WebSocket route hijacks its connection, so only its
+handshake is bounded. D7–D10: the console's session-cycle and
+symbol-filtered order queries get their indexes (migration 000022);
+every pool connection carries `statement_timeout = 15s` with a
+`MinConns` warm floor reserving outbox capacity; the funding-history
+endpoint clamps its window to the caller's entitlement retention and
+its queries carry a row LIMIT; and migration 000023 puts CHECK bounds
+on quantities, prices, fees and balances — zero stays legitimate where
+the writers emit it (an unfilled leg persists its zero price/fee),
+PnL and slippage stay unconstrained by design, and a DB-backed test
+persists a negative-PnL cycle while refusing a negative fill price on
+the same run. The down-migrations for 000022/000023 were exercised and
+re-applied cleanly on a disposable PostgreSQL 16.
+
+Ratings updated: **Persistence & database 7 → 8** (D7–D10 closed),
+Security stays 8 (S12/S13 were inside its P3 remainder; S14/S15 are
+what is left of it). Verification: gofmt/vet/golangci-lint clean,
+`go test -race ./...` green, the storage suite green against a
+disposable PostgreSQL 16 (000001–000023).
 
 Fresh campaign evidence was produced on the remediated engine the same
 day (`docs/campaigns/01M25GET9C8XVKD9358JT15BNC/`): a 5 m 15 s live
