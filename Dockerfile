@@ -1,7 +1,7 @@
 # Multi-stage build for the arbd platform binary and the §80 campaign
 # tool. The go.mod toolchain directive pins the exact Go patch release;
 # GOTOOLCHAIN=auto (the default) fetches it inside the builder.
-FROM golang:1.25 AS build
+FROM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/arbd ./cmd/arbd \
 
 # Runtime: TLS roots for the exchange connection, an unprivileged user,
 # and a writable /recordings volume for RECORD mode.
-FROM alpine:3.20
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 RUN apk add --no-cache ca-certificates wget \
  && addgroup -S arb && adduser -S -G arb arb \
  && mkdir -p /recordings && chown arb:arb /recordings
