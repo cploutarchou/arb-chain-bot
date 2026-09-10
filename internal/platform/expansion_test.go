@@ -92,7 +92,7 @@ func TestAISettingsBounds(t *testing.T) {
 		{"empty provider", func(a *AISettings) { a.Provider = "" }, false},
 		{"fake ok", func(a *AISettings) { a.Provider = "fake" }, true},
 		{"empty model", func(a *AISettings) { a.Model = "" }, false},
-		{"model bad chars", func(a *AISettings) { a.Model = "claude sonnet" }, false},
+		{"model bad chars", func(a *AISettings) { a.Model = "gpt 4o mini" }, false},
 		{"model too long", func(a *AISettings) { a.Model = strings.Repeat("a", 65) }, false},
 		{"hourly zero disables", func(a *AISettings) { a.Schedule.HourlyMinutes = 0 }, true},
 		{"hourly below 15", func(a *AISettings) { a.Schedule.HourlyMinutes = 14 }, false},

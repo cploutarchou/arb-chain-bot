@@ -313,7 +313,7 @@ real.
 
 ## FINAL PLATFORM REVIEW (remediation branch, 2026-09-10)
 
-Reviewed tree: `claude/triangular-arbitrage-platform-969nkv` at `10e1ec0`
+Reviewed tree: PR #20 head at `10e1ec0`
 (35 commits after the audited `abddb55`), measured on this host with the
 repository's own suites and benchmarks. What follows rates the platform
 AS IT NOW STANDS; the body of this document above remains the audit of
@@ -494,7 +494,7 @@ lint/typecheck/build green, Playwright 47/47.
 
 ## FOLLOW-UP ADDENDUM: P3 hardening (S12/S13, D7–D10)
 
-Branch `claude/p3-hardening-s12-s13-d7-d10` closes six more findings.
+PR #22 (merged) closes six more findings.
 S12: `VerifyPassword` validates and clamps the Argon2id parameters it
 parses from a stored hash (memory ≤ 256 MiB, iterations ≤ 10,
 parallelism ≤ 8, salt and key length bounded) so a tampered
@@ -538,10 +538,10 @@ compliance, insurance) recorded by the operator. The verdict stays
 
 ## FOLLOW-UP ADDENDUM: the all-pending pass
 
-Branch `claude/all-pending-hardening` (one branch carrying both
-follow-up passes — the S12/S13/D7-D10 cluster earlier in this file and
-this one) works through the remaining P2/P3 hardening list in coherent
-commits, one per finding with its test:
+PR #22 (merged; one branch carried both follow-up passes — the
+S12/S13/D7-D10 cluster earlier in this file and this one) works
+through the remaining P2/P3 hardening list in coherent commits, one
+per finding with its test:
 
 - **S14/S15** close the security series: SHA-pinned actions (tags kept
   in comments), govulncheck v1.8.0, `npm audit --audit-level=high` in
