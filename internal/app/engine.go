@@ -935,11 +935,22 @@ func (e *Engine) Run(ctx context.Context) error {
 	// inconsistency breakers stay open until an operator closes them.
 	feedScope := "exchange:" + string(binance.ID)
 	breakers.Register(breakerFeed, feedScope, feedProbeAfter)
+	breakers.Register(breakerMetadata, feedScope, 0) // T8: operator-closed; re-arms while the diff persists
 	faults := newFaultWindow(feedFaultWindow)
 	books.OnTransition(feedFaultObserver(breakers, faults, time.Now))
 	feedPol := &feedPolicy{reg: breakers, faults: faults, scope: feedScope}
 	slipPol := &slippagePolicy{}
 	ledger := newSessionLedger()
+
+	// T8: re-check the venue's metadata against the rules this run
+	// prices with; a material change opens the metadata_changed breaker
+	// instead of executing on constraints the venue no longer enforces.
+	scopedBaseline := make(map[string]exchange.Market, len(scoped))
+	for _, m := range scoped {
+		scopedBaseline[string(m.ID.Symbol)] = m
+	}
+	go e.watchMetadata(runCtx, rest, breakers, feedScope, scopedBaseline,
+		e.cfg.MetadataCheckInterval, time.Now)
 
 	if outbox != nil {
 		// P0-3: a database that refuses writes is a reason to stop

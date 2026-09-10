@@ -50,6 +50,12 @@ type Bootstrap struct {
 	LogLevel      string // debug|info|warn|error
 	ShutdownGrace time.Duration
 
+	// MetadataCheckInterval re-fetches the venue's exchangeInfo and
+	// diffs it against the running topology/instrument rules (audit T8);
+	// a material change opens the operator-closed metadata_changed
+	// breaker. Zero or negative disables the monitor.
+	MetadataCheckInterval time.Duration
+
 	// Recording / replay
 	RecordingDir  string
 	ReplaySession string // recording session id for REPLAY/BACKTEST
@@ -96,6 +102,10 @@ type Bootstrap struct {
 	TrustedProxies []netip.Prefix
 }
 
+// DefaultMetadataCheckInterval is the venue-metadata monitor's cadence
+// (audit T8); see Bootstrap.MetadataCheckInterval.
+const DefaultMetadataCheckInterval = time.Hour
+
 // Load reads Bootstrap from the environment. Missing optional values get
 // safe defaults; invalid values return an error rather than a guess.
 func Load() (Bootstrap, error) {
@@ -132,6 +142,15 @@ func Load() (Bootstrap, error) {
 			return Bootstrap{}, fmt.Errorf("config: invalid ARB_SHUTDOWN_GRACE: %w", err)
 		}
 		b.ShutdownGrace = d
+	}
+	// T8: default on (hourly); "0" disables the venue-metadata monitor.
+	b.MetadataCheckInterval = DefaultMetadataCheckInterval
+	if v := os.Getenv("ARB_METADATA_CHECK_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Bootstrap{}, fmt.Errorf("config: invalid ARB_METADATA_CHECK_INTERVAL: %w", err)
+		}
+		b.MetadataCheckInterval = d
 	}
 	if v := os.Getenv("ARB_SEED"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
