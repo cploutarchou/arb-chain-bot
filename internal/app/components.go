@@ -1233,13 +1233,14 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*a
 	var users auth.UserStore
 	var sessions auth.SessionStore
 	var admin auth.AdminStore
+	var hasher auth.HashStore
 
 	if store != nil {
 		as := store.Auth()
-		users, sessions, admin = as, as, as
+		users, sessions, admin, hasher = as, as, as, as
 	} else {
 		mem := auth.NewMemoryStore()
-		users, sessions, admin = mem, mem, mem
+		users, sessions, admin, hasher = mem, mem, mem, mem
 	}
 	bootstrapAdmin(cfg, log, admin)
 
@@ -1252,6 +1253,9 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*a
 		IPThrottle: auth.NewThrottle(20, time.Minute, 10*time.Minute),
 		TTL:        12 * time.Hour,
 		Now:        time.Now,
+		// S12: successful logins upgrade rows still hashed with weaker
+		// Argon2id parameters than the current ones.
+		HashStore: hasher,
 	}
 	adminSvc := &auth.AdminService{
 		Store: admin, Sessions: sessions, Now: time.Now, IDGen: newULID,

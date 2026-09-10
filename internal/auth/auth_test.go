@@ -2,12 +2,15 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 var (
@@ -332,5 +335,97 @@ func TestIPThrottleCatchesEmailRotation(t *testing.T) {
 	other := netip.MustParseAddr("198.51.100.77")
 	if _, err := m.Login(ctx, "second@example.test", "pw2", other); err != nil {
 		t.Fatalf("clean ip blocked: %v", err)
+	}
+}
+
+// phcEncode builds a PHC-format hash from explicit parameters, for rows
+// written by configurations other than today's.
+func phcEncode(password string, iters, mem uint32, par uint8, keyLen int) string {
+	salt := make([]byte, argonSaltLen)
+	key := deriveKey([]byte(password), salt, iters, mem, par, uint32(keyLen))
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version, mem, iters, par,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key))
+}
+
+// Acceptance (audit S12): parameters read back from a stored hash are
+// validated and clamped, so a tampered row cannot turn verification into
+// an allocation bomb.
+func TestParseHashClampsAndRejects(t *testing.T) {
+	legit := phcEncode("s3cret", argonTime, argonMemory, argonThreads, argonKeyLen)
+	if _, err := parseHash(legit); err != nil {
+		t.Fatalf("legit hash rejected: %v", err)
+	}
+	oversized := strings.Replace(legit, fmt.Sprintf("m=%d,t=%d,p=%d", argonMemory, argonTime, argonThreads),
+		"m=4000000000,t=999999,p=99", 1)
+	p, err := parseHash(oversized)
+	if err != nil {
+		t.Fatalf("oversized hash rejected instead of clamped: %v", err)
+	}
+	if p.mem != argonMaxMem || p.iters != argonMaxTime || p.par != argonMaxPar {
+		t.Fatalf("clamp: m=%d t=%d p=%d", p.mem, p.iters, p.par)
+	}
+	for name, mut := range map[string]func(string) string{
+		"zero iters":  func(s string) string { return strings.Replace(s, "t=3", "t=0", 1) },
+		"zero memory": func(s string) string { return strings.Replace(s, "m=65536", "m=0", 1) },
+		"short salt": func(s string) string {
+			return strings.Replace(s, "$"+base64.RawStdEncoding.EncodeToString(make([]byte, 16))+"$", "$"+base64.RawStdEncoding.EncodeToString(make([]byte, 4))+"$", 1)
+		},
+	} {
+		if _, err := parseHash(mut(legit)); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+}
+
+// A tampered row still fails closed — the clamped derivation simply does
+// not reproduce the stored key.
+func TestVerifyPasswordTamperedParametersFailClosed(t *testing.T) {
+	legit := phcEncode("s3cret", argonTime, argonMemory, argonThreads, argonKeyLen)
+	tampered := strings.Replace(legit, "t=3", "t=999999", 1)
+	if err := VerifyPassword("s3cret", tampered); !errors.Is(err, ErrPasswordMismatch) {
+		t.Fatalf("tampered hash verified: %v", err)
+	}
+}
+
+func TestNeedsRehash(t *testing.T) {
+	current, _ := HashPassword("s3cret")
+	if NeedsRehash(current) {
+		t.Fatal("current parameters flagged")
+	}
+	weak := phcEncode("s3cret", argonTime, argonMemory/2, argonThreads, argonKeyLen)
+	if !NeedsRehash(weak) {
+		t.Fatal("weak memory not flagged")
+	}
+	shortKey := phcEncode("s3cret", argonTime, argonMemory, argonThreads, argonKeyLen-1)
+	if !NeedsRehash(shortKey) {
+		t.Fatal("short key not flagged")
+	}
+	if NeedsRehash("not-a-hash") {
+		t.Fatal("unparseable row flagged")
+	}
+}
+
+// Acceptance (S12): a successful login over a weak row upgrades it in
+// place; the credential itself is unchanged.
+func TestLoginRehashesWeakParameters(t *testing.T) {
+	m, store := manager(t)
+	m.HashStore = store
+	weak := phcEncode("correct horse battery staple", argonTime, argonMemory/2, argonThreads, argonKeyLen)
+	store.AddUser(User{ID: "u2", Email: "weak@example.test", PasswordHash: weak, Role: RoleViewer})
+	ctx := context.Background()
+	if _, err := m.Login(ctx, "weak@example.test", "correct horse battery staple", ip); err != nil {
+		t.Fatal(err)
+	}
+	u, err := store.UserByEmail(ctx, "weak@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if NeedsRehash(u.PasswordHash) {
+		t.Fatal("row not upgraded")
+	}
+	if err := VerifyPassword("correct horse battery staple", u.PasswordHash); err != nil {
+		t.Fatalf("upgraded row does not verify: %v", err)
 	}
 }
