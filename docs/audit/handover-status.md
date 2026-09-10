@@ -1,9 +1,15 @@
 # Audit remediation — handover status
 
 The remediation programme is complete: PR #20 (the main remediation
-branch) is merged at `b385fd8`, and the blocking-items follow-up branch
+branch) is merged at `b385fd8`, the blocking-items follow-up branch
 (S5/S8/S10/S11, backup option B, fresh campaign evidence) is
-`claude/blocking-hardening-s5-s8-s10-s11-backup`. Every commit is
+`claude/blocking-hardening-s5-s8-s10-s11-backup`, and the P3-hardening
+follow-up (S12/S13, D7–D10, branch
+`claude/p3-hardening-s12-s13-d7-d10`) closes the Argon2 clamp with
+rehash-on-login, the HTTP server envelope, the console-query indexes
+(migration 000022), the pool statement_timeout with a warm connection
+floor, the retention-clamped and LIMIT-bounded funding query, and the
+CHECK bounds on financial columns (migration 000023). Every commit is
 authored by Christos Ploutarchou with the repo's commit prefixes, one
 coherent change per commit, tests included.
 
@@ -43,15 +49,18 @@ coherent change per commit, tests included.
    production-execution-gate review (legal, compliance, insurance) the
    operator must record in `docs/decisions/`.
 2. Optional P2/P3 hardening: T10 (screener constraint duplication),
-   D7–D10 database items, S12–S15 P3 security (Argon2 clamp, HTTP
-   server timeouts, CI pinning/npm audit, marketing headers), X-series
-   scanner polish, O7/O9–O11 observability, F9–F19 console P2s.
+   D11 restore-drill table/runbook staleness, S14–S15 P3 security (CI
+   pinning/npm audit, marketing headers and markdown sanitiser),
+   X-series scanner polish, O7/O9–O11 observability, F9–F19 console
+   P2s. (D7–D10 and S12/S13 closed on
+   `claude/p3-hardening-s12-s13-d7-d10`.)
 
 ## How to resume
 
 ```bash
 git fetch origin
-git checkout claude/blocking-hardening-s5-s8-s10-s11-backup   # or master, post-merge
+git checkout claude/p3-hardening-s12-s13-d7-d10            # newest follow-up
+# or: claude/blocking-hardening-s5-s8-s10-s11-backup / master, post-merge
 git status && git log --oneline -10
 
 gofmt -l internal cmd && go vet ./... && golangci-lint run ./...
