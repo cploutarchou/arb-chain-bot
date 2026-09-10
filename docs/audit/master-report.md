@@ -538,10 +538,10 @@ compliance, insurance) recorded by the operator. The verdict stays
 
 ## FOLLOW-UP ADDENDUM: the all-pending pass
 
-Branch `claude/all-pending-hardening` (stacked on
-`claude/p3-hardening-s12-s13-d7-d10`) works through the remaining P2/P3
-hardening list in one coherent run, one commit per finding with its
-test:
+Branch `claude/all-pending-hardening` (one branch carrying both
+follow-up passes — the S12/S13/D7-D10 cluster earlier in this file and
+this one) works through the remaining P2/P3 hardening list in coherent
+commits, one per finding with its test:
 
 - **S14/S15** close the security series: SHA-pinned actions (tags kept
   in comments), govulncheck v1.8.0, `npm audit --audit-level=high` in
