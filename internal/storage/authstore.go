@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -139,12 +140,28 @@ func (a *AuthStore) UserByID(ctx context.Context, id string) (auth.User, error) 
 // role (that would be a privilege-escalation primitive, not an "invite"
 // action).
 //
-// Accounts created here are the operator's console accounts (the
-// users & roles console is platform-admin only), so they join the
-// platform organisation; platform_admin is granted only to ADMINs,
-// never inferred later. Tenant users are created through the
-// organisation membership routes instead.
+// By default the account joins the platform organisation with the
+// console-role mapping (operator staff — the users console is
+// platform-admin only). u.JoinOrgID > 0 instead joins that organisation
+// with u.JoinOrgRole inside the SAME transaction (audit S4 follow-up:
+// creating a tenant's operator must not hand them a platform seat).
+// OWNER is refused defensively here as well; the API layer validates it
+// first so an operator sees a 400, never a 500. The memory store
+// (database-less profiles) ignores the join fields — it has no
+// memberships to write.
 func (a *AuthStore) CreateUser(ctx context.Context, u auth.User) error {
+	joinOrgID := tenancy.PlatformOrgID
+	joinRole := platformRoleFor(u.Role)
+	if u.JoinOrgID > 0 {
+		r := tenancy.Role(u.JoinOrgRole)
+		if !r.Valid() || r == tenancy.RoleOwner {
+			return fmt.Errorf("storage: invalid organisation role for a created account: %q", u.JoinOrgRole)
+		}
+		if _, err := a.s.Tenancy().Org(ctx, u.JoinOrgID); err != nil {
+			return fmt.Errorf("storage: organisation %d: %w", u.JoinOrgID, err)
+		}
+		joinOrgID, joinRole = u.JoinOrgID, r
+	}
 	tx, err := a.s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -163,7 +180,7 @@ func (a *AuthStore) CreateUser(ctx context.Context, u auth.User) error {
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)
-		ON CONFLICT (org_id, user_id) DO NOTHING`, tenancy.PlatformOrgID, u.ID, string(platformRoleFor(u.Role))); err != nil {
+		ON CONFLICT (org_id, user_id) DO NOTHING`, joinOrgID, u.ID, string(joinRole)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

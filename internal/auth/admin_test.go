@@ -409,3 +409,31 @@ func TestUpdateUserRoleLastAdminRaceIsAtomic(t *testing.T) {
 		t.Fatalf("enabled admins after the race = %d, want 1", admins)
 	}
 }
+
+// CreateUserInOrg validation (audit S4 follow-up): the org-placement
+// variant refuses an impossible org id and an OWNER membership (owners
+// are granted by CreateOrg behind the last-owner guard), defaults the
+// role to MEMBER, and never touches the platform join when one is set.
+// The join itself is honoured by the pgx store inside its transaction
+// (see internal/storage); the memory store has no memberships to write.
+func TestCreateUserInOrgValidation(t *testing.T) {
+	svc, _ := adminService(t)
+	ctx := context.Background()
+
+	if _, err := svc.CreateUserInOrg(ctx, "a@x.test", RoleOperator, "long-enough-password", 0, "MEMBER"); err == nil {
+		t.Fatal("org id 0 accepted (must be positive)")
+	}
+	if _, err := svc.CreateUserInOrg(ctx, "a@x.test", RoleOperator, "long-enough-password", 7, "OWNER"); err == nil {
+		t.Fatal("OWNER membership accepted")
+	}
+	if _, err := svc.CreateUserInOrg(ctx, "a@x.test", RoleOperator, "long-enough-password", 7, "SUPREME-RULER"); err == nil {
+		t.Fatal("invalid membership role accepted")
+	}
+	u, err := svc.CreateUserInOrg(ctx, "tenant-op@x.test", RoleOperator, "long-enough-password", 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email != "tenant-op@x.test" || u.Role != RoleOperator {
+		t.Fatalf("user = %+v", u)
+	}
+}

@@ -141,8 +141,34 @@ func validEmail(email string) bool {
 }
 
 // CreateUser is the console's "invite" action: it never overwrites an
-// existing account (see AdminStore.CreateUser / ErrDuplicateEmail).
+// existing account (see AdminStore.CreateUser / ErrDuplicateEmail). The
+// new account joins the platform organisation (operator staff).
 func (s *AdminService) CreateUser(ctx context.Context, email string, role Role, password string) (User, error) {
+	return s.createUser(ctx, email, role, password, 0, "")
+}
+
+// CreateUserInOrg creates the account directly inside a tenant
+// organisation (audit S4 follow-up) instead of the platform one — the
+// operator picks the organisation explicitly at creation time rather
+// than creating a platform seat and then shuffling memberships. orgRole
+// is the tenancy membership role ("ADMIN"/"MEMBER"/"VIEWER"); empty
+// defaults to MEMBER. OWNER is refused here: organisation ownership is
+// granted by CreateOrg behind the last-owner guard, not by this form.
+func (s *AdminService) CreateUserInOrg(ctx context.Context, email string, role Role, password string, orgID int64, orgRole string) (User, error) {
+	switch orgRole {
+	case "":
+		orgRole = "MEMBER"
+	case "ADMIN", "MEMBER", "VIEWER":
+	default:
+		return User{}, ErrInvalidRole
+	}
+	if orgID <= 0 {
+		return User{}, ErrInvalidRole
+	}
+	return s.createUser(ctx, email, role, password, orgID, orgRole)
+}
+
+func (s *AdminService) createUser(ctx context.Context, email string, role Role, password string, orgID int64, orgRole string) (User, error) {
 	// P3-7: normalize case before validation and storage — "Alice@x.com"
 	// and "alice@x.com" must be the SAME account (ErrDuplicateEmail), and
 	// Login (which does not normalize) must find whichever case a user
@@ -166,7 +192,8 @@ func (s *AdminService) CreateUser(ctx context.Context, email string, role Role, 
 	if err != nil {
 		return User{}, err
 	}
-	u := User{ID: id, Email: email, PasswordHash: hash, Role: role, CreatedAt: s.now()}
+	u := User{ID: id, Email: email, PasswordHash: hash, Role: role, CreatedAt: s.now(),
+		JoinOrgID: orgID, JoinOrgRole: orgRole}
 	if err := s.Store.CreateUser(ctx, u); err != nil {
 		return User{}, err
 	}

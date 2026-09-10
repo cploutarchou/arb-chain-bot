@@ -35,6 +35,19 @@ type User struct {
 	// and the system routes; no package, membership role or webhook can
 	// set it (compliance review 2026-08-27 #1).
 	PlatformAdmin bool
+	// JoinOrgID/JoinOrgRole steer where a BRAND-NEW account lands at
+	// creation (audit S4 follow-up): the users console used to join
+	// every account to the platform organisation (id 1), so creating a
+	// tenant's operator silently handed them a platform seat. Zero
+	// JoinOrgID keeps the historical behaviour (platform organisation,
+	// role mapped from the console role); a positive JoinOrgID joins
+	// that organisation with JoinOrgRole instead — validated by the
+	// caller (the API layer, which can see tenancy) and honoured inside
+	// the same transaction that inserts the user. OWNER is refused
+	// there: organisation ownership is granted by CreateOrg and guarded
+	// by the last-owner protection, not by an account-creation form.
+	JoinOrgID   int64
+	JoinOrgRole string
 }
 
 // Session is a server-side revocable session.
