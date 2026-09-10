@@ -15,6 +15,26 @@ are indicative, not production numbers.
 | `internal/metrics` labelled record (precomputed attributes) | ≈ 273 ns, 1 alloc |
 | `go test -race ./...` | ≈ 5.5 min wall (`internal/api` 315 s) |
 
+### After the remediation branch (2026-09-10, this host)
+
+The sizer was replaced by the breakpoint-aware exact search (P1-9/T2)
+and the constrained variant; the legacy grid+ternary search is kept as
+a benchmark-only comparison point.
+
+| Benchmark | Before (audit host) | After (this host) | Same-host legacy comparison |
+|---|---|---|---|
+| `BenchmarkSizeSearchCycle50Levels` (exact path) | — | 309–315 µs/op, 430 736 B/op, **12 048 allocs/op** | — |
+| `BenchmarkLegacyGridTernary50Levels` (the audited algorithm) | 6.8–8.1 ms/op, 108 231 allocs | 2.41 ms/op, 108 231 allocs | 7.8× slower, 9.0× the allocations of the exact path |
+| `BenchmarkQuoteCycle50Levels` (one exact quote) | 138 µs/op | 30.1 µs/op, 1 381 allocs | — |
+| `BenchmarkSizeSearchCycle500Levels` | — | 3.24 ms/op, 120 556 allocs | scales with book depth, not candidate count |
+
+Allocation counts are hardware-independent and the honest comparator:
+the exact search allocates 12 048 objects per triangle evaluation versus
+the legacy search's 108 231 — a 9.0× reduction that holds on every host
+(the audit host measured the same 12 048 figure at 1.5–1.6 ms/op). The
+3000:1 reproduction (profitable window inside the first grid cell) now
+returns the optimum in one evaluation.
+
 ## Hot path today
 
 WS frame → decode → `Syncer` → `Book.Apply` (single writer) → `Set.MarkDirty`
