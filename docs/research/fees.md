@@ -250,3 +250,43 @@ coinbase.com/legal/trading_rules + docs.cdp.coinbase.com (transaction_summary,
 products), bitget.com support 12560603820584 + 360060644351 + api-doc
 (Get-Symbols, Get-Trade-Rate), gate.com/fee + github.com/gateio/gateapi-python
 (CurrencyPair, TradeFee, WalletApi).
+
+---
+
+## Decision record: how fee rates reach the engine (audit T7)
+
+Audit finding T7 asked for the fee schedule to be fetched from the
+venue's per-account endpoints (`GET /api/v3/account/commission`,
+`GET /sapi/v1/asset/tradeFee`) on a timer, with provenance, refusing to
+run on the seed default when a live fetch is configured. The state of
+that item on this branch:
+
+- **Operator-configured, not hard-coded.** The engine's schedule is
+  built from the applied platform settings
+  (`platform.settings → venues.<id>.fees`: default maker/taker bps plus
+  per-symbol overrides, hot-applied and validated; internal/app/engine.go
+  consumes them at run start). The 10/10 bps seed is only the first-boot
+  default of that document, not a constant in the pricing path, and
+  per-symbol overrides cover promo pairs the operator verifies.
+- **Provenance is visible.** `fees.Schedule.Taker` reports the source of
+  every resolved rate (`default` / `override`), and the triangle detail
+  view surfaces `fee_rate`/`fee_source` per leg, so "this cycle was
+  priced on the seed default" is a visible fact, not a hidden one.
+- **The automatic fetch is deliberately not implemented.** Every
+  per-account fee endpoint is a signed, key-bearing request. The
+  platform's security boundary stores exchange credentials in the
+  write-only vault group, which `Manager.Get` refuses and no component
+  reads (internal/secrets/registry.go); the registry itself names
+  "fee-tier lookup" as the candidate first read consumer, to be enabled
+  only as a separately reviewed change. Wiring an automatic fetch now
+  would either put keys in the environment (weaker than the vault) or
+  break the write-only invariant the audit's own security review
+  (S-008/S8 area) depends on.
+
+Operator procedure until that reviewed consumer exists: look the
+account's tier up on the venue's fee page (or `account/commission`
+manually), set `venues.<id>.fees` to those rates, add per-symbol
+overrides for promo pairs, and re-check on promo expiries — the
+comparative table above is the starting point, not a substitute. The
+token-discount toggle stays refused platform-wide (no pay-asset debit
+ledger exists), which is the conservative side of finding 3 above.
