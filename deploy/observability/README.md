@@ -31,7 +31,8 @@ scrape_configs:
   backups.
 - `grafana-dashboard.json` — starter dashboard: feed health, book
   states/age, scanner throughput, qualified edge, realized slippage
-  p50/p95 (O7), paper outcomes and PnL, API latency.
+  p50/p95 (O7), paper outcomes and PnL, API latency, AI advisor and
+  Telegram rates (O14), replay runs by status (O15).
 - `grafana-dashboard-platform.json` — SRE dashboard: feed SLOs,
   rate limits, recorder, campaigns, screener venue health (O10), API,
   pod/Postgres/backup panels.

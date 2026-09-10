@@ -340,6 +340,111 @@
           "legendFormat": "dropped"
         }
       ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "AI advisor requests / failures (15m)",
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(ai_requests_total[15m]))",
+          "legendFormat": "requests",
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(ai_failures_total[15m]))",
+          "legendFormat": "failures",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Telegram updates / errors (15m)",
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(telegram_messages_total[15m]))",
+          "legendFormat": "updates",
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(telegram_errors_total[15m]))",
+          "legendFormat": "errors",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Replay runs by status (24h)",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (increase(replay_runs_total[24h]))",
+          "legendFormat": "{{status}}",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
     }
   ]
 }
