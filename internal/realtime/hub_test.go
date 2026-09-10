@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 )
 
 func snapConst(v any) SnapshotFunc {
@@ -105,18 +106,18 @@ func TestClientOpProtocol(t *testing.T) {
 	h.RegisterTopic("pnl", snapConst("p"))
 	s := h.Attach()
 	defer h.Detach(s)
-	if err := h.HandleClientOp(context.Background(), s, []byte(`{"op":"subscribe","topics":["pnl"]}`)); err != nil {
+	if err := h.HandleClientOp(context.Background(), s, []byte(`{"op":"subscribe","topics":["pnl"]}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	recv(t, s)
-	if err := h.HandleClientOp(context.Background(), s, []byte(`{"op":"unsubscribe","topics":["pnl"]}`)); err != nil {
+	if err := h.HandleClientOp(context.Background(), s, []byte(`{"op":"unsubscribe","topics":["pnl"]}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = h.Publish("pnl", "x")
 	if len(s.ch) != 0 {
 		t.Fatal("delivered after unsubscribe")
 	}
-	if err := h.HandleClientOp(context.Background(), s, []byte(`not json`)); err == nil {
+	if err := h.HandleClientOp(context.Background(), s, []byte(`not json`), nil); err == nil {
 		t.Fatal("malformed op accepted")
 	}
 }
@@ -153,5 +154,72 @@ func TestConcurrentPublish(t *testing.T) {
 	wg.Wait()
 	if h.Clients() != 0 {
 		t.Fatalf("clients = %d", h.Clients())
+	}
+}
+
+// TestHandleClientOpAuthorization (audit S11): a subscribe the caller's
+// authorization refuses yields one error frame per refused topic and
+// subscribes nothing for it; permitted topics snapshot as before;
+// unsubscribe stays unconditional.
+func TestHandleClientOpAuthorization(t *testing.T) {
+	h := NewHub(8)
+	h.RegisterTopic("scanner", func() (json.RawMessage, error) { return json.RawMessage(`{"n":1}`), nil })
+	h.RegisterTopic("health", func() (json.RawMessage, error) { return json.RawMessage(`{"n":2}`), nil })
+	s := h.Attach()
+	defer h.Detach(s)
+
+	// VIEWER-shaped allow: dashboard topics yes, system topics and
+	// unknown names no (fail closed).
+	allow := func(t Topic) bool { return t == "scanner" }
+	if err := h.HandleClientOp(context.Background(), s,
+		[]byte(`{"op":"subscribe","topics":["scanner","health","not-registered"]}`), allow); err != nil {
+		t.Fatal(err)
+	}
+
+	sawScanner := false
+	healthRefused, unknownRefused := false, false
+	deadline := time.After(2 * time.Second)
+	for !(sawScanner && healthRefused && unknownRefused) {
+		select {
+		case <-deadline:
+			t.Fatalf("frames incomplete: scanner=%v healthRefused=%v unknownRefused=%v", sawScanner, healthRefused, unknownRefused)
+		case msg := <-s.Ch():
+			switch {
+			case msg.Topic == "scanner" && msg.Snapshot:
+				sawScanner = true
+			case msg.Topic == "health" && msg.Error == "forbidden":
+				healthRefused = true
+			case msg.Topic == "not-registered" && msg.Error == "forbidden":
+				unknownRefused = true
+			}
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// The refused topic was never subscribed: a publish to it delivers
+	// nothing to this sink.
+	if err := h.Publish("health", map[string]int{"x": 1}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-s.Ch():
+		if msg.Topic == "health" && msg.Error == "" {
+			t.Fatal("refused topic still receives data")
+		}
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Unsubscribe is never authorization-gated (dropping a stream is
+	// not a disclosure).
+	if err := h.HandleClientOp(context.Background(), s,
+		[]byte(`{"op":"unsubscribe","topics":["scanner"]}`), func(Topic) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	n := len(s.subs)
+	s.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("subs after unsubscribe = %d", n)
 	}
 }
