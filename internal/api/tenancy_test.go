@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
+	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/entitlements"
+	"github.com/cploutarchou/arb-chain-bot/internal/platform"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/secrets"
 	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
@@ -108,11 +110,13 @@ func envelope(t *testing.T, rec *httptest.ResponseRecorder) (map[string]any, *AP
 	return env.Data, env.Error
 }
 
-// TestVaultExchangeGroupIsPlatformAdminOnly is compliance review #1:
-// tenant OWNER/ADMIN (console ADMIN role, so RBAC alone would allow it)
-// get 403 on PUT/DELETE of every exchange credential and never see the
-// exchange group in GET /secrets; platform staff without the flag are
-// refused too; the platform admin keeps full access.
+// TestVaultExchangeGroupIsPlatformAdminOnly is compliance review #1,
+// tightened by audit S8: the ENTIRE vault — inventory and writes, not
+// just the exchange group — is the platform operator's. Tenant OWNER/
+// ADMIN (console ADMIN role, so role RBAC alone would allow it) and
+// platform staff without the flag are refused everywhere; the platform
+// admin keeps full access. Before S8 a promoted console ADMIN could
+// overwrite the Paddle webhook secret and forge subscription events.
 func TestVaultExchangeGroupIsPlatformAdminOnly(t *testing.T) {
 	_, mux, _, _ := newTenantServer(t)
 	body := `{"value":"read-only-key-0123456789abcdef"}`
@@ -131,32 +135,13 @@ func TestVaultExchangeGroupIsPlatformAdminOnly(t *testing.T) {
 				t.Fatalf("%s DELETE %s = %d", u.email, name, rec.Code)
 			}
 		}
+		// S8: the inventory and the PROVIDER entries are operator-only
+		// too — a tenant seat never learns what the vault contains.
 		rec := call(t, mux, http.MethodGet, "/api/v1/secrets", cookie, "", nil)
-		if rec.Code != http.StatusOK {
+		if rec.Code != http.StatusForbidden {
 			t.Fatalf("%s GET = %d", u.email, rec.Code)
 		}
-		var env struct {
-			Data struct {
-				Secrets []secrets.Info `json:"secrets"`
-			} `json:"data"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &env)
-		if len(env.Data.Secrets) == 0 {
-			t.Fatalf("%s sees no secrets at all", u.email)
-		}
-		for _, in := range env.Data.Secrets {
-			if in.Group == secrets.GroupExchange || in.Venue != "" {
-				t.Fatalf("%s sees exchange entry %+v", u.email, in)
-			}
-		}
-		if strings.Contains(rec.Body.String(), "binance") {
-			t.Fatalf("%s response mentions an exchange: %s", u.email, rec.Body.String())
-		}
-		// Provider secrets stay RBAC-gated as before; a tenant admin may
-		// still not write them either (system:config is a console
-		// permission the tenant's ADMIN role does hold — the vault
-		// itself is operator infrastructure).
-		if rec := call(t, mux, http.MethodPut, "/api/v1/secrets/anthropic_api_key", cookie, csrf, body); rec.Code != http.StatusOK && rec.Code != http.StatusForbidden {
+		if rec := call(t, mux, http.MethodPut, "/api/v1/secrets/anthropic_api_key", cookie, csrf, body); rec.Code != http.StatusForbidden {
 			t.Fatalf("%s provider PUT = %d", u.email, rec.Code)
 		}
 	}
@@ -388,5 +373,161 @@ func TestOverrideRouteRejectsLive(t *testing.T) {
 	}
 	if rec := call(t, mux, http.MethodPost, "/api/v1/orgs", cookie, csrf, `{"name":"New Tenant","owner_user_id":"nobody","country":"cy","customer_type":"consumer"}`); rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"package_code":"operator"`) || !strings.Contains(rec.Body.String(), `"trial_ends_at":"`) {
 		t.Fatalf("create org = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPlatformSettingsDocumentIsOperatorOnly (S5): the settings
+// document — mode, venues, fees, paper balances, telegram allowlist —
+// answers only to platform_admin. A tenant ADMIN (console role) and
+// platform staff without the flag are refused on the read, the version
+// history and the preview dry-run.
+func TestPlatformSettingsDocumentIsOperatorOnly(t *testing.T) {
+	s, mux, _, _ := newTenantServer(t)
+	svc := platform.NewService(platform.NewMemoryStore(), discardLogger(), nil)
+	if _, err := svc.Load(context.Background(), config.Bootstrap{
+		Mode: config.ModePaper, Symbols: []string{"BTCUSDT", "ETHUSDT", "ETHBTC"},
+		StartingAssets: []string{"USDT"}, PaperBalance: "10000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Platform = svc
+
+	for _, u := range []struct{ email, pw string }{{"owner@a.test", "a-owner-pw"}, {"staff@example.test", "staff-pw"}} {
+		cookie, _ := login(t, mux, u.email, u.pw)
+		for _, path := range []string{"/api/v1/platform/settings", "/api/v1/platform/settings/versions"} {
+			if rec := call(t, mux, http.MethodGet, path, cookie, "", nil); rec.Code != http.StatusForbidden {
+				t.Fatalf("%s GET %s = %d", u.email, path, rec.Code)
+			}
+		}
+		if rec := call(t, mux, http.MethodPost, "/api/v1/platform/settings/preview", cookie, "csrf", `{}`); rec.Code != http.StatusForbidden {
+			t.Fatalf("%s preview = %d", u.email, rec.Code)
+		}
+	}
+	cookie, _ := login(t, mux, "admin@example.test", "admin-pw")
+	if rec := call(t, mux, http.MethodGet, "/api/v1/platform/settings", cookie, "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("platform admin GET = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUserRoleChangeMovesPlatformAdmin (S8): platform_admin follows the
+// console role on every change (CreateUser's insert-time rule), so a
+// promotion cannot leave a "quiet admin" and a demotion cannot leave a
+// VIEWER holding operator surfaces.
+func TestUserRoleChangeMovesPlatformAdmin(t *testing.T) {
+	s, mux, _, _ := newTenantServer(t)
+	adminCookie, adminCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	rec := call(t, mux, http.MethodPost, "/api/v1/users/nobody/role", adminCookie, adminCSRF, `{"role":"ADMIN"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("promote = %d %s", rec.Code, rec.Body.String())
+	}
+	u, err := s.Users.UserByID(context.Background(), "nobody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Role != auth.RoleAdmin || !u.PlatformAdmin {
+		t.Fatalf("after promotion = %+v", u)
+	}
+
+	rec = call(t, mux, http.MethodPost, "/api/v1/users/nobody/role", adminCookie, adminCSRF, `{"role":"VIEWER"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("demote = %d %s", rec.Code, rec.Body.String())
+	}
+	u, err = s.Users.UserByID(context.Background(), "nobody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Role != auth.RoleViewer || u.PlatformAdmin {
+		t.Fatalf("after demotion = %+v", u)
+	}
+}
+
+// TestOrgMemberAddRequiresConsentByFirstSeat (S10): adding an account
+// that already belongs to any organisation — this one included — is
+// refused until the invitation flow (T-085) exists; a first-time
+// account can still be seated by its org managers.
+func TestOrgMemberAddRequiresConsentByFirstSeat(t *testing.T) {
+	s, mux, ts, src := newTenantServer(t)
+	// Org B on the operator package (3 seats, owner/admin/viewer) so the
+	// entitlement gate is not what the refusal cases trip on.
+	src.Set(entitlements.Input{OrgID: 3, PackageCode: entitlements.PackageOperator, SubStatus: "active"})
+	s.Entitlements.Invalidate(3)
+	cookie, csrf := login(t, mux, "owner@b.test", "b-owner-pw")
+
+	// Already a member of THIS org → duplicate.
+	if rec := call(t, mux, http.MethodPost, "/api/v1/org/members", cookie, csrf, `{"user_id":"b-owner","role":"VIEWER"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "duplicate_member") {
+		t.Fatalf("duplicate = %d %s", rec.Code, rec.Body.String())
+	}
+	// Member of ANOTHER org → consent refusal (the added account never
+	// agreed to appear in this roster).
+	if rec := call(t, mux, http.MethodPost, "/api/v1/org/members", cookie, csrf, `{"user_id":"a-viewer","role":"VIEWER"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "user_already_member") {
+		t.Fatalf("cross-org add = %d %s", rec.Code, rec.Body.String())
+	}
+	// A first-time account (no membership anywhere) can be seated.
+	if rec := call(t, mux, http.MethodPost, "/api/v1/org/members", cookie, csrf, `{"user_id":"nobody","role":"VIEWER"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("first-seat add = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := ts.MembershipFor(context.Background(), 3, "nobody"); err != nil {
+		t.Fatalf("membership missing after add: %v", err)
+	}
+}
+
+// TestOrgRosterEmailsAreManagerOnly (S10): member e-mail addresses are
+// the managers' information; a VIEWER seat sees the roster without
+// them, the org's owner with them.
+func TestOrgRosterEmailsAreManagerOnly(t *testing.T) {
+	// The pgx store joins e-mails into the roster (the memory harness
+	// does not), so the disclosure rule is proven at the layer that
+	// applies it: rosterView with the three principal shapes that
+	// matter, plus the HTTP path staying sound for a non-manager.
+	s, mux, _, _ := newTenantServer(t)
+	roster := []tenancy.Membership{
+		{OrgID: 2, UserID: "a-owner", Role: tenancy.RoleOwner, Email: "owner@a.test"},
+		{OrgID: 2, UserID: "a-viewer", Role: tenancy.RoleViewer, Email: "viewer@a.test"},
+	}
+
+	for _, p := range []Principal{
+		{UserID: "u-admin", Role: auth.RoleAdmin, PlatformAdmin: true, OrgID: 1},
+		{UserID: "a-owner", OrgID: 2, OrgRole: tenancy.RoleOwner},
+		{UserID: "a-owner", OrgID: 2, OrgRole: tenancy.RoleAdmin},
+	} {
+		out := s.rosterView(p, roster)
+		if len(out) != 2 || out[0].Email != "owner@a.test" || out[1].Email != "viewer@a.test" {
+			t.Fatalf("manager/platform view must keep e-mails: %+v (principal %+v)", out, p)
+		}
+		// The caller's slice is never mutated in place.
+		if roster[0].Email != "owner@a.test" {
+			t.Fatal("rosterView mutated the input roster")
+		}
+	}
+	for _, p := range []Principal{
+		{UserID: "a-viewer", OrgID: 2, OrgRole: tenancy.RoleViewer},
+		{UserID: "a-member", OrgID: 2, OrgRole: tenancy.RoleMember},
+	} {
+		out := s.rosterView(p, roster)
+		if len(out) != 2 || out[0].Email != "" || out[1].Email != "" {
+			t.Fatalf("non-manager view must strip e-mails: %+v (principal %+v)", out, p)
+		}
+	}
+
+	// The route itself stays sound for a non-manager (the memory store
+	// carries no e-mails; the strip is the no-op path there).
+	viewerCookie, _ := login(t, mux, "viewer@a.test", "a-viewer-pw")
+	if rec := call(t, mux, http.MethodGet, "/api/v1/org/members", viewerCookie, "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("viewer roster = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestOrgAPIKeyListingRequiresManager (S10): the key inventory (prefixes
+// and usage of every seat's credentials) is manager information.
+func TestOrgAPIKeyListingRequiresManager(t *testing.T) {
+	_, mux, _, _ := newTenantServer(t)
+	viewerCookie, _ := login(t, mux, "viewer@a.test", "a-viewer-pw")
+	if rec := call(t, mux, http.MethodGet, "/api/v1/org/api-keys", viewerCookie, "", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer key list = %d", rec.Code)
+	}
+	ownerCookie, _ := login(t, mux, "owner@a.test", "a-owner-pw")
+	if rec := call(t, mux, http.MethodGet, "/api/v1/org/api-keys", ownerCookie, "", nil); rec.Code == http.StatusForbidden {
+		t.Fatalf("manager key list = %d %s", rec.Code, rec.Body.String())
 	}
 }

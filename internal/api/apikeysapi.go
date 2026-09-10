@@ -27,7 +27,7 @@ func (s *Server) apiKeyRoutes(mux *http.ServeMux) {
 			next(w, r)
 		}
 	}
-	mux.HandleFunc("GET /api/v1/org/api-keys", s.requireAuth(needKeys(s.handleAPIKeyList)))
+	mux.HandleFunc("GET /api/v1/org/api-keys", s.requireAuth(s.requireOrgManager(needKeys(s.handleAPIKeyList))))
 	mux.HandleFunc("POST /api/v1/org/api-keys", s.requireAuth(s.requireOrgManager(s.requireCSRF(needKeys(s.handleAPIKeyCreate)))))
 	mux.HandleFunc("DELETE /api/v1/org/api-keys/{id}", s.requireAuth(s.requireOrgManager(s.requireCSRF(needKeys(s.handleAPIKeyRevoke)))))
 }
