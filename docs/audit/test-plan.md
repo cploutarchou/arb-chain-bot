@@ -95,3 +95,43 @@ ledger invariant runs after settlement and halts on breach; a stable feed
 session resets the reconnect backoff; the sizer finds a known breakpoint at
 `max/min` ratios up to 10⁶; the Binance USDT perp survives a USDC
 contract on the same base.
+
+### Added in the remediation tail (F5/F6, breaker close, T8, org placement)
+
+- `internal/paper/engine_test.go` — `TestActiveCyclesTracksLegStages`
+  (F6 core: the registry shows the in-flight cycle with its legs and the
+  hook's SUBMITTED→FILLED transitions, and clears it at settlement) and
+  `TestActiveCyclesIgnoredBeforeRegistration` (an unknown cycle's progress
+  is a no-op, never a panic).
+- `internal/simulation/paper_test.go` — `TestProgressHookReportsLegStages`
+  (one SUBMITTED + one FILLED event per leg on an all-filled cycle,
+  carrying the ids the monitor joins on) and
+  `TestProgressHookReportsFailure` (an unhealthy fill-time book reports
+  FAILED for that leg without waiting for settlement).
+- `internal/storage/storage_test.go`, `authstore_org_test.go` — the cycle
+  reason and per-asset fee bill round-trip (nil reason on all-filled);
+  the unlinked cycle keeps its abort reason; `CreateUser` org placement
+  (tenant org joined in-transaction, platform untouched, OWNER/unknown-org
+  refused, default placement unchanged).
+- `internal/api/riskapi_test.go` — the breaker-close denial matrix
+  (VIEWER/OPERATOR 403, missing CSRF 403, absent registry 404, wrong
+  type-to-confirm 400, unknown breaker 404) and the happy path (CLOSED
+  state returned, registry transition observed, one audit row).
+- `internal/api/reads_test.go` — `GET /api/v1/paper/active` in the read
+  groups.
+- `internal/risk/risk_test.go` — `TestBreakerState` (the acknowledgement
+  read: registered/tripped/closed, honest miss for unknown names and
+  scopes).
+- `internal/app/metadata_test.go` — T8: the diff (delisted, halted,
+  re-filtered, and NOT unconfigured listings or equal-value re-pointed
+  filters), the monitor (a failed fetch never trips; an unchanged
+  snapshot never trips; a filter change trips the scoped breaker with a
+  reason), the disabled case, and the decimal-exactness guard.
+- `internal/auth/admin_test.go` — `CreateUserInOrg` validation.
+- `web/e2e/console.spec.ts` — the overview five-second test with mocked
+  PnL/risk/health (cells, tones, derived feed state), the missing-paper
+  reason, the live-cycle monitor (leg badges, elapsed, persisted reason,
+  fees, realized-vs-marked, opportunity link), and the Risk Center close
+  flow (disabled confirm until the name is typed, backend failure copy
+  verbatim, success path). The suite is 47 tests, all passing against a
+  real backend.

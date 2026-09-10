@@ -43,6 +43,11 @@ Verdict: **NOT READY FOR LIVE TRADING**, which is also the platform's own
 declared state. As PAPER evidence, the current numbers should not be relied
 on until the three P0 measurement defects are fixed and the run is repeated.
 
+*Remediation note (2026-09-10): the three P0 defects and every P1 are
+fixed and tested on the remediation branch — see "FINAL PLATFORM REVIEW"
+at the end of this document for the re-measured state, per-area ratings
+and the conditions that would change the verdict.*
+
 ## 2. Current architecture
 
 One Go binary hosts every component; the hot path is a function-call/channel
@@ -305,3 +310,141 @@ platform's own campaign evidence is negative (best gross +4 bps against
 engineering objective is to make the measurement honest first — which the
 P0 fixes address — and to protect capital by making the advertised controls
 real.
+
+## FINAL PLATFORM REVIEW (remediation branch, 2026-09-10)
+
+Reviewed tree: `claude/triangular-arbitrage-platform-969nkv` at `10e1ec0`
+(35 commits after the audited `abddb55`), measured on this host with the
+repository's own suites and benchmarks. What follows rates the platform
+AS IT NOW STANDS; the body of this document above remains the audit of
+`master` at `abddb55` and is unchanged.
+
+### Verification performed for this review
+
+- `gofmt -l internal cmd` clean; `go vet ./...` clean;
+  `golangci-lint run ./...` (standard + gosec + misspell + unconvert +
+  copyloopvar) — 0 issues.
+- `go test -race -count=1 ./...` — all packages pass (no database
+  variables; database-backed tests skip).
+- `ARB_TEST_DATABASE_URL=… ARB_TEST_DB_DESTRUCTIVE=1 go test -race
+  ./internal/storage/...` against a disposable PostgreSQL 16 with
+  migrations 000001–000021 applied — pass.
+- `web`: `npm run lint` (eslint + 54/54 contrast checks),
+  `npm run typecheck`, `npm run build` — pass.
+- Playwright against a real `arbd` (PAPER mode): **47/47 tests pass**,
+  including the four added for F5/F6 and the breaker acknowledgement.
+- Sizer benchmarks (see `performance-plan.md` for the table): the exact
+  path allocates **12 048 objects per triangle evaluation** versus the
+  audited search's **108 231** (9.0× fewer; 7.8× faster on the same
+  host), and the 3000:1 reproduction returns the optimum in one
+  evaluation.
+
+### Ratings per area (X/10, evidence in the linked sections)
+
+| Area | Was | Now | What moved |
+|---|---|---|---|
+| Trading logic & arithmetic | 8 | 9 | T1/T2 (breakpoint-aware, gate-constrained sizer), T4/T5/T6 filter semantics fixed; T12 precision cluster (P3) and T10 screener duplication remain |
+| Profitability honesty | 5 | 8 | P0-1 slippage vs plan, P0-2 realized/mark separation, F13 fee valuation, F3 labelling; O9 realization ratio still absent |
+| Market data | 7 | 9 | M1–M5 fixed (backoff reset, clock manager, replay staleness, crossed-book corruption, session-scoped resyncs); M6/M7 hygiene remain |
+| Execution simulation | 5 | 8 | F4 revalidation, F5 fill-time health, F7 ABORTED + staged shutdown, F10/F11/F12/F14/F16 fixed; no unwind path (documented exposure-mark model), F17 dead code remains |
+| Risk controls | 3 | 8 | P1-1 breakers trip for real (feed, persistence, loss, drawdown, slippage, inconsistency, metadata), P1-2 limits fed, P1-5 invariants halt the engine, operator acknowledgement endpoint + Risk Center control; pre-trade slippage stays post-hoc by design |
+| Persistence & database | 5 | 7 | P0-3 no silent loss (counted drops/refusals/unlinks, persistence breaker), P1-6 ledger resume, P1-18 retention, P1-19 immutability; D7–D10 (indexes, CHECKs, pool sizing) remain |
+| Security | 6 | 7 | S1–S4 (+ the CreateUser follow-up), S6, S9 fixed; S5 (VIEWER breadth), S8, S10 (consent), S11 (WS topics), S12–S15 remain |
+| Observability | 5 | 7 | O1/O2/O3/O5/O6/O8 closed — drop/refusal counters, live breaker metric, latency histograms, outcome/reason labels, queue depths; O7/O9/O10/O11 remain |
+| Infra & delivery | 5 | 6 | P1-16 compose exposure, P1-17 canary guards, P1-18 worker, P1-19 done; P1-15 backup automation is an open operator decision (framed in `docs/decisions/`), I5–I15 partially |
+| Scanner Suite | 6 | 7 | P1-20/21/22 fixed (perp collision, lane cap, data-age hold with close reasons); X4/X5/X7/X8/X9 and the P3 cluster remain |
+| Console & UX | 5 | 7 | F1–F8 all done (mode banner, one-click pause, honest labels, outcome vocabulary, five-second overview, live-cycle monitor, error states, exact decimals); F9–F20 (P2/P3) remain |
+| Testing | 6 | 8 | 681 → 841 Go test functions (+160), 47 e2e tests (was 43, two of them failing on the audit host); every fix carries its test; the known gaps (frontend unit layer, down-migration replay, npm audit gate, fuzz) remain |
+
+### Problems fixed since the audit (headline list)
+
+All three P0 measurement defects (slippage baseline, realized/unrealized
+conflation, silent record loss) and all 24 P1 items are closed — P1-15's
+engineering half (drill fails closed, never writes to production) with
+the provider choice framed as an open operator decision, and P1-24 fully
+(F5 and F6 landed in the remediation tail). From P2: T2, T4, T5, T6, T8
+(metadata-diff breaker), F10, F11, F12, F13, F14, F16, M3, M4, M5, O6,
+O8, the S4 `CreateUser` org-placement follow-up; T7 is resolved by a
+recorded decision rather than code (see below). The breaker
+acknowledgement gap the audit's own remediation plan called out — an
+operator-closed breaker with no API to close it — is closed with
+`POST /api/v1/risk/breakers/close` (ADMIN, CSRF, audited,
+type-to-confirm) and a Risk Center control.
+
+### Remaining risks (why nothing here is a profitability claim)
+
+1. **No positive edge exists in evidence.** The platform's own campaign
+   evidence is negative (best gross +4 bps against ≈40 bps of costs);
+   nothing in this remediation changes the economics, only the honesty
+   of the measurement. The fee schedule remains operator-configured
+   (T7 decision record in `docs/research/fees.md`): a stale rate or a
+   missed promo expiry silently shifts every figure, and per
+   `triangular-constraints.md` §"one wrong fee assumption invalidates
+   every result".
+2. **Backup/restore is unproven on the managed tier** until the
+   operator picks an option in `docs/runbooks/restore-drill.md` and a
+   verify drill passes (P1-15 open decision).
+3. **Topology changes still require a restart** — T8 detects them and
+   stops execution (the metadata_changed breaker re-arms while the diff
+   persists) but nothing rebuilds a running graph.
+4. **Two paper stacks remain** (`internal/simulation` and the
+   screener's `paperexec`, F17/T10): the screener's fill model can drift
+   from the engine's exact one.
+5. **Security remainder:** VIEWER breadth on platform surfaces (S5),
+   promoted-ADMIN writes to provider-group secrets (S8), member-add
+   without consent (S10), unauthorised WebSocket topics (S11), Argon2
+   clamp and HTTP server timeouts (S12/S13), unpinned CI and `npm
+   audit` highs (S14).
+6. **Operational polish:** the reservation mutex and `AnyOpen`'s
+   per-evaluation allocation still sit on the evaluator path
+   (performance plan items 2–3), `internal/api`'s race suite takes
+   ≈7.7 min serially, and the scanner's per-event ledger scans and real
+   sleeps (X9) remain.
+
+### Tests added by the branch
+
+160 Go test functions (681 → 841) and 4 e2e tests (43 → 47, all green)
+covering: slippage baselines and partial fills; realized/mark
+separation; drop/refusal/unlink counting; staged shutdown and ABORTED
+settlement; revalidation refusal paths; fill-time book health; ledger
+invariants and resume; breaker trips (feed, loss, drawdown, slippage,
+inconsistency, metadata) and the operator close; reconnect backoff
+reset; the clock monitor; the breakpoint sizer at 3000:1 and the
+constrained objective; filter semantics (submitted-quantity validation,
+market lot size, tick quantization); exposure liquidation marks; tenancy
+scoping and the CreateUser org placement; retention and immutability;
+the live-cycle registry and its leg-stage hook; cycle reason/fees
+persistence; the console's five-second overview, live-cycle monitor and
+breaker-close flow.
+
+### Measured before/after (headline)
+
+- Sizer: 108 231 → 12 048 allocs/op (9.0×), 6.8–8.1 ms → 0.31 ms on the
+  audit-class comparison benchmark (7.8× on this host); the profitable
+  size is found in one evaluation where the old grid returned a loss.
+- One exact quote (`QuoteCycle50Levels`): 138 µs (audit host) → 30 µs
+  (this host), 1 381 allocs.
+- e2e: 43 tests / 2 environment-bound failures → 47 / 0.
+- No measurable hot-path regression from the new monitors: the metadata
+  check is one bounded goroutine per run at one public REST call per
+  hour; the live-cycle registry updates are mutex-guarded map writes off
+  the pricing path; progress events are lock-read + no-op when unset.
+
+### Verdict
+
+**NOT READY FOR LIVE TRADING.** Live submission remains disabled by
+construction (`LiveExecutor` refuses every call) and no evidence of a
+positive net edge after fees, slippage and buffers exists — the
+platform's own campaigns say the opposite. The measurement layer is now
+honest, the advertised controls are real and tested, and the PAPER
+evidence this branch produces can be trusted as evidence. The verdict
+changes to "READY FOR CONTROLLED LIVE VALIDATION" only when all of the
+following hold: a `docs/campaigns/` report shows a positive net edge
+under the exact fee/depth/quantization model with its verdict stated; a
+backup option is chosen and a verify drill has passed; S5/S8/S10/S11 and
+the operator-decided items in the roadmap's P2 security block are
+closed; and the production-execution-gate review (legal, compliance,
+insurance) required by `docs/design/crypto-arb-platform-command.md`
+RULES (c) is recorded in `docs/decisions/`. No claim of profitability is
+made or supported by this review, and none should be inferred from the
+engineering scores above.
