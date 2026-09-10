@@ -48,19 +48,25 @@ coherent change per commit, tests included.
    one — the fee wall rejected everything in the latest window), and the
    production-execution-gate review (legal, compliance, insurance) the
    operator must record in `docs/decisions/`.
-2. Optional P2/P3 hardening: T10 (screener constraint duplication),
-   D11 restore-drill table/runbook staleness, S14–S15 P3 security (CI
-   pinning/npm audit, marketing headers and markdown sanitiser),
-   X-series scanner polish, O7/O9–O11 observability, F9–F19 console
-   P2s. (D7–D10 and S12/S13 closed on
-   `claude/p3-hardening-s12-s13-d7-d10`.)
+2. Optional P2/P3 hardening — what is LEFT of it after the
+   all-pending pass (branch `claude/all-pending-hardening`, stacked on
+   `claude/p3-hardening-s12-s13-d7-d10`): T10's remainder and F17 (the
+   two-paper-stacks consolidation), X6/X9/X10/X11 scanner items,
+   O11 spans (+ the O13-O15 P3 cluster), F10-F13/F15-F17/F19 console
+   items, and the T12 precision cluster. Closed by that pass: S14/S15
+   (the S-series is done), X4/X5/X7/X8, O7/O9/O10 (+O12's stale
+   header), O9's realization ratio, T10's quantization half, and
+   F9/F14/F18. D11 needed no change — the option-B drill rewrite
+   already removed the `restore_drills` write and the runbook example
+   reads `schema_migrations` live.
 
 ## How to resume
 
 ```bash
 git fetch origin
-git checkout claude/p3-hardening-s12-s13-d7-d10            # newest follow-up
-# or: claude/blocking-hardening-s5-s8-s10-s11-backup / master, post-merge
+git checkout claude/all-pending-hardening                      # newest follow-up
+# or: claude/p3-hardening-s12-s13-d7-d10 /
+#     claude/blocking-hardening-s5-s8-s10-s11-backup / master, post-merge
 git status && git log --oneline -10
 
 gofmt -l internal cmd && go vet ./... && golangci-lint run ./...
