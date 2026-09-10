@@ -11,6 +11,8 @@
 
 import { useState } from "react";
 import { api, ApiError, type RiskView } from "@/lib/api/client";
+import { reasonText } from "@/lib/reasons";
+import { ALL_FIELDS } from "@/lib/strategyFields";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { useToast } from "@/components/Toast";
@@ -164,7 +166,7 @@ export default function RiskPage() {
               <Table
                 head={["Limit", "Value"]}
                 empty="limits"
-                rows={Object.entries(r.limits ?? {}).map(([k, v]) => [k, String(v)])}
+                rows={Object.entries(r.limits ?? {}).map(([k, v]) => [limitLabel(k), String(v)])}
               />
             </Section>
             <Section title="Circuit breakers">
@@ -176,7 +178,7 @@ export default function RiskPage() {
                 empty="rejections recorded"
                 rows={Object.entries(r.reject_reason_counts ?? {})
                   .sort((a, b) => b[1] - a[1])
-                  .map(([code, n]) => [code, n])}
+                  .map(([code, n]) => [reasonText(code), n])}
               />
             </Section>
           </>
@@ -236,4 +238,15 @@ export default function RiskPage() {
       </Section>
     </ConsoleShell>
   );
+}
+
+// limitLabel shares the strategy form's field registry with the Risk
+// Center (F11): a limit reads as "Max slippage (bps)", not
+// max_slippage_bps. Unknown keys pass through unchanged — the backend
+// can grow fields the form has not catalogued yet.
+function limitLabel(key: string): string {
+  const field = ALL_FIELDS.find((f) => f.key === key || f.path.endsWith(`.${key}`));
+  if (!field) return key;
+  const unit = field.unit ?? field.unitAsset;
+  return unit ? `${field.label} (${unit})` : field.label;
 }

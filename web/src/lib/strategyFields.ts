@@ -22,6 +22,20 @@ export interface FieldSpec {
   /** Bound-violation copy, plain units (§4.4). */
   help: string;
   effect: "immediate" | "on restart";
+  /** Unit suffix rendered INSIDE the field (F11): the operator edits
+   * "5 bps", not a bare 5 whose meaning lives three pages away. */
+  unit?: string;
+  /** Asset an amount field is denominated in ("start asset"). */
+  unitAsset?: string;
+  /** display selects how the wire value maps to the form's text (F11):
+   * "percent" fields are fractions on the wire (0..1) shown and edited
+   * as percents through the exact string-shift helpers — never a
+   * Number()/100 that invents float noise. */
+  display?: "percent";
+  /** Default from strategy.DefaultParams() (F11), shown under the field. */
+  defaultValue?: string;
+  /** One-line consequence of moving this field (F11). */
+  consequence?: string;
 }
 
 export const SCANNER_FIELDS: FieldSpec[] = [
@@ -35,6 +49,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     max: 1000,
     help: "Must be between 0 and 1,000 bps.",
     effect: "immediate",
+      unit: "bps", defaultValue: "5", consequence: "Edge must clear fees + this buffer + the risk buffer before an opportunity qualifies.",
   },
   {
     section: "scanner",
@@ -46,6 +61,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     max: 1000,
     help: "Must be between 0 and 1,000 bps.",
     effect: "immediate",
+      unit: "bps", defaultValue: "5", consequence: "Added safety margin on top of the latency buffer; raises the qualification bar.",
   },
   {
     section: "scanner",
@@ -57,6 +73,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     max: 10000,
     help: "Opportunity TTL must be between 50 and 10,000 ms.",
     effect: "immediate",
+      unit: "ms", defaultValue: "400", consequence: "How long a qualified opportunity stays executable before expiring untouched.",
   },
   {
     section: "scanner",
@@ -68,6 +85,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     minExclusive: true,
     help: "Must be a positive amount.",
     effect: "immediate",
+      unitAsset: "start asset", defaultValue: "50", consequence: "Sizes below this never qualify; sets the smallest cycle the engine will run.",
   },
   {
     section: "scanner",
@@ -79,6 +97,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     max: 500,
     help: "Must be between 5 and 500 book levels.",
     effect: "immediate",
+      unit: "levels", defaultValue: "50", consequence: "Book levels the walk sees; deeper is more accurate and slower per evaluation.",
   },
   {
     section: "scanner",
@@ -90,6 +109,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     max: 41,
     help: "Must be between 3 and 41.",
     effect: "immediate",
+      defaultValue: "13", consequence: "Coarse size-search resolution; more points widen the first pass.",
   },
   {
     section: "scanner",
@@ -101,6 +121,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     max: 40,
     help: "Must be between 0 and 40.",
     effect: "immediate",
+      defaultValue: "14", consequence: "Refinement passes around the best coarse candidate.",
   },
   {
     section: "scanner",
@@ -112,6 +133,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     max: 60000,
     help: "Must be between 100 and 60,000 ms.",
     effect: "immediate",
+      unit: "ms", defaultValue: "2000", consequence: "A leg older than this fails the scanner-side freshness gate.",
   },
   {
     section: "scanner",
@@ -124,6 +146,7 @@ export const SCANNER_FIELDS: FieldSpec[] = [
     help: "Must be between 1 and 32.",
     // params.go:40 — applies at component start, not on hot swap.
     effect: "on restart",
+      defaultValue: "2", consequence: "Parallel evaluation workers; applies on restart.",
   },
 ];
 
@@ -137,6 +160,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     min: 0,
     help: "Must be 0 or greater.",
     effect: "immediate",
+      unit: "bps", defaultValue: "5", consequence: "Opportunities below this net edge are rejected by the deterministic gate.",
   },
   {
     section: "risk",
@@ -147,6 +171,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     min: 0,
     help: "Must be 0 or greater.",
     effect: "immediate",
+      unitAsset: "start asset", defaultValue: "1", consequence: "Absolute profit floor per cycle, independent of percentage edge.",
   },
   {
     section: "risk",
@@ -158,6 +183,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     minExclusive: true,
     help: "Must be a positive amount.",
     effect: "immediate",
+      unitAsset: "start asset", defaultValue: "1000", consequence: "Hard cap on a single cycle's input.",
   },
   {
     section: "risk",
@@ -169,6 +195,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     minExclusive: true,
     help: "Must be a positive amount.",
     effect: "immediate",
+      unitAsset: "start asset", defaultValue: "2000", consequence: "Cap on capital one triangle may hold reserved at once.",
   },
   {
     section: "risk",
@@ -181,6 +208,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     max: 1,
     help: "Max capital utilization must be greater than 0% and at most 100%.",
     effect: "immediate",
+      unit: "%", display: "percent", defaultValue: "50", consequence: "Fraction of total capital that may be deployed simultaneously; above it, new cycles are refused.",
   },
   {
     section: "risk",
@@ -192,6 +220,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     max: 64,
     help: "Must be between 1 and 64.",
     effect: "immediate",
+      defaultValue: "3", consequence: "In-flight paper simulations cap; queue pressure above it refuses new cycles.",
   },
   {
     section: "risk",
@@ -203,6 +232,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     max: 60000,
     help: "Must be between 100 and 60,000 ms.",
     effect: "immediate",
+      unit: "ms", defaultValue: "1500", consequence: "The risk gate's own book-age ceiling (tighter than the scanner's by design).",
   },
   {
     section: "risk",
@@ -214,6 +244,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     max: 60000,
     help: "Must be between 50 and 60,000 ms.",
     effect: "immediate",
+      unit: "ms", defaultValue: "750", consequence: "Maximum age difference between a cycle's legs; a fresh leg never trades against a stale one.",
   },
   {
     section: "risk",
@@ -224,6 +255,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     min: 0,
     help: "Must be 0 or greater.",
     effect: "immediate",
+      unit: "bps", defaultValue: "50", consequence: "Three consecutive completed cycles above this open the operator-closed slippage breaker.",
   },
   {
     section: "risk",
@@ -234,6 +266,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     min: 0,
     help: "Must be 0 or greater.",
     effect: "immediate",
+      unit: "bps", defaultValue: "30", consequence: "Worst-leg walk impact above this fails the size search.",
   },
   {
     section: "risk",
@@ -245,6 +278,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     minExclusive: true,
     help: "Must be a positive amount.",
     effect: "immediate",
+      unitAsset: "start asset", defaultValue: "200", consequence: "Realized daily loss beyond this opens the daily-loss breaker and halts new cycles.",
   },
   {
     section: "risk",
@@ -258,6 +292,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     maxExclusive: true,
     help: "Max drawdown must be between 0% and 100% (exclusive).",
     effect: "immediate",
+      unit: "%", display: "percent", defaultValue: "5", consequence: "Drawdown fraction beyond this opens the drawdown breaker.",
   },
   {
     section: "risk",
@@ -269,6 +304,7 @@ export const RISK_FIELDS: FieldSpec[] = [
     max: 1,
     help: "Must be between 0% and 100%.",
     effect: "immediate",
+      unit: "%", display: "percent", defaultValue: "50", consequence: "Input quality score below this rejects the opportunity.",
   },
 ];
 
@@ -284,8 +320,13 @@ export function validateField(spec: FieldSpec, raw: string): string | null {
   const n = Number(trimmed);
   if (!Number.isFinite(n)) return spec.kind === "int" ? "Must be a whole number." : "Must be a number.";
   if (spec.kind === "int" && !Number.isInteger(n)) return "Must be a whole number.";
-  if (spec.min !== undefined && (spec.minExclusive ? n <= spec.min : n < spec.min)) return spec.help;
-  if (spec.max !== undefined && (spec.maxExclusive ? n >= spec.max : n > spec.max)) return spec.help;
+  // Percent-display fields hold percents in the form while their bounds
+  // are fractions on the wire — compare in the form's space (F11).
+  const scale = spec.display === "percent" ? 100 : 1;
+  const min = spec.min !== undefined ? spec.min * scale : undefined;
+  const max = spec.max !== undefined ? spec.max * scale : undefined;
+  if (min !== undefined && (spec.minExclusive ? n <= min : n < min)) return spec.help;
+  if (max !== undefined && (spec.maxExclusive ? n >= max : n > max)) return spec.help;
   return null;
 }
 

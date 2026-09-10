@@ -17,6 +17,7 @@ import {
   fieldPathFromError,
   type FieldSpec,
 } from "@/lib/strategyFields";
+import { fractionToPercentStr, percentToFractionStr } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { NotificationsFields } from "@/components/NotificationsFields";
 import {
@@ -70,6 +71,7 @@ function FieldRow({
   onChange: (v: string) => void;
 }) {
   const id = `field-${spec.path}`;
+  const unitSuffix = spec.unit ?? spec.unitAsset;
   return (
     <div>
       <label className="mb-1 block text-[12px] text-[var(--text-dim)]" htmlFor={id}>
@@ -78,19 +80,32 @@ function FieldRow({
           <span className="ml-1 text-[var(--warn)]">({disabledNote})</span>
         )}
       </label>
-      <input
-        id={id}
-        type="text"
-        inputMode={spec.kind === "int" ? "numeric" : "decimal"}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded border bg-[var(--bg)] px-2 py-1 text-[13px] outline-none disabled:opacity-50 ${
-          error ? "border-[var(--critical)]" : "border-[var(--border)] focus:border-[var(--accent)]"
-        }`}
-      />
-      <p className="mt-1 text-[11px] text-[var(--text-dim)]">
+      <div className="flex">
+        <input
+          id={id}
+          type="text"
+          inputMode={spec.kind === "int" ? "numeric" : "decimal"}
+          value={value}
+          disabled={disabled}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-error` : `${id}-help`}
+          onChange={(e) => onChange(e.target.value)}
+          className={`w-full rounded border bg-[var(--bg)] px-2 py-1 text-[13px] outline-none disabled:opacity-50 ${
+            error ? "border-[var(--critical)]" : "border-[var(--border)] focus:border-[var(--accent)]"
+          } ${unitSuffix ? "rounded-r-none" : ""}`}
+        />
+        {unitSuffix && (
+          <span className="inline-flex items-center rounded-r border border-l-0 border-[var(--border)] bg-[var(--bg-panel)] px-2 text-[12px] text-[var(--text-dim)]">
+            {unitSuffix}
+          </span>
+        )}
+      </div>
+      <p id={`${id}-help`} className="mt-1 text-[11px] text-[var(--text-dim)]">
         {spec.help}
+        {spec.defaultValue !== undefined && (
+          <span className="ml-1">Default {spec.defaultValue}{unitSuffix ? ` ${unitSuffix}` : ""}.</span>
+        )}
+        {spec.consequence && <span className="ml-1">{spec.consequence}</span>}
         {spec.effect === "on restart" && (
           <span className="ml-1 text-[var(--warn)]">Applies on restart, not hot-swapped.</span>
         )}
@@ -143,7 +158,13 @@ export default function StrategiesPage() {
     const raw: Record<string, string> = {};
     for (const f of ALL_FIELDS) {
       const v = getPath(params, f.path);
-      raw[f.path] = v === undefined || v === null ? "" : String(v);
+      if (v === undefined || v === null) {
+        raw[f.path] = "";
+        continue;
+      }
+      // Percent fields are fractions on the wire and percents in the
+      // form — the exact string shift, never a float division (F11).
+      raw[f.path] = f.display === "percent" ? fractionToPercentStr(String(v)) : String(v);
     }
     setFieldRaw(raw);
     setCooldownRaw(notifCooldown(params));
@@ -199,7 +220,10 @@ export default function StrategiesPage() {
         errors[f.path] = err;
         continue;
       }
-      const value = f.kind === "decimal" ? raw.trim() : Number(raw.trim());
+      let value: string | number = f.kind === "decimal" ? raw.trim() : Number(raw.trim());
+      if (f.display === "percent" && f.kind === "decimal") {
+        value = percentToFractionStr(raw.trim());
+      }
       params = setPath(params, f.path, value);
     }
     const cdErr = validateCooldown(cooldownRaw);
