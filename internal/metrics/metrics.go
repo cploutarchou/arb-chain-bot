@@ -713,6 +713,24 @@ func (m *Metrics) RegisterCampaign(counts func() map[string]int64) error {
 	return err
 }
 
+// RegisterReplay exposes replay_runs_total{status} from the console
+// replay runner's terminal-state counters (the counterpart
+// campaign_runs_total has always had, audit O15).
+func (m *Metrics) RegisterReplay(counts func() map[string]int64) error {
+	c, err := m.meter.Int64ObservableCounter("replay_runs",
+		api.WithDescription("replay runs reaching a terminal status (done/failed)"))
+	if err != nil {
+		return err
+	}
+	_, err = m.meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		for status, n := range counts() {
+			o.ObserveInt64(c, n, api.WithAttributes(attribute.String("status", status)))
+		}
+		return nil
+	}, c)
+	return err
+}
+
 func boolGauge(b bool) int64 {
 	if b {
 		return 1

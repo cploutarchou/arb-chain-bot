@@ -385,6 +385,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
 			}
 			others = append(others, replays)
+			if mtr != nil {
+				if err := mtr.RegisterReplay(replays.RunCounts); err != nil {
+					log.Error("replay metrics registration failed", "error", err)
+				}
+			}
 		}
 
 		// Telegram allowlist: one live set (T-057), fed by the platform
