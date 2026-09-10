@@ -130,6 +130,19 @@ func (s *Store) ListCycles(ctx context.Context, sessionID string, limit int) ([]
 	return out, rows.Err()
 }
 
+// CycleByID returns one persisted cycle row by its id (audit ui F13:
+// the console's cycle detail route). pgx.ErrNoRows surfaces as the
+// caller's not-found.
+func (s *Store) CycleByID(ctx context.Context, id string) (CycleRow, error) {
+	row := s.Pool.QueryRow(ctx, `SELECT `+cycleRowColumns+`
+		FROM paper_cycles WHERE id = $1`, id)
+	r, err := scanCycleRow(row)
+	if err != nil {
+		return CycleRow{}, err
+	}
+	return r, nil
+}
+
 // ListCyclesByTriangle returns a triangle's settled cycles newest-first
 // (BL-26's "recent cycles" panel).
 func (s *Store) ListCyclesByTriangle(ctx context.Context, triangleID string, limit int) ([]CycleRow, error) {

@@ -2194,6 +2194,9 @@ export const api = {
     active: () => get<PaperActiveView>("/api/v1/paper/active"),
     cycles: (limit = 100) =>
       get<{ cycles: CycleRow[] | null }>(`/api/v1/paper/cycles?limit=${limit}`),
+    // F13: one cycle's own row — the detail route's timeline anchor.
+    cycle: (cycleID: string) =>
+      get<CycleRow>(`/api/v1/paper/cycles/${encodeURIComponent(cycleID)}`),
     orders: (cycleID: string) =>
       get<{ orders: OrderRow[] | null }>(
         `/api/v1/paper/cycles/${encodeURIComponent(cycleID)}/orders`,

@@ -197,7 +197,7 @@ function FillsPageInner() {
                 <span key="ord" className="text-[var(--text-dim)]">
                   {f.order_id}
                 </span>,
-                <Link key="c" href={`/orders?cycle=${encodeURIComponent(f.cycle_id)}`} className="text-[var(--accent)] underline">
+                <Link key="c" href={`/cycles/${encodeURIComponent(f.cycle_id)}`} className="text-[var(--accent)] underline">
                   {f.cycle_id}
                 </Link>,
                 f.triangle_id ? (

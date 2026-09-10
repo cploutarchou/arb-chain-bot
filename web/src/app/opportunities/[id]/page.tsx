@@ -125,7 +125,7 @@ export default function OpportunityDetailPage() {
                     <Stat
                       label="Cycle"
                       value={
-                        <Link href={`/orders?cycle=${encodeURIComponent(d.simulation.cycle_id)}`} className="text-[var(--accent)] underline">
+                        <Link href={`/cycles/${encodeURIComponent(d.simulation.cycle_id)}`} className="text-[var(--accent)] underline">
                           {d.simulation.cycle_id}
                         </Link>
                       }

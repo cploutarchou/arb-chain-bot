@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/auth"
@@ -229,6 +230,12 @@ func TestOpportunityAndCyclePersistence(t *testing.T) {
 	}
 	if !pnl.Equal(d("16.94204")) {
 		t.Fatalf("pnl round-trip = %s", pnl)
+	}
+
+	// F13: the detail route's single-row read.
+	one, err := s.CycleByID(ctx, "cyc-1")
+	if err != nil || one.ID != "cyc-1" || one.Outcome != "ALL_FILLED" || *one.PnLAmount != "16.94204" {
+		t.Fatalf("CycleByID = %+v err=%v", one, err)
 	}
 
 	// Read-side list queries (T-024 route groups) over the same rows.
@@ -611,5 +618,18 @@ func TestPoolStatementTimeout(t *testing.T) {
 	}
 	if timeout != "15s" {
 		t.Fatalf("statement_timeout = %q, want 15s", timeout)
+	}
+}
+
+// TestCycleByID (audit ui F13): the console's cycle detail route reads
+// one row by id — the persisted shape round-trips, and an unknown id is
+// the caller's not-found.
+func TestCycleByID(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	row, err := s.CycleByID(ctx, "cyc-1")
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unknown id = (%v, %v), want pgx.ErrNoRows", row, err)
 	}
 }
