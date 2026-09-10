@@ -93,7 +93,38 @@ func (p *Poller) Start(ctx context.Context) error {
 		p.startLoopLocked(id, st, settings, time.Now().UTC())
 	}
 	p.running = true
+	// X7: the book is overwrite-only, so a delisted pair or an offline
+	// venue would keep its last quote forever. One eviction sweep per
+	// interval, at 3 × interval, drops exactly what no live venue can
+	// still republish; it rides the poller's context and wait group so
+	// Stop shuts it down with everything else.
+	p.wg.Add(1)
+	go p.evictLoop(p.ctx)
 	return nil
+}
+
+// evictFactor is how many poll intervals a quote may outlive its last
+// observation before the sweep removes it (audit X7).
+const evictFactor = 3
+
+func (p *Poller) evictLoop(ctx context.Context) {
+	defer p.wg.Done()
+	for {
+		settings := p.Current()
+		interval := time.Duration(settings.PollIntervalS) * time.Second
+		if interval < 2*time.Second {
+			interval = 2 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+		quotes, perps := p.Book.EvictOlderThan(time.Now().UTC().Add(-evictFactor * interval))
+		if quotes+perps > 0 {
+			p.Log.Warn("screener book evicted stale quotes", "quotes", quotes, "perps", perps, "older_than", (evictFactor * interval).String())
+		}
+	}
 }
 
 // startLoopLocked builds a fresh collector for id and launches its

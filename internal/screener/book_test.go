@@ -69,3 +69,39 @@ func TestDataAgeOKGolden(t *testing.T) {
 		}
 	}
 }
+
+// TestEvictOlderThan (audit X7): quotes and perps no live poll can
+// still refresh are removed from the book — a delisted pair or an
+// offline venue must not keep feeding pairs_tracked, the lane cap and
+// the guard's median with its last observation forever. A pair whose
+// last venue quote is evicted disappears from Pairs() entirely.
+func TestEvictOlderThan(t *testing.T) {
+	b := NewBook()
+	now := time.Now().UTC()
+	b.SetQuote(Quote{Venue: VenueBinance, Base: "BTC", Quote: "USDT", Bid: d("100"), Ask: d("100"), At: now.Add(-time.Minute)})
+	b.SetQuote(Quote{Venue: VenueOKX, Base: "BTC", Quote: "USDT", Bid: d("100"), Ask: d("100"), At: now})
+	b.SetQuote(Quote{Venue: VenueBybit, Base: "DEAD", Quote: "USDT", Bid: d("100"), Ask: d("100"), At: now.Add(-time.Hour)})
+	b.SetPerp(Perp{Venue: VenueBinance, Base: "BTC", Quote: "USDT", Mark: d("100"), At: now.Add(-time.Hour)})
+	b.SetPerp(Perp{Venue: VenueOKX, Base: "ETH", Quote: "USDT", Mark: d("100"), At: now})
+
+	quotes, perps := b.EvictOlderThan(now.Add(-10 * time.Second))
+	if quotes != 2 || perps != 1 {
+		t.Fatalf("evicted = %d quotes, %d perps; want 2 and 1", quotes, perps)
+	}
+	if len(b.Pairs()) != 1 {
+		t.Fatalf("pairs after eviction = %v, want only BTC/USDT", b.Pairs())
+	}
+	if _, ok := b.QuotesFor("BTC", "USDT")[VenueOKX]; !ok {
+		t.Fatal("fresh quote evicted")
+	}
+	if _, ok := b.PerpFor(VenueOKX, "ETH", "USDT"); !ok {
+		t.Fatal("fresh perp evicted")
+	}
+	if _, ok := b.PerpFor(VenueBinance, "BTC", "USDT"); ok {
+		t.Fatal("stale perp kept")
+	}
+	// Idempotent: a second sweep finds nothing.
+	if q, p := b.EvictOlderThan(now.Add(-10 * time.Second)); q != 0 || p != 0 {
+		t.Fatalf("second sweep evicted %d/%d", q, p)
+	}
+}
