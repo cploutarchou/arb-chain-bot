@@ -18,7 +18,7 @@ func TestCalculateGoldenMath(t *testing.T) {
 	res, err := Calculate(book, fees, CalculatorRequest{
 		Base: "BTC", Quote: "USDT", BuyVenue: VenueBinance, SellVenue: VenueOKX,
 		SizeQuote: d("1000"),
-	})
+	}, now, decimal.Zero)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestCalculateWithTransferFeeAndOverrides(t *testing.T) {
 		Base: "BTC", Quote: "USDT", BuyVenue: VenueBinance, SellVenue: VenueOKX,
 		SizeQuote: d("1000"), TransferFeeQuote: &transferFee,
 		OverrideBuyFeeBps: &overrideBuy, OverrideSellFeeBps: &overrideSell,
-	})
+	}, now, decimal.Zero)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestCalculateLiquidityNotOK(t *testing.T) {
 	res, err := Calculate(book, fees, CalculatorRequest{
 		Base: "BTC", Quote: "USDT", BuyVenue: VenueBinance, SellVenue: VenueOKX,
 		SizeQuote: d("1000"), // far exceeds top-of-book depth (100*1=100 quote)
-	})
+	}, now, decimal.Zero)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestCalculateNoQuoteError(t *testing.T) {
 	fees := fixedFees(map[Venue]string{VenueBinance: "10", VenueOKX: "10"})
 	_, err := Calculate(book, fees, CalculatorRequest{
 		Base: "BTC", Quote: "USDT", BuyVenue: VenueBinance, SellVenue: VenueOKX, SizeQuote: d("100"),
-	})
+	}, time.Now().UTC(), decimal.Zero)
 	if !errors.Is(err, ErrNoQuote) {
 		t.Fatalf("err = %v, want ErrNoQuote", err)
 	}
@@ -111,8 +111,45 @@ func TestCalculateNoQuoteError(t *testing.T) {
 func TestCalculateInvalidSize(t *testing.T) {
 	book := NewBook()
 	fees := fixedFees(map[Venue]string{})
-	_, err := Calculate(book, fees, CalculatorRequest{SizeQuote: decimal.Zero})
+	_, err := Calculate(book, fees, CalculatorRequest{SizeQuote: decimal.Zero}, time.Now().UTC(), decimal.Zero)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
+// TestCalculateRefusesSuspectLaneAndReportsAges (audit X11): the
+// calculator applies the shared identity guard — a lane whose sides
+// cannot be the same asset is refused, never priced — and every answer
+// carries how old each side's quote was.
+func TestCalculateRefusesSuspectLaneAndReportsAges(t *testing.T) {
+	book := NewBook()
+	now := time.Now().UTC()
+	// The live VON shape: one venue's "VON" is another asset entirely.
+	book.SetQuote(Quote{Venue: VenueBinance, Base: "VON", Quote: "USDT", Ask: d("0.02"), AskQty: d("1000"), Bid: d("0.019"), BidQty: d("1000"), At: now.Add(-2 * time.Second)})
+	book.SetQuote(Quote{Venue: VenueMEXC, Base: "VON", Quote: "USDT", Ask: d("40"), AskQty: d("1000"), Bid: d("39"), BidQty: d("1000"), At: now.Add(-5 * time.Second)})
+	fees := fixedFees(map[Venue]string{VenueBinance: "10", VenueMEXC: "10"})
+
+	_, err := Calculate(book, fees, CalculatorRequest{
+		Base: "VON", Quote: "USDT", BuyVenue: VenueBinance, SellVenue: VenueMEXC,
+		SizeQuote: d("10"),
+	}, now, decimal.Zero)
+	if !errors.Is(err, ErrSuspectLane) {
+		t.Fatalf("err = %v, want ErrSuspectLane", err)
+	}
+
+	// A plausible lane answers with the ages of the quotes it used.
+	book.SetQuote(Quote{Venue: VenueMEXC, Base: "VON", Quote: "USDT", Ask: d("0.021"), AskQty: d("1000"), Bid: d("0.0205"), BidQty: d("1000"), At: now.Add(-5 * time.Second)})
+	res, err := Calculate(book, fees, CalculatorRequest{
+		Base: "VON", Quote: "USDT", BuyVenue: VenueBinance, SellVenue: VenueMEXC,
+		SizeQuote: d("10"),
+	}, now, decimal.Zero)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BuyAgeMs < 1900 || res.SellAgeMs < 4900 {
+		t.Fatalf("ages = %d/%d ms, want ~2000/5000", res.BuyAgeMs, res.SellAgeMs)
+	}
+	if res.Suspect || res.LiquidityUnknown {
+		t.Fatalf("guard verdict leaked into a clean lane: %+v", res)
 	}
 }

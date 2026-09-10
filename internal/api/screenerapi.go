@@ -453,7 +453,8 @@ func (s *Server) handleScreenerCalculator(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	res, err := screener.Calculate(s.Screener.Book, screenerSpotFeeLookup(snap), req)
+	res, err := screener.Calculate(s.Screener.Book, screenerSpotFeeLookup(snap), req,
+		time.Now().UTC(), snap.Settings.EffectiveMaxPlausibleSpreadBps())
 	if err != nil {
 		switch {
 		case errors.Is(err, screener.ErrNoQuote):
