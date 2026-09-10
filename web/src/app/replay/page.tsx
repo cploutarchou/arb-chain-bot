@@ -329,7 +329,7 @@ export default function ReplayPage() {
                 <p className="text-[13px] text-[var(--critical)]">{detail.error || "Run failed."}</p>
               ) : (
                 <>
-                  <div className="mb-3 grid max-w-xl grid-cols-3 gap-3">
+                  <div className="mb-3 grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-3">
                     <div className="rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3">
                       <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">Opportunities</div>
                       <div className="mt-1 text-sm font-medium">{detail.opportunities}</div>

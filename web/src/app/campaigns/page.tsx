@@ -321,8 +321,8 @@ export default function CampaignsPage() {
         <Await state={recordingsState} what="recordings">
           {(r) => (
             <div ref={formRef} className="max-w-2xl space-y-3 text-[13px]">
-              <label className="flex items-center gap-2">
-                <span className="w-40 shrink-0 text-[var(--text-dim)]">Recording</span>
+              <label className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <span className="sm:w-40 sm:shrink-0 text-[var(--text-dim)]">Recording</span>
                 <select
                   value={selRecording}
                   onChange={(e) => setSelRecording(e.target.value)}
@@ -336,8 +336,8 @@ export default function CampaignsPage() {
                   ))}
                 </select>
               </label>
-              <label className="flex items-center gap-2">
-                <span className="w-40 shrink-0 text-[var(--text-dim)]">Starting assets</span>
+              <label className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <span className="sm:w-40 sm:shrink-0 text-[var(--text-dim)]">Starting assets</span>
                 <input
                   value={assetsText}
                   onChange={(e) => setAssetsText(e.target.value)}
@@ -345,8 +345,8 @@ export default function CampaignsPage() {
                   placeholder="USDT"
                 />
               </label>
-              <label className="flex items-center gap-2">
-                <span className="w-40 shrink-0 text-[var(--text-dim)]">Balances (ASSET=amount,…)</span>
+              <label className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <span className="sm:w-40 sm:shrink-0 text-[var(--text-dim)]">Balances (ASSET=amount,…)</span>
                 <input
                   value={balanceText}
                   onChange={(e) => setBalanceText(e.target.value)}
@@ -354,8 +354,8 @@ export default function CampaignsPage() {
                   placeholder="USDT=10000"
                 />
               </label>
-              <label className="flex items-center gap-2">
-                <span className="w-40 shrink-0 text-[var(--text-dim)]">Seeds</span>
+              <label className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <span className="sm:w-40 sm:shrink-0 text-[var(--text-dim)]">Seeds</span>
                 <input
                   value={seedsText}
                   onChange={(e) => setSeedsText(e.target.value)}
@@ -363,8 +363,8 @@ export default function CampaignsPage() {
                   placeholder="1,2,3"
                 />
               </label>
-              <label className="flex items-center gap-2">
-                <span className="w-40 shrink-0 text-[var(--text-dim)]">Maker fee (bps)</span>
+              <label className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <span className="sm:w-40 sm:shrink-0 text-[var(--text-dim)]">Maker fee (bps)</span>
                 <input
                   value={makerBps}
                   onChange={(e) => setMakerBps(e.target.value)}
@@ -372,8 +372,8 @@ export default function CampaignsPage() {
                   className="w-32 rounded border border-[var(--border)] bg-[var(--bg-panel)] px-2 py-1 outline-none"
                 />
               </label>
-              <label className="flex items-center gap-2">
-                <span className="w-40 shrink-0 text-[var(--text-dim)]">Taker fee (bps)</span>
+              <label className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <span className="sm:w-40 sm:shrink-0 text-[var(--text-dim)]">Taker fee (bps)</span>
                 <input
                   value={takerBps}
                   onChange={(e) => setTakerBps(e.target.value)}
@@ -381,8 +381,8 @@ export default function CampaignsPage() {
                   className="w-32 rounded border border-[var(--border)] bg-[var(--bg-panel)] px-2 py-1 outline-none"
                 />
               </label>
-              <label className="flex items-center gap-2">
-                <span className="w-40 shrink-0 text-[var(--text-dim)]">Grid</span>
+              <label className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <span className="sm:w-40 sm:shrink-0 text-[var(--text-dim)]">Grid</span>
                 <select
                   value={grid}
                   onChange={(e) => setGrid(e.target.value as "full" | "baseline")}

@@ -43,7 +43,7 @@ export default function PortfolioPage() {
                   Unmarkable exposure (no live mark): {p.unmarked.join(", ")}
                 </p>
               )}
-              <div className="mt-4 grid max-w-xl grid-cols-3 gap-3">
+              <div className="mt-4 grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-3">
                 <Stat label="Cycles" value={p.cycles} />
                 <Stat label="Completed" value={p.completed} tone="ok" />
                 <Stat label="Failed" value={p.failed} tone={p.failed > 0 ? "warn" : undefined} />
