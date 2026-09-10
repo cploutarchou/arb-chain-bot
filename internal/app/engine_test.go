@@ -29,13 +29,16 @@ const exchangeInfoFixture = `{
   "symbols": [
     {"symbol":"BTCUSDT","status":"TRADING","baseAsset":"BTC","quoteAsset":"USDT",
      "filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},
-                {"filterType":"LOT_SIZE","minQty":"0.0001","maxQty":"1000","stepSize":"0.0001"}]},
+                {"filterType":"LOT_SIZE","minQty":"0.0001","maxQty":"1000","stepSize":"0.0001"},
+                {"filterType":"NOTIONAL","minNotional":"5","applyMinToMarket":true,"avgPriceMins":5}]},
     {"symbol":"ETHUSDT","status":"TRADING","baseAsset":"ETH","quoteAsset":"USDT",
      "filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},
-                {"filterType":"LOT_SIZE","minQty":"0.001","maxQty":"1000","stepSize":"0.001"}]},
+                {"filterType":"LOT_SIZE","minQty":"0.001","maxQty":"1000","stepSize":"0.001"},
+                {"filterType":"NOTIONAL","minNotional":"5","applyMinToMarket":true,"avgPriceMins":5}]},
     {"symbol":"ETHBTC","status":"TRADING","baseAsset":"ETH","quoteAsset":"BTC",
      "filters":[{"filterType":"PRICE_FILTER","tickSize":"0.000001"},
-                {"filterType":"LOT_SIZE","minQty":"0.001","maxQty":"1000","stepSize":"0.001"}]}
+                {"filterType":"LOT_SIZE","minQty":"0.001","maxQty":"1000","stepSize":"0.001"},
+                {"filterType":"NOTIONAL","minNotional":"0.0001","applyMinToMarket":false}]}
   ]
 }`
 

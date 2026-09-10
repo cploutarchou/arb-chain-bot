@@ -21,6 +21,9 @@ func mkt(sym string, base, quote exchange.Asset) exchange.Market {
 		Rules: exchange.InstrumentRules{
 			QtyMode: exchange.PrecisionStep, QtyStep: step,
 			PriceMode: exchange.PrecisionStep, PriceTick: step,
+			// T12: usable rules carry a notional floor — a market without
+			// one publishes no minimum order value and is excluded.
+			MinNotional: decimal.NewFromInt(1),
 		},
 	}
 }

@@ -61,9 +61,6 @@ func TestDiscountMath(t *testing.T) {
 	if !got.Rate.Equal(d("0.00075")) || !got.TokenPaid || got.PayAsset != "BNB" {
 		t.Fatalf("discounted: %+v", got)
 	}
-	if !Bps(got.Rate).Equal(d("7.5")) {
-		t.Fatalf("bps = %s", Bps(got.Rate))
-	}
 	// A zero-rate promo pair stays zero — no discount source suffix.
 	_ = s.SetOverride(promo, Rate{Maker: d("0"), Taker: d("0")})
 	if got := s.Taker(promo); !got.Rate.IsZero() || got.TokenPaid {

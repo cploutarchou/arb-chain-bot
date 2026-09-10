@@ -35,6 +35,9 @@ func stepRules() exchange.InstrumentRules {
 	return exchange.InstrumentRules{
 		QtyMode: exchange.PrecisionStep, QtyStep: d("0.001"),
 		PriceMode: exchange.PrecisionStep, PriceTick: d("0.00000001"),
+		// T12: usable rules carry a notional floor, as real Binance
+		// symbols do.
+		MinNotional: d("5"),
 	}
 }
 
