@@ -63,6 +63,33 @@ export function isNegativeDecimalStr(value: string | undefined | null): boolean 
   return !!value && value.trim().startsWith("-");
 }
 
+// cmpDecimalStr: exact comparison of two backend decimal strings
+// (-1 / 0 / +1). Digit normalisation only — `Number(a) - Number(b)`
+// loses precision on the values the backend sends as exact strings and
+// mis-sorts rows whose bps differ past float accuracy. Non-numeric input
+// compares as 0 so a malformed cell never throws during a render sort.
+export function cmpDecimalStr(a: string | undefined | null, b: string | undefined | null): number {
+  const norm = (v: string | undefined | null) => {
+    const t = (v ?? "").trim();
+    if (t === "" || !/^-?\d*\.?\d*$/.test(t)) return { neg: false, int: "0", frac: "" };
+    const neg = t.startsWith("-");
+    const unsigned = neg ? t.slice(1) : t;
+    const [i0, f = ""] = unsigned.split(".");
+    const i = i0 ?? "";
+    return { neg, int: i.replace(/^0+(?=\d)/, "") || "0", frac: f.replace(/0+$/, "") };
+  };
+  const A = norm(a), B = norm(b);
+  if (A.neg !== B.neg) return A.neg ? -1 : 1;
+  const mag = (x: { int: string; frac: string }) => {
+    const li = x.int.length, lf = x.frac.length;
+    const n = Math.max(li, lf);
+    return (x.int.padStart(n, "0") + x.frac.padEnd(n, "0")).replace(/^0+(?=\d)/, "") || "0";
+  };
+  let c = mag(A).length - mag(B).length;
+  if (c === 0) c = mag(A).localeCompare(mag(B));
+  return A.neg ? -c : c;
+}
+
 // signTone/signedText: the shared sign-to-colour and sign-to-prefix rules
 // (design-system.md §1.8 — "sign is on the number, never a bare figure
 // that needs the colour to be read"). String-based throughout: reading

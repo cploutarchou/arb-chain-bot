@@ -8,29 +8,10 @@
 // "not running in this profile" rather than a faked zero when absent.
 
 import { api } from "@/lib/api/client";
+import { bookAgeText, fmtBytes, fmtDurationSec } from "@/lib/format";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Await, Badge, PageTitle, Section, Stat, Table } from "@/components/ui";
-
-function fmtBytes(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function fmtDuration(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "—";
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  return `${h}h ${m}m ${s}s`;
-}
 
 export default function SystemHealthPage() {
   const status = usePoll(() => api.system.status(), 10000);
@@ -52,7 +33,7 @@ export default function SystemHealthPage() {
           )}
           {health.kind === "ready" && (
             <>
-              <Stat label="Uptime" value={fmtDuration(health.data.process.uptime_sec)} />
+              <Stat label="Uptime" value={fmtDurationSec(health.data.process.uptime_sec)} />
               <Stat label="Goroutines" value={health.data.process.goroutines} />
               <Stat label="Heap alloc" value={fmtBytes(health.data.process.heap_alloc_bytes)} />
               <Stat label="Heap sys" value={fmtBytes(health.data.process.heap_sys_bytes)} />
@@ -120,7 +101,7 @@ export default function SystemHealthPage() {
                     >
                       {b.state}
                     </Badge>,
-                    b.age_ms,
+                    bookAgeText(b.age_ms),
                   ])}
                 />
               </Section>

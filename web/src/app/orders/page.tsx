@@ -9,6 +9,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { orderFillStatusTone } from "@/lib/tones";
 import { api, ApiError, type ListFilter, type OrderListRow } from "@/lib/api/client";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Badge, Button, ErrorBox, Loading, PageTitle, Section, VirtualTable, fmtTime } from "@/components/ui";
@@ -29,13 +30,6 @@ type ListState =
     };
 
 const STATUSES = ["", "NEW", "FILLED", "PARTIAL", "REJECTED", "CANCELED"];
-
-function statusTone(status: string): "ok" | "warn" | "bad" | "dim" {
-  if (status === "FILLED") return "ok";
-  if (status === "PARTIAL") return "warn";
-  if (status === "REJECTED" || status === "CANCELED") return "bad";
-  return "dim";
-}
 
 function OrdersPageInner() {
   const searchParams = useSearchParams();
@@ -194,7 +188,7 @@ function OrdersPageInner() {
                 o.symbol ?? "—",
                 o.leg_no,
                 o.side,
-                <Badge key="s" tone={statusTone(o.status)}>
+                <Badge key="s" tone={orderFillStatusTone(o.status)}>
                   {o.status}
                 </Badge>,
                 o.qty_requested,

@@ -1,6 +1,7 @@
 "use client";
 
 import { api } from "@/lib/api/client";
+import { bookAgeText } from "@/lib/format";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Await, Badge, PageTitle, Section, Stat, Table } from "@/components/ui";
@@ -39,7 +40,7 @@ export default function ExchangesPage() {
                   >
                     {b.state}
                   </Badge>,
-                  b.age_ms,
+                  bookAgeText(b.age_ms),
                 ])}
               />
             </Section>
