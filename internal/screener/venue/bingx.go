@@ -275,6 +275,7 @@ func (c *bingxCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 		}
 		out = append(out, screener.Perp{Venue: screener.VenueBingX, Base: in.Base, Quote: in.Quote,
 			Mark: pr.MarkPrice.Decimal, Index: pr.IndexPrice.Decimal, Bid: b.bid, Ask: b.ask,
+			BidQty: b.bidQty, AskQty: b.askQty,
 			FundingRate: pr.LastFundingRate.Decimal,
 			IntervalH:   pr.FundingIntervalHours, NextFundingAt: next, At: at})
 	}

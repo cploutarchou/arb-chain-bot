@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, isNotReady, type CampaignRun, type RecorderStatus } from "@/lib/api/client";
+import { fmtBytes, fmtDurationMs } from "@/lib/format";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { connectHub, type HubMessage } from "@/lib/ws";
@@ -23,27 +24,6 @@ interface CampaignsTopicMsg {
   kind?: "campaign_run";
   run?: CampaignRun;
   runs?: CampaignRun[];
-}
-
-function fmtDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "—";
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${h}h ${m}m ${sec}s`;
-}
-
-function fmtBytes(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 function statusTone(status: CampaignRun["status"]): "ok" | "warn" | "bad" | "dim" {
@@ -253,7 +233,7 @@ export default function CampaignsPage() {
               );
             }
             const uptime = recorder.started_at
-              ? fmtDuration(Date.now() - new Date(recorder.started_at).getTime())
+              ? fmtDurationMs(Date.now() - new Date(recorder.started_at).getTime())
               : "—";
             return (
               <div className="max-w-4xl">

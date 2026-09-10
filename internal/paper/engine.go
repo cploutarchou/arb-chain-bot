@@ -192,6 +192,29 @@ type Stats struct {
 	Revalidated          int64
 	RevalidationRejected int64
 	InvariantViolations  int64
+	// Realization accounting (audit O9): sums over every settled cycle
+	// that deployed capital under a positive expectation — the numerator
+	// is realized PnL (losses included, that is the point), the
+	// denominator the opportunity's NetProfit (EstimatedFinal −
+	// InputConsumed). Decimal end to end; the ratio is computed only at
+	// exposition time.
+	RealizedSum decimal.Decimal
+	ExpectedSum decimal.Decimal
+}
+
+// RealizationRatio reports sum(RealizedPnL) / sum(NetProfit) over
+// settled cycles (audit O9): how much of the edge the engine expected
+// actually landed. ok=false until at least one positive expectation has
+// been settled, so a cold engine reports absence rather than a
+// misleading 0.
+func (e *Engine) RealizationRatio() (float64, bool) {
+	e.statsMu.Lock()
+	defer e.statsMu.Unlock()
+	if !e.stats.ExpectedSum.IsPositive() {
+		return 0, false
+	}
+	ratio, _ := e.stats.RealizedSum.Div(e.stats.ExpectedSum).Float64()
+	return ratio, true
 }
 
 func (e *Engine) Name() string { return "paper" }
@@ -450,6 +473,15 @@ func (e *Engine) runCycle(ctx context.Context, ev scanner.Event) {
 		}
 		_ = e.Portfolio.ApplyCycle(result, false)
 		e.checkInvariants()
+		// O9: every deployed cycle feeds the realization ratio — the
+		// losses and partials exactly as much as the clean fills, against
+		// the expectation the opportunity was qualified on.
+		if op.NetProfit.IsPositive() {
+			e.bump(func(s *Stats) {
+				s.RealizedSum = s.RealizedSum.Add(result.RealizedPnL)
+				s.ExpectedSum = s.ExpectedSum.Add(op.NetProfit)
+			})
+		}
 		if result.Outcome.Complete() {
 			_ = op.Transition(opportunity.StatusCompleted, "")
 			e.bump(func(s *Stats) { s.Started++; s.Completed++ })

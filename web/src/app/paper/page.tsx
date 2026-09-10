@@ -88,7 +88,7 @@ export default function PaperPage() {
     setOrdersLoadingID(cycleID);
     try {
       const res = await api.paper.orders(cycleID);
-      setOrdersState({ kind: "ready", data: res.orders ?? [] });
+      setOrdersState({ kind: "ready", data: res.orders ?? [], lastOkAt: Date.now() });
     } catch (err: unknown) {
       setOrdersState(
         err instanceof ApiError

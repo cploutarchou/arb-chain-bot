@@ -1,0 +1,14 @@
+# Security headers for the statically exported marketing site
+# (docs/audit/security-audit.md S15). Cloudflare Pages / Netlify format:
+# served verbatim from the site root. The set mirrors the console's
+# (web/next.config.ts) minus the WS connect-src the marketing site has
+# no backend for. 'unsafe-inline' for scripts/styles stays because the
+# static export embeds Next.js inline runtime/bootstrap chunks; a nonce
+# pipeline cannot exist without a server.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

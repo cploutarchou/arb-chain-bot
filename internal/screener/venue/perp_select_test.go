@@ -161,15 +161,63 @@ func TestRecordFundingKeyedPerContract(t *testing.T) {
 	t1, t2 := time.Unix(1_800_000_000, 0).UTC(), time.Unix(1_800_028_800, 0).UTC()
 	usdt := screener.Perp{Venue: screener.VenueBinance, Base: "AAVE", Quote: "USDT", FundingRate: dec("0.0001"), NextFundingAt: t1}
 	usdc := screener.Perp{Venue: screener.VenueBinance, Base: "AAVE", Quote: "USDC", FundingRate: dec("0.0009"), NextFundingAt: t1}
-	p.recordFunding(ctx, usdt)
-	p.recordFunding(ctx, usdc)
+	p.recordFunding(ctx, nil, usdt)
+	p.recordFunding(ctx, nil, usdc)
 	usdt.FundingRate, usdt.NextFundingAt = dec("0.0002"), t2 // USDT settled at t1
-	p.recordFunding(ctx, usdt)
+	p.recordFunding(ctx, nil, usdt)
 	series, _ := funding.ListFunding(ctx, "AAVE", []screener.Venue{screener.VenueBinance}, time.Time{})
 	if len(series) != 1 || len(series[0].Points) != 1 {
 		t.Fatalf("series = %+v, want one settled point", series)
 	}
 	if pt := series[0].Points[0]; pt.Rate != "0.0001" || !pt.At.Equal(t1) {
 		t.Fatalf("settled point = %+v, want the USDT contract's own 0.0001 at t1 (not the USDC 0.0009)", pt)
+	}
+}
+
+// prevPeriodCollector stands in for the BitMart/Crypto.com/Bitfinex
+// shape (audit X4): a collector whose bulk funding field reports the
+// previous period's settled rate.
+type prevPeriodCollector struct{ wedgedCollector }
+
+func (*prevPeriodCollector) FundingIsPreviousPeriod() bool { return true }
+
+// TestRecordFundingAttributesByRateSemantics (audit X4): when
+// NextFundingAt advances, an accruing-rate venue books the previously
+// seen rate at the advancing timestamp; a previous-period venue books
+// the newly observed one — its bulk field only started reporting the
+// just-settled rate after the boundary. Before X4 both stored the old
+// rate, shifting every settlement on those venues one interval.
+func TestRecordFundingAttributesByRateSemantics(t *testing.T) {
+	ctx := context.Background()
+	t1, t2 := time.Unix(1_800_000_000, 0).UTC(), time.Unix(1_800_028_800, 0).UTC()
+
+	accruing := screener.NewMemoryFundingStore()
+	pa := &Poller{Book: screener.NewBook(), Funding: accruing, Current: screener.Defaults}
+	if err := pa.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer pa.Stop()
+	first := screener.Perp{Venue: screener.VenueBinance, Base: "BTC", Quote: "USDT", FundingRate: dec("0.0001"), NextFundingAt: t1}
+	pa.recordFunding(ctx, nil, first)
+	first.FundingRate, first.NextFundingAt = dec("0.0003"), t2
+	pa.recordFunding(ctx, nil, first)
+	pts, _ := accruing.ListFunding(ctx, "BTC", []screener.Venue{screener.VenueBinance}, time.Time{})
+	if len(pts) != 1 || len(pts[0].Points) != 1 || pts[0].Points[0].Rate != "0.0001" || !pts[0].Points[0].At.Equal(t1) {
+		t.Fatalf("accruing venue: %+v, want the OLD rate 0.0001 at t1", pts)
+	}
+
+	previous := screener.NewMemoryFundingStore()
+	pp := &Poller{Book: screener.NewBook(), Funding: previous, Current: screener.Defaults}
+	if err := pp.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer pp.Stop()
+	second := screener.Perp{Venue: screener.VenueBitMart, Base: "BTC", Quote: "USDT", FundingRate: dec("0.0001"), NextFundingAt: t1}
+	pp.recordFunding(ctx, &prevPeriodCollector{}, second)
+	second.FundingRate, second.NextFundingAt = dec("0.0003"), t2
+	pp.recordFunding(ctx, &prevPeriodCollector{}, second)
+	pts, _ = previous.ListFunding(ctx, "BTC", []screener.Venue{screener.VenueBitMart}, time.Time{})
+	if len(pts) != 1 || len(pts[0].Points) != 1 || pts[0].Points[0].Rate != "0.0003" || !pts[0].Points[0].At.Equal(t1) {
+		t.Fatalf("previous-period venue: %+v, want the NEW rate 0.0003 at t1", pts)
 	}
 }

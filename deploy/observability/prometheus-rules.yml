@@ -71,6 +71,19 @@ groups:
         annotations:
           summary: "Recorder queue overflowing; recording has gaps"
 
+  - name: arbd-slippage
+    rules:
+      - alert: PaperSlippageExceedsBuffer
+        # O7: realized cycle slippage p95 past 10 bps for 30m. 10 bps is a
+        # conservative default; tune it to sit just under the strategy's
+        # configured latency+risk buffers (a slippage above them means the
+        # plan's edge was never real at fill time).
+        expr: histogram_quantile(0.95, sum by (le, exchange) (rate(slippage_bps_bucket[10m]))) > 10
+        for: 30m
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Realized slippage p95 above 10 bps on {{ $labels.exchange }}"
+          description: "Filled cycles are landing materially below their planned return. Compare with the Qualified net edge heatmap and the buffers in the strategy config."
   - name: arbd-api
     rules:
       - alert: APIServerErrors

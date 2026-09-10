@@ -613,3 +613,52 @@ func TestActiveCyclesIgnoredBeforeRegistration(t *testing.T) {
 		t.Fatalf("unregistered engine reported cycles: %+v", got)
 	}
 }
+
+// TestRealizationRatioSumsOverSettledCycles (audit O9): the ratio is
+// sum(realized PnL)/sum(expected net profit) over every cycle that
+// deployed capital — a clean fill and a losing partial both feed it,
+// and a cold engine reports absence rather than a confident 0.
+func TestRealizationRatioSumsOverSettledCycles(t *testing.T) {
+	// Leg 1 fills clean (+4 on a 1000 input); leg 2 loses (-50 realized).
+	clean := scriptedExecutor{result: completed}
+	e, in, _, _ := harness(t, &clean)
+	var settled atomic.Int32
+	e.OnResult = func(execution.CycleResult) { settled.Add(1) }
+	cancel, wait := runEngine(t, e)
+	defer wait()
+	defer cancel()
+
+	if _, ok := e.RealizationRatio(); ok {
+		t.Fatal("cold engine reports a realization ratio")
+	}
+
+	in <- qualifiedEvent("op-r1", "1000")
+	waitFor(t, func() bool { return settled.Load() == 1 })
+	ratio, ok := e.RealizationRatio()
+	if !ok || ratio <= 0 || ratio > 1 {
+		t.Fatalf("after a clean fill: ratio=%v ok=%v (want (0,1])", ratio, ok)
+	}
+
+	losing := func(plan execution.CyclePlan) execution.CycleResult {
+		res := completed(plan)
+		res.FinalAmount = res.InputConsumed.Sub(d("50"))
+		res.RealizedPnL = d("-50")
+		res.TotalPnL = d("-50")
+		return res
+	}
+	clean.result = losing
+	in <- qualifiedEvent("op-r2", "1000")
+	waitFor(t, func() bool { return settled.Load() == 2 })
+
+	st := e.Snapshot()
+	if !st.RealizedSum.Equal(d("-46")) {
+		t.Fatalf("realized sum = %s, want -46 (4 - 50)", st.RealizedSum)
+	}
+	if !st.ExpectedSum.IsPositive() {
+		t.Fatalf("expected sum = %s, want the two expectations", st.ExpectedSum)
+	}
+	ratio, ok = e.RealizationRatio()
+	if !ok || ratio >= 0 {
+		t.Fatalf("after the loss: ratio=%v ok=%v (want negative)", ratio, ok)
+	}
+}

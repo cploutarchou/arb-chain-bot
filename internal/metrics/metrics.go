@@ -259,6 +259,11 @@ type BreakerStat struct {
 type PaperStats struct {
 	Received, Started, Completed, Failed, Skipped int64
 	Active                                        int64
+	// RealizationRatio is sum(RealizedPnL)/sum(NetProfit) over settled
+	// cycles that deployed capital (audit O9); HasRealization is false
+	// until one such cycle exists (a cold engine reports absence, not 0).
+	RealizationRatio float64
+	HasRealization   bool
 }
 
 // QueueStats are one bounded queue's backlog and loss counters (P0-3).
@@ -360,6 +365,7 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		recWritten = i64c("recorder_frames_written", "recorded frames written")
 		recDropped = i64c("recorder_frames_dropped", "recorded frames dropped on overflow")
 		papRecvd   = i64c("paper_cycles_received", "qualified opportunities received by the paper engine")
+		papReal    = f64g("paper_realization_ratio", "sum(realized PnL)/sum(expected net profit) over settled cycles that deployed capital")
 		papSkip    = i64c("paper_cycles_skipped", "paper opportunities skipped (paused, expired, reservation conflict, capital)")
 		obDepth    = i64g("outbox_queue_depth", "persistence outbox records queued")
 		obCap      = i64g("outbox_queue_capacity", "persistence outbox capacity")
@@ -379,7 +385,7 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		evals, detected, qualified, rejected, skipped, dropped, triangles,
 		frames, reconnects, apiErrors, resyncs, seqErrors, bookAge, bookState,
 		capAvail, capResv, breaker, papRecv, papOK, papFail, papActive, papPnL,
-		feesTotal, recWritten, recDropped, papRecvd, papSkip,
+		feesTotal, recWritten, recDropped, papRecvd, papSkip, papReal,
 		obDepth, obCap, obDropped, obFailed, obWritten, pqDepth, pqCap, pqDropped,
 		revals, revalRej,
 	}
@@ -438,6 +444,9 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 				o.ObserveInt64(papActive, p.Active)
 				o.ObserveInt64(papRecvd, p.Received)
 				o.ObserveInt64(papSkip, p.Skipped)
+				if p.HasRealization {
+					o.ObserveFloat64(papReal, p.RealizationRatio)
+				}
 			}
 		}
 		if src.Outbox != nil {

@@ -33,7 +33,7 @@ func TestCarryRequiresConfirmedFunding(t *testing.T) {
 		p, _ := svc.Book.PerpFor(screener.VenueBinance, "BTC", "USDT")
 		p.PredictedFundingRate = d("0.0005")
 		p.FundingRate = d("0.0005")
-		p.Bid = d("50100")
+		p.Bid, p.BidQty, p.AskQty = d("50100"), d("2"), d("2")
 		svc.Book.SetPerp(p)
 	}
 	seed := func(rate string, n int) screener.FundingStore {

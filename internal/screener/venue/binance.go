@@ -251,6 +251,7 @@ func (c *binanceCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 		}
 		out = append(out, screener.Perp{Venue: screener.VenueBinance, Base: in.Base, Quote: in.Quote,
 			Mark: p.MarkPrice.Decimal, Index: p.IndexPrice.Decimal, Bid: b.BidPrice.Decimal, Ask: b.AskPrice.Decimal,
+			BidQty: b.BidQty.Decimal, AskQty: b.AskQty.Decimal,
 			FundingRate: p.LastFundingRate.Decimal, PredictedFundingRate: p.LastFundingRate.Decimal,
 			IntervalH: h, NextFundingAt: time.UnixMilli(p.NextFundingTime), At: at})
 	}

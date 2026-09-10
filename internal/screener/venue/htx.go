@@ -362,8 +362,14 @@ func (c *htxCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 		if len(t.Bid) > 0 {
 			p.Bid = t.Bid[0].Decimal
 		}
+		if len(t.Bid) > 1 {
+			p.BidQty = t.Bid[1].Decimal
+		}
 		if len(t.Ask) > 0 {
 			p.Ask = t.Ask[0].Decimal
+		}
+		if len(t.Ask) > 1 {
+			p.AskQty = t.Ask[1].Decimal
 		}
 		p.Index = idxBy[t.ContractCode].IndexPrice.Decimal
 		if mk, ok := c.rr.get(t.ContractCode); ok {

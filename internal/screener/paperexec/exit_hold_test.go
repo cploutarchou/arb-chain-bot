@@ -24,7 +24,7 @@ func TestCarryConvergedCloseWaitsForFirstSettlement(t *testing.T) {
 		IntervalH: 8, IntervalHOpen: 8, NextFundingAt: now.Add(4 * time.Hour)}
 	// Converged: exit-side basis below close_bps.
 	q := screener.Quote{Bid: dec("50000"), Ask: dec("50002")}
-	p := screener.Perp{Mark: dec("50000"), Bid: dec("49990"), Ask: dec("49995")}
+	p := screener.Perp{Mark: dec("50000"), Bid: dec("49990"), Ask: dec("49995"), BidQty: dec("2"), AskQty: dec("2")}
 
 	if reason := x.exitReason(r, pos, po, p, q, now); reason != "" {
 		t.Fatalf("closed before the first settlement with reason %q", reason)
@@ -37,7 +37,7 @@ func TestCarryConvergedCloseWaitsForFirstSettlement(t *testing.T) {
 
 	// A margin stop still fires with zero settlements.
 	po.Settlements = 0
-	pStop := screener.Perp{Mark: dec("80000"), Bid: dec("79990"), Ask: dec("79995")}
+	pStop := screener.Perp{Mark: dec("80000"), Bid: dec("79990"), Ask: dec("79995"), BidQty: dec("2"), AskQty: dec("2")}
 	if reason := x.exitReason(r, pos, po, pStop, q, now); reason != "margin_stop" {
 		t.Fatalf("stop reason = %q, want margin_stop", reason)
 	}
@@ -60,7 +60,7 @@ func TestFundingReversalNeedsCapturedBasis(t *testing.T) {
 	po := perpOpen{SpotOpen: dec("50000"), PerpOpen: dec("49900"), BasisEntryBps: dec("-30"),
 		IntervalH: 8, IntervalHOpen: 8, NextFundingAt: now.Add(4 * time.Hour)}
 	q := screener.Quote{Bid: dec("49990"), Ask: dec("50000")}
-	p := screener.Perp{Mark: dec("49900"), Bid: dec("49895"), Ask: dec("50200")}
+	p := screener.Perp{Mark: dec("49900"), Bid: dec("49895"), Ask: dec("50200"), BidQty: dec("2"), AskQty: dec("2")}
 
 	if reason := x.exitReason(r, pos, po, p, q, now); reason == "funding_reversal" {
 		t.Fatal("funding_reversal fired with no captured basis and no funding paid")

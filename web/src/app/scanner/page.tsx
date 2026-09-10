@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api/client";
+import { cmpDecimalStr, signTone, signedText } from "@/lib/decimal";
 import { usePoll } from "@/lib/usePoll";
 import { connectHub, type HubMessage } from "@/lib/ws";
 import { ConsoleShell } from "@/components/ConsoleShell";
@@ -137,14 +138,13 @@ export default function ScannerPage() {
       const needle = triangleFilter.trim().toLowerCase();
       out = out.filter((r) => r.triangle_id.toLowerCase().includes(needle));
     }
-    if (minBps.trim() && !Number.isNaN(Number(minBps))) {
-      const min = Number(minBps);
-      out = out.filter((r) => Number(r.net_bps ?? 0) >= min);
+    if (minBps.trim()) {
+      out = out.filter((r) => cmpDecimalStr(r.net_bps ?? "0", minBps.trim()) >= 0);
     }
     if (pinnedOnly) out = out.filter((r) => pinned.has(r.triangle_id));
     const dir = sortDir === "asc" ? 1 : -1;
     return [...out].sort((a, b) => {
-      if (sortKey === "net_bps") return dir * (Number(a.net_bps ?? 0) - Number(b.net_bps ?? 0));
+      if (sortKey === "net_bps") return dir * cmpDecimalStr(a.net_bps ?? "0", b.net_bps ?? "0");
       if (sortKey === "triangle_id") return dir * a.triangle_id.localeCompare(b.triangle_id);
       const ta = new Date(a.detected_at ?? a.at ?? 0).getTime();
       const tb = new Date(b.detected_at ?? b.at ?? 0).getTime();
@@ -272,7 +272,7 @@ export default function ScannerPage() {
         </div>
         <div aria-live="polite" aria-atomic="false">
           <Table
-            head={["", "Detected", "Triangle", "Net bps", "Profit", "Input"]}
+            head={["", "Detected", "Triangle", "Net bps", "Net profit", "Input"]}
             empty="live events yet (stream fills as opportunities qualify)"
             rows={visibleLive.map((ev) => [
               <PinButton key="pin" id={ev.triangle_id} />,
@@ -280,7 +280,7 @@ export default function ScannerPage() {
               <Link key="t" href={`/triangles/${encodeURIComponent(ev.triangle_id)}`} className="text-[var(--accent)] underline">
                 {ev.triangle_id}
               </Link>,
-              <Badge key="b" tone="ok">{ev.net_bps ?? "—"}</Badge>,
+              <Badge key="b" tone={signTone(ev.net_bps)}>{signedText(ev.net_bps)}</Badge>,
               ev.net_profit ?? "—",
               ev.input ?? "—",
             ])}
@@ -308,7 +308,7 @@ export default function ScannerPage() {
         <Await state={recent} what="recent opportunities">
           {() => (
             <Table
-              head={["", "Detected", "Triangle", "Net bps", "Profit", "Input", "ID"]}
+              head={["", "Detected", "Triangle", "Net bps", "Net profit", "Input", "ID"]}
               empty="qualified opportunities in the recent window"
               rows={visibleRecent.map((o) => [
                 <PinButton key="pin" id={o.triangle_id} />,
@@ -316,7 +316,7 @@ export default function ScannerPage() {
                 <Link key="t" href={`/triangles/${encodeURIComponent(o.triangle_id)}`} className="text-[var(--accent)] underline">
                   {o.triangle_id}
                 </Link>,
-                <Badge key="b" tone="ok">{o.net_bps}</Badge>,
+                <Badge key="b" tone={signTone(o.net_bps)}>{signedText(o.net_bps)}</Badge>,
                 o.profit,
                 o.input,
                 <span key="id" className="text-[var(--text-dim)]">{o.id}</span>,

@@ -257,6 +257,14 @@ func (s *Server) handleScreenerSpreads(w http.ResponseWriter, r *http.Request) {
 	}
 	minLifetime, _ := strconv.ParseInt(q.Get("min_lifetime_s"), 10, 64)
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	// X7: the table's own freshness gate, defaulting to 3 × the poll
+	// interval (the same budget the book's eviction sweep uses). A row
+	// whose legs fail it is ranked after every fresh row and carries
+	// stale=true rather than disappearing.
+	maxLegAge := 3 * time.Duration(snap.Settings.PollIntervalS) * time.Second
+	if v, _ := strconv.ParseInt(q.Get("max_age_ms"), 10, 64); v > 0 {
+		maxLegAge = time.Duration(v) * time.Millisecond
+	}
 
 	f := screener.SpreadFilters{
 		MinSpreadBpsNet:         minSpread,
@@ -269,6 +277,7 @@ func (s *Server) handleScreenerSpreads(w http.ResponseWriter, r *http.Request) {
 		IncludeSuspect:          queryFlag(q.Get("include_suspect")),
 		IncludeUnknownLiquidity: queryFlag(q.Get("include_unknown_liquidity")),
 		MaxPlausibleSpreadBps:   snap.Settings.EffectiveMaxPlausibleSpreadBps(),
+		MaxLegAge:               maxLegAge,
 	}
 	if base := q.Get("base"); base != "" {
 		f.BasesAllow = map[string]bool{base: true}
@@ -340,16 +349,35 @@ func (s *Server) handleScreenerPerpetuals(w http.ResponseWriter, r *http.Request
 	WriteData(w, http.StatusOK, map[string]any{"rows": rows, "generated_at": time.Now().UTC()})
 }
 
+// clampFundingHours bounds the funding-history window to the caller's
+// entitlement retention (audit D9): hours past history.retention_days
+// can only return rows the retention job is about to delete anyway, so
+// an oversized request is trimmed rather than executed.
+func clampFundingHours(hours int, p *Principal) int {
+	if hours <= 0 {
+		hours = 72
+	}
+	if p != nil {
+		if max := 24 * p.Ent().History.RetentionDays; hours > max {
+			hours = max
+		}
+	}
+	return hours
+}
+
+func atoiOrZero(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
 func (s *Server) handleScreenerFunding(w http.ResponseWriter, r *http.Request) {
-	if s.Screener.Funding == nil {
+	if s.Screener == nil || s.Screener.Funding == nil {
 		WriteData(w, http.StatusOK, map[string]any{"series": []screener.FundingSeries{}})
 		return
 	}
 	q := r.URL.Query()
-	hours, err := strconv.Atoi(q.Get("hours"))
-	if err != nil || hours <= 0 {
-		hours = 72
-	}
+	p, _ := PrincipalFrom(r.Context())
+	hours := clampFundingHours(atoiOrZero(q.Get("hours")), &p)
 	venues := parseVenueSet(q.Get("venues"))
 	venueList := make([]screener.Venue, 0, len(venues))
 	for v := range venues {

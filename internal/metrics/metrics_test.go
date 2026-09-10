@@ -49,7 +49,8 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 			return []BreakerStat{{Name: "exchange", Scope: "exchange:binance", State: 0}}
 		},
 		Paper: func() *PaperStats {
-			return &PaperStats{Received: 5, Started: 4, Completed: 3, Failed: 1, Active: 1}
+			return &PaperStats{Received: 5, Started: 4, Completed: 3, Failed: 1, Active: 1,
+				RealizationRatio: 0.62, HasRealization: true}
 		},
 		PnL: func() []AssetPnL {
 			return []AssetPnL{{Asset: "USDT", Realized: 12.5, Fees: 1.25}}
@@ -112,6 +113,7 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		"recorder_frames_dropped_total",
 		"paper_cycles_received_total",
 		"paper_cycles_skipped_total",
+		"paper_realization_ratio",
 		"outbox_queue_depth",
 		"outbox_queue_capacity",
 		"outbox_records_dropped_total",

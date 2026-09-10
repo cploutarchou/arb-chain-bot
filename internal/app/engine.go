@@ -321,6 +321,11 @@ type PaperStatus struct {
 	// failures; any non-zero value paused the engine.
 	RevalidationRejected int64 `json:"revalidation_rejected"`
 	InvariantViolations  int64 `json:"invariant_violations"`
+	// RealizationRatio (audit O9): sum(realized PnL)/sum(expected net
+	// profit) over settled cycles that deployed capital — losses and
+	// partials included. Nil until the first such cycle exists: absence
+	// is reported as absence, never as a confident 0.
+	RealizationRatio *float64 `json:"realization_ratio,omitempty"`
 }
 
 func (e *Engine) Status() EngineStatus {
@@ -351,6 +356,9 @@ func (e *Engine) Status() EngineStatus {
 			Dropped:              e.paperDropped.Load(),
 			RevalidationRejected: ps.RevalidationRejected,
 			InvariantViolations:  ps.InvariantViolations,
+		}
+		if ratio, ok := e.pap.RealizationRatio(); ok {
+			st.Paper.RealizationRatio = &ratio
 		}
 	}
 	return st
@@ -1646,10 +1654,12 @@ func (e *Engine) registerMetricsOnce() {
 					return nil
 				}
 				st := pap.Snapshot()
+				ratio, ok := pap.RealizationRatio()
 				return &metrics.PaperStats{
 					Received: st.Received, Started: st.Started,
 					Completed: st.Completed, Failed: st.Failed, Skipped: st.Skipped,
-					Active: int64(pap.Active()),
+					Active:           int64(pap.Active()),
+					RealizationRatio: ratio, HasRealization: ok,
 				}
 			},
 			PnL: func() []metrics.AssetPnL {

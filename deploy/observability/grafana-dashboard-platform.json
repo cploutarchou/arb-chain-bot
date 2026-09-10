@@ -196,7 +196,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "429 / rate-limited responses (10m) \u2014 pending exporter series",
+      "title": "429 / rate-limited responses (10m)",
       "gridPos": {
         "x": 0,
         "y": 16,
@@ -335,7 +335,7 @@
     {
       "id": 11,
       "type": "stat",
-      "title": "Campaign runs by status (24h) \u2014 pending exporter series",
+      "title": "Campaign runs by status (24h)",
       "gridPos": {
         "x": 0,
         "y": 32,
@@ -570,6 +570,76 @@
         "defaults": {
           "unit": "s"
         }
+      }
+    },
+    {
+      "id": 106,
+      "type": "row",
+      "title": "Screener venues",
+      "gridPos": {
+        "x": 0,
+        "y": 55,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false
+    },
+    {
+      "id": 107,
+      "type": "timeseries",
+      "title": "Screener venue online (1=up)",
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "screener_venue_online",
+          "legendFormat": "{{venue}}",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 108,
+      "type": "timeseries",
+      "title": "Screener poll latency (ms, last)",
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "screener_poll_latency_ms",
+          "legendFormat": "{{venue}}",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
       }
     }
   ]

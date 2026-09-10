@@ -599,3 +599,17 @@ func TestLedgerSnapshotRoundTripAndResumableSession(t *testing.T) {
 		t.Fatalf("ended session offered for resumption: ok=%v err=%v", ok, err)
 	}
 }
+
+// TestPoolStatementTimeout (audit D8): every pool connection carries the
+// statement bound, so a slow console query fails and releases its
+// connection instead of pinning it away from the outbox's writes.
+func TestPoolStatementTimeout(t *testing.T) {
+	s := testStore(t)
+	var timeout string
+	if err := s.Pool.QueryRow(context.Background(), `SHOW statement_timeout`).Scan(&timeout); err != nil {
+		t.Fatal(err)
+	}
+	if timeout != "15s" {
+		t.Fatalf("statement_timeout = %q, want 15s", timeout)
+	}
+}

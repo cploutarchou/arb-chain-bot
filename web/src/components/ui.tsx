@@ -162,7 +162,31 @@ export function Empty({ what }: { what: string }) {
   return <p className="text-sm text-[var(--text-dim)]">No {what}.</p>;
 }
 
-// Await renders the three poll states uniformly.
+// DataAge renders "Updated 4s ago" for a poll's last success, going to
+// a warn tone once the data is older than staleAfterMs (audit F9 — a
+// polled money table must say when its numbers are from). Re-renders on
+// a one-second tick so the age is live without the page polling faster.
+export function DataAge({ lastOkAt, staleAfterMs = 15000 }: { lastOkAt?: number; staleAfterMs?: number }) {
+  "use client";
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!lastOkAt) return null;
+  const ageS = Math.max(0, Math.round((Date.now() - lastOkAt) / 1000));
+  const stale = ageS * 1000 > staleAfterMs;
+  return (
+    <p className={`mt-1 text-[11px] ${stale ? "text-[var(--warn)]" : "text-[var(--text-dim)]"}`}>
+      {stale ? "STALE — " : ""}Updated {ageS}s ago
+    </p>
+  );
+}
+
+// Await renders the three poll states uniformly. A transient error that
+// still holds the last good payload renders that payload under a warn
+// banner instead of blanking the table (audit F9); an error with nothing
+// held (the first load never succeeded) is a plain error.
 export function Await<T>({
   state,
   what,
@@ -173,15 +197,31 @@ export function Await<T>({
   children: (data: T) => ReactNode;
 }) {
   if (state.kind === "loading") return <Loading what={what} />;
-  if (state.kind === "error")
+  if (state.kind === "error") {
+    if (state.data === undefined)
+      return (
+        <ErrorBox
+          message={state.message}
+          status={state.status}
+          code={state.code}
+        />
+      );
     return (
-      <ErrorBox
-        message={state.message}
-        status={state.status}
-        code={state.code}
-      />
+      <div>
+        <p className="mb-2 rounded border border-[var(--warn)] px-3 py-2 text-sm text-[var(--warn)]" role="alert">
+          Refresh failed ({state.message}) — showing the last good data.
+        </p>
+        {children(state.data)}
+        <DataAge lastOkAt={state.lastOkAt} />
+      </div>
     );
-  return <>{children(state.data)}</>;
+  }
+  return (
+    <div>
+      {children(state.data)}
+      <DataAge lastOkAt={state.lastOkAt} />
+    </div>
+  );
 }
 
 // ColumnAlign: per-column alignment for Table/VirtualTable (design-system.md

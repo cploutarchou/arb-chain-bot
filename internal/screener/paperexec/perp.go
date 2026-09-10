@@ -85,10 +85,11 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 	}
 	h := r.DepthHaircut()
 	requested := truncStep(r.PaperSizeQuote.Div(q.Ask), r.StepSize())
-	// Perp top-of-book qty is not part of the screener.Perp contract, so
-	// only the spot leg's depth is haircut (alerts/signals.go notes the
-	// same limitation for liquidity).
-	fillable := truncStep(minDec(requested, h.Mul(q.AskQty)), r.StepSize())
+	// X8: the §1.3 haircut applies to BOTH legs — the spot ask the lane
+	// buys and the perp bid it shorts (a zero perp size means the venue
+	// published none; the guard has already refused such lanes, this is
+	// the second line of defense).
+	fillable := truncStep(minDec(minDec(requested, h.Mul(q.AskQty)), h.Mul(p.BidQty)), r.StepSize())
 	if fillable.LessThan(requested) && !r.PartialAllowed() {
 		x.skip(ctx, s, ev, now, SkipDepth, errf("requested %s fillable %s (h=%s)", requested, fillable, h))
 		return

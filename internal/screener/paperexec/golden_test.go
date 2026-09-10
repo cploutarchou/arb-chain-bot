@@ -224,7 +224,7 @@ func TestSpotThirtyBpsGrossIsNotTradeable(t *testing.T) {
 func setCarryBook(book *screener.Book, at time.Time, spotBid, spotAsk, perpBid, perpAsk, mark, predicted string, nextFunding time.Time) {
 	setSpot(book, screener.VenueBinance, spotBid, "2", spotAsk, "2", at)
 	book.SetPerp(screener.Perp{Venue: screener.VenueBinance, Base: "BTC", Quote: "USDT", Mark: d(mark), Index: d(mark),
-		Bid: d(perpBid), Ask: d(perpAsk), FundingRate: d(predicted), PredictedFundingRate: d(predicted), IntervalH: 8,
+		Bid: d(perpBid), Ask: d(perpAsk), BidQty: d("2"), AskQty: d("2"), FundingRate: d(predicted), PredictedFundingRate: d(predicted), IntervalH: 8,
 		NextFundingAt: nextFunding, At: at})
 }
 

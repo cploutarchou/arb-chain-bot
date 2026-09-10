@@ -9,9 +9,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,14 +42,39 @@ func (s *Store) Ping(ctx context.Context) error { return s.Pool.Ping(ctx) }
 // because their opportunity row never landed (see InsertCycle).
 func (s *Store) UnlinkedCycles() int64 { return s.unlinkedCycles.Load() }
 
+// Pool shape and statement bound (audit D8). The outbox and the API
+// share this pool, so a connection pinned by a slow statement starves
+// the hot path's single-row writes. Every connection therefore carries
+// a statement_timeout well above any legitimate OLTP latency (the
+// outbox writes single rows; retention deletes are LIMIT-batched;
+// migrations run in the external migrate container, never this pool),
+// and MinConns keeps a warm floor so bursts on the API side cannot
+// leave the outbox waiting on connection setup.
+const (
+	poolMaxConns         = 8
+	poolMinConns         = 2
+	poolStatementTimeout = 15 * time.Second
+	poolMaxConnLifetime  = time.Hour
+)
+
 // Open connects and verifies the schema is reachable.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("storage: parse dsn: %w", err)
 	}
-	cfg.MaxConns = 8
-	cfg.MaxConnLifetime = time.Hour
+	cfg.MaxConns = poolMaxConns
+	cfg.MinConns = poolMinConns
+	cfg.MaxConnLifetime = poolMaxConnLifetime
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		// SET takes no bind parameters; set_config is the parameterised
+		// form (false = session scope, exactly like SET).
+		if _, err := conn.Exec(ctx, "SELECT set_config('statement_timeout', $1, false)",
+			strconv.FormatInt(poolStatementTimeout.Milliseconds(), 10)); err != nil {
+			return fmt.Errorf("storage: set statement_timeout: %w", err)
+		}
+		return nil
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("storage: connect: %w", err)

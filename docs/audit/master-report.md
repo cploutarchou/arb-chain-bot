@@ -348,11 +348,11 @@ AS IT NOW STANDS; the body of this document above remains the audit of
 | Market data | 7 | 9 | M1–M5 fixed (backoff reset, clock manager, replay staleness, crossed-book corruption, session-scoped resyncs); M6/M7 hygiene remain |
 | Execution simulation | 5 | 8 | F4 revalidation, F5 fill-time health, F7 ABORTED + staged shutdown, F10/F11/F12/F14/F16 fixed; no unwind path (documented exposure-mark model), F17 dead code remains |
 | Risk controls | 3 | 8 | P1-1 breakers trip for real (feed, persistence, loss, drawdown, slippage, inconsistency, metadata), P1-2 limits fed, P1-5 invariants halt the engine, operator acknowledgement endpoint + Risk Center control; pre-trade slippage stays post-hoc by design |
-| Persistence & database | 5 | 7 | P0-3 no silent loss (counted drops/refusals/unlinks, persistence breaker), P1-6 ledger resume, P1-18 retention, P1-19 immutability; D7–D10 (indexes, CHECKs, pool sizing) remain |
-| Security | 6 | 7 | S1–S4 (+ the CreateUser follow-up), S6, S9 fixed; S5 (VIEWER breadth), S8, S10 (consent), S11 (WS topics), S12–S15 remain |
-| Observability | 5 | 7 | O1/O2/O3/O5/O6/O8 closed — drop/refusal counters, live breaker metric, latency histograms, outcome/reason labels, queue depths; O7/O9/O10/O11 remain |
+| Persistence & database | 5 | 8 | P0-3 no silent loss (counted drops/refusals/unlinks, persistence breaker), P1-6 ledger resume, P1-18 retention, P1-19 immutability; D7–D10 closed on the follow-up branch (console-query indexes, pool statement_timeout + warm floor, retention-clamped and LIMIT-bounded funding query, CHECK bounds on financial columns) |
+| Security | 6 | 9 | S1–S4 (+ the CreateUser follow-up), S6, S9 fixed; S5/S8/S10/S11 closed on the remediation tail; S12 (Argon2 clamp + rehash-on-login), S13 (HTTP server envelope) on the first follow-up branch; S14 (SHA-pinned actions, govulncheck pin, npm audit gates, digest-pinned images, injection-safe dispatch input, both images scanned) and S15 (markdown allow-list sanitiser + shipped header set) on the all-pending branch — the S-series is closed |
+| Observability | 5 | 8 | O1/O2/O3/O5/O6/O8 closed — drop/refusal counters, live breaker metric, latency histograms, outcome/reason labels, queue depths; O7 (slippage panel + alert), O9 (realization ratio) and O10 (venue-health panels + alerts) closed on the all-pending branch; O11 (spans) and the P3 cluster remain |
 | Infra & delivery | 5 | 6 | P1-16 compose exposure, P1-17 canary guards, P1-18 worker, P1-19 done; P1-15 backup automation is an open operator decision (framed in `docs/decisions/`), I5–I15 partially |
-| Scanner Suite | 6 | 7 | P1-20/21/22 fixed (perp collision, lane cap, data-age hold with close reasons); X4/X5/X7/X8/X9 and the P3 cluster remain |
+| Scanner Suite | 6 | 8 | P1-20/21/22 fixed (perp collision, lane cap, data-age hold with close reasons); X4 (per-venue funding semantics), X5 (restart closes open rows), X7 (book eviction + max_age_ms) and X8 (perp leg depth, two-leg haircut) closed on the all-pending branch; X6/X9-X11 and the P3 cluster remain |
 | Console & UX | 5 | 7 | F1–F8 all done (mode banner, one-click pause, honest labels, outcome vocabulary, five-second overview, live-cycle monitor, error states, exact decimals); F9–F20 (P2/P3) remain |
 | Testing | 6 | 8 | 681 → 841 Go test functions (+160), 47 e2e tests (was 43, two of them failing on the audit host); every fix carries its test; the known gaps (frontend unit layer, down-migration replay, npm audit gate, fuzz) remain |
 
@@ -390,11 +390,11 @@ type-to-confirm) and a Risk Center control.
 4. **Two paper stacks remain** (`internal/simulation` and the
    screener's `paperexec`, F17/T10): the screener's fill model can drift
    from the engine's exact one.
-5. **Security remainder:** VIEWER breadth on platform surfaces (S5),
-   promoted-ADMIN writes to provider-group secrets (S8), member-add
-   without consent (S10), unauthorised WebSocket topics (S11), Argon2
-   clamp and HTTP server timeouts (S12/S13), unpinned CI and `npm
-   audit` highs (S14).
+5. **Security remainder:** none of the audited S-series findings remain
+   (S14/S15 closed on the all-pending branch: pinned toolchain, audit
+   gates, digest-pinned images, sanitised markdown, shipped headers).
+   Residual risk is the ordinary one — the pinned SHAs and digests age
+   and need deliberate rotation.
 6. **Operational polish:** the reservation mutex and `AnyOpen`'s
    per-evaluation allocation still sit on the evaluator path
    (performance plan items 2–3), `internal/api`'s race suite takes
@@ -492,6 +492,37 @@ golangci-lint clean, `go test -race ./...` green, the storage suite
 green against a disposable PostgreSQL 16 (000001–000021), web
 lint/typecheck/build green, Playwright 47/47.
 
+## FOLLOW-UP ADDENDUM: P3 hardening (S12/S13, D7–D10)
+
+Branch `claude/p3-hardening-s12-s13-d7-d10` closes six more findings.
+S12: `VerifyPassword` validates and clamps the Argon2id parameters it
+parses from a stored hash (memory ≤ 256 MiB, iterations ≤ 10,
+parallelism ≤ 8, salt and key length bounded) so a tampered
+`users.password_hash` row fails closed instead of becoming an
+allocation bomb, and rows still carrying weaker-than-current parameters
+are upgraded transparently on the next successful login. S13: the API
+listener bounds every phase a client can stretch (read 30 s, write
+60 s, idle 120 s, 64 KiB headers), with the construction asserted by a
+test — the WebSocket route hijacks its connection, so only its
+handshake is bounded. D7–D10: the console's session-cycle and
+symbol-filtered order queries get their indexes (migration 000022);
+every pool connection carries `statement_timeout = 15s` with a
+`MinConns` warm floor reserving outbox capacity; the funding-history
+endpoint clamps its window to the caller's entitlement retention and
+its queries carry a row LIMIT; and migration 000023 puts CHECK bounds
+on quantities, prices, fees and balances — zero stays legitimate where
+the writers emit it (an unfilled leg persists its zero price/fee),
+PnL and slippage stay unconstrained by design, and a DB-backed test
+persists a negative-PnL cycle while refusing a negative fill price on
+the same run. The down-migrations for 000022/000023 were exercised and
+re-applied cleanly on a disposable PostgreSQL 16.
+
+Ratings updated: **Persistence & database 7 → 8** (D7–D10 closed),
+Security stays 8 (S12/S13 were inside its P3 remainder; S14/S15 are
+what is left of it). Verification: gofmt/vet/golangci-lint clean,
+`go test -race ./...` green, the storage suite green against a
+disposable PostgreSQL 16 (000001–000023).
+
 Fresh campaign evidence was produced on the remediated engine the same
 day (`docs/campaigns/01M25GET9C8XVKD9358JT15BNC/`): a 5 m 15 s live
 Binance recording, 24 scenarios, **zero qualified opportunities** — the
@@ -503,4 +534,62 @@ Of the verdict's original conditions, two remain, neither an engineering
 gap: a campaign showing a positive net edge (the market has not
 provided one), and the production-execution-gate review (legal,
 compliance, insurance) recorded by the operator. The verdict stays
+**NOT READY FOR LIVE TRADING**.
+
+## FOLLOW-UP ADDENDUM: the all-pending pass
+
+Branch `claude/all-pending-hardening` (one branch carrying both
+follow-up passes — the S12/S13/D7-D10 cluster earlier in this file and
+this one) works through the remaining P2/P3 hardening list in coherent
+commits, one per finding with its test:
+
+- **S14/S15** close the security series: SHA-pinned actions (tags kept
+  in comments), govulncheck v1.8.0, `npm audit --audit-level=high` in
+  the console and site jobs (clean after pinning postcss 8.4.31 —
+  vulnerable to four advisories through next 15.5 — onto the fixed
+  8.5.26 the tree already carried), the deploy dispatch input crossing
+  through the environment with a shape check, Trivy scanning both
+  images (the previous trivy-action tag no longer resolves upstream),
+  digest-pinned base images, a sanitize-html allow-list over the
+  marketing site's markdown with a node:test suite, and the header set
+  shipped from `deploy/site/`.
+- **X4/X5/X7/X8** close the tractable scanner findings: per-venue
+  funding-rate semantics (BitMart, Crypto.com and Bitfinex report the
+  previous period's settled rate, and their settlements are now
+  attributed to the newly observed rate at the advancing timestamp),
+  restart recovery closing open alert rows as `restart`, book eviction
+  at 3 × poll with `max_age_ms` on the spreads route, and perp leg
+  depth constraining carry/harvest lanes on both legs.
+- **O7/O9/O10** close the paneled-observability gap: the realization
+  ratio (`sum(RealizedPnL)/sum(NetProfit)` over settled deployed
+  cycles, decimal until exposition, absent until the first such cycle),
+  the realized-slippage p50/p95 panel with its alert, screener
+  venue-health panels with offline/slow alerts, and O12's stale
+  PENDING-EXPORTER header corrected.
+- **T10's arithmetic half**: the screener's paper sizing quantizes
+  through `exchange.InstrumentRules.QuantizeQty` with a differential
+  test; the second filter parser and the quote-only fee model are
+  scoped into F17's two-paper-stacks consolidation.
+- **F9/F14/F18** land the console honesty pass: sign-aware Scanner bps
+  with an exact decimal-string comparator, polled tables that keep the
+  last good data under a transient error with a live
+  "Updated Ns ago / STALE" caption, book ages carrying the STALE word
+  at the 30 s feed threshold, and the duplicated format/tone helpers
+  consolidated.
+- **D11** needed no change — the option-B drill rewrite already removed
+  the `restore_drills` write and made the runbook example a live
+  `schema_migrations` read.
+
+Verification for this addendum: gofmt/vet/golangci-lint clean,
+`go test -race ./...` green, the storage suite green against a
+disposable PostgreSQL 16 (000001–000023, up and down round-tripped),
+web lint/typecheck/build green, site lint/typecheck/copy-lint/build
+and the sanitiser tests green. The Playwright suite could not run on
+this workstation (no browsers installed) — CI runs it.
+
+Ratings updated: **Security 8 → 9** (the S-series is closed),
+**Observability 7 → 8**, **Scanner Suite 7 → 8**. What remains of the
+hardening list: X6, X9, X10, X11, O11 (+O13-O15), F10-F13, F15-F17,
+F19, T12, and the T10/F17 consolidation — plus the two verdict
+conditions that were never engineering gaps. The verdict stays
 **NOT READY FOR LIVE TRADING**.

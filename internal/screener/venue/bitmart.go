@@ -325,6 +325,12 @@ func (c *bitmartCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 
 // Networks: public platform-level deposit/withdraw flags per currency
 // (research §4) — no chain granularity is published.
+// FundingIsPreviousPeriod implements PreviousPeriodFundingReporter
+// (audit X4): rate_value is documented "Funding rate of the previous
+// period", so the rate that settled when funding_time advances is the
+// newly observed one.
+func (c *bitmartCollector) FundingIsPreviousPeriod() bool { return true }
+
 func (c *bitmartCollector) Networks(ctx context.Context) (map[string]screener.NetworkStatus, error) {
 	var env bitmartEnvelope[struct {
 		Currencies []struct {

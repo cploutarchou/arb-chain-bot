@@ -202,6 +202,12 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			ledger = store.ScreenerPaper()
 		}
 		evaluator := alerts.New(screenerSvc, notify.Notify, log)
+		// X5: alert rows left open by a previous process can never be
+		// closed honestly by this one (their lane state died with it) —
+		// close them as "restart" before the first tick.
+		recCtx, recCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		evaluator.Recover(recCtx)
+		recCancel()
 		// T-082: alerts.per_day + alerts.channels are enforced at open
 		// time per the rule's organisation (nil without tenancy).
 		evaluator.SetEntitle(tenant.alertEntitle())
@@ -1233,13 +1239,14 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*a
 	var users auth.UserStore
 	var sessions auth.SessionStore
 	var admin auth.AdminStore
+	var hasher auth.HashStore
 
 	if store != nil {
 		as := store.Auth()
-		users, sessions, admin = as, as, as
+		users, sessions, admin, hasher = as, as, as, as
 	} else {
 		mem := auth.NewMemoryStore()
-		users, sessions, admin = mem, mem, mem
+		users, sessions, admin, hasher = mem, mem, mem, mem
 	}
 	bootstrapAdmin(cfg, log, admin)
 
@@ -1252,6 +1259,9 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*a
 		IPThrottle: auth.NewThrottle(20, time.Minute, 10*time.Minute),
 		TTL:        12 * time.Hour,
 		Now:        time.Now,
+		// S12: successful logins upgrade rows still hashed with weaker
+		// Argon2id parameters than the current ones.
+		HashStore: hasher,
 	}
 	adminSvc := &auth.AdminService{
 		Store: admin, Sessions: sessions, Now: time.Now, IDGen: newULID,

@@ -241,16 +241,39 @@ func (s *Server) mode() string {
 	return string(s.cfg.Mode)
 }
 
+// HTTP server envelope (audit S13). Every phase a client can stretch is
+// bounded: headers 5 s, body read 30 s, response write 60 s, keep-alive
+// idle 120 s, headers 64 KiB. The WebSocket route upgrades via
+// connection hijack, so these timeouts govern only its handshake and
+// never cut an established socket; request bodies are additionally
+// bounded per handler.
+const (
+	httpReadHeaderTimeout = 5 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 60 * time.Second
+	httpIdleTimeout       = 120 * time.Second
+	httpMaxHeaderBytes    = 1 << 16
+)
+
+// newHTTPServer builds the API listener with the S13 envelope applied.
+func (s *Server) newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              s.cfg.HTTPAddr,
+		Handler:           s.withRequestLog(handler),
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    httpMaxHeaderBytes,
+	}
+}
+
 // Run serves until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	s.routes(mux)
 
-	srv := &http.Server{
-		Addr:              s.cfg.HTTPAddr,
-		Handler:           s.withRequestLog(mux),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	srv := s.newHTTPServer(mux)
 
 	errCh := make(chan error, 1)
 	go func() {
