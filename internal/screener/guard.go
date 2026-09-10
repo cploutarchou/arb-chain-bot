@@ -119,10 +119,11 @@ func GuardLane(a, b Quote, peers map[Venue]Quote, maxPlausibleBps decimal.Decima
 // GuardSpotPerp applies the pairwise plausibility test to a same-venue
 // spot/perp pair (carry, funding harvest): a perp bid more than
 // maxPlausibleBps away from the spot ask is not a basis, it is a
-// different contract (or a broken feed). Liquidity is the spot leg's
-// only (Perp carries no top-of-book size, see alerts.perpSignals).
+// different contract (or a broken feed). Liquidity is unknown when
+// either leg publishes no top-of-book size (audit X8) — the lane's
+// notional cannot be bounded and must not be acted on.
 func GuardSpotPerp(spot Quote, perp Perp, maxPlausibleBps decimal.Decimal) LaneGuard {
-	g := LaneGuard{LiquidityUnknown: spot.LiquidityUnknown}
+	g := LaneGuard{LiquidityUnknown: spot.LiquidityUnknown || !perp.BidQty.IsPositive() || !perp.AskQty.IsPositive()}
 	if !maxPlausibleBps.IsPositive() {
 		maxPlausibleBps = DefaultMaxPlausibleSpreadBps
 	}

@@ -227,7 +227,7 @@ func setCarry(book *screener.Book, at time.Time) {
 	book.SetQuote(screener.Quote{Venue: screener.VenueBinance, Base: "BTC", Quote: "USDT",
 		Bid: d("49998"), BidQty: d("2"), Ask: d("50000"), AskQty: d("2"), At: at})
 	book.SetPerp(screener.Perp{Venue: screener.VenueBinance, Base: "BTC", Quote: "USDT",
-		Mark: d("50050"), Index: d("49999"), Bid: d("50100"), Ask: d("50102"),
+		Mark: d("50050"), Index: d("49999"), Bid: d("50100"), Ask: d("50102"), BidQty: d("2"), AskQty: d("2"),
 		FundingRate: d("0.0001"), PredictedFundingRate: d("0.0001"), IntervalH: 8,
 		NextFundingAt: at.Add(4 * time.Hour), At: at})
 }

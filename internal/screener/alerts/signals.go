@@ -380,11 +380,15 @@ func perpSignals(ctx context.Context, in Inputs, r screener.Rule, now time.Time)
 			s.BasisExitBps = p.Ask.Sub(spot.Bid).Div(spot.Bid).Mul(decTenK)
 		}
 		s.FeesRTBps = fSpot.Mul(decTwo).Add(fPerp.Mul(decTwo))
-		// screener.Perp (the collector contract, types.go) carries no
-		// top-of-book quantity, so liquidity is the spot leg's ask
-		// notional only; the perp leg's depth is unknown and reported
-		// as such (the executor cannot apply the §1.3 haircut to it).
+		// X8: the lane is long spot and short the perp, so its notional
+		// bound is the tighter of the two legs' depth — the spot ask
+		// notional and the perp bid notional. A perp that publishes no
+		// size leaves the bound unknown (LIQUIDITY_UNKNOWN via the
+		// guard) rather than pretending the spot leg alone suffices.
 		s.LiquidityQuote = spot.Ask.Mul(spot.AskQty)
+		if perpBidNotional := p.Bid.Mul(p.BidQty); perpBidNotional.IsPositive() && perpBidNotional.LessThan(s.LiquidityQuote) {
+			s.LiquidityQuote = perpBidNotional
+		}
 		g := screener.GuardSpotPerp(spot, p, in.MaxPlausibleSpreadBps)
 		s.LiquidityUnknown, s.Suspect, s.SuspectReason = g.LiquidityUnknown, g.Suspect, g.SuspectReason
 

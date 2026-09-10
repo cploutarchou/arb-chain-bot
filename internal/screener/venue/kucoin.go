@@ -289,6 +289,7 @@ func (c *kucoinCollector) Perps(ctx context.Context) ([]screener.Perp, error) {
 		}
 		out = append(out, screener.Perp{Venue: screener.VenueKuCoin, Base: in.Base, Quote: in.Quote,
 			Mark: ct.MarkPrice.Decimal, Index: ct.IndexPrice.Decimal, Bid: t.BestBidPrice.Decimal, Ask: t.BestAskPrice.Decimal,
+			BidQty: t.BestBidSize.Decimal, AskQty: t.BestAskSize.Decimal,
 			FundingRate: ct.FundingFeeRate.Decimal, PredictedFundingRate: ct.PredictedFundingFeeRate.Decimal,
 			IntervalH: h, NextFundingAt: next, At: at})
 	}

@@ -123,6 +123,14 @@ type Perp struct {
 	Index decimal.Decimal
 	Bid   decimal.Decimal
 	Ask   decimal.Decimal
+	// BidQty/AskQty are the perp's top-of-book sizes (audit X8): a lane
+	// that is long spot and short the perp is constrained by BOTH legs'
+	// depth, so the executor haircuts against the perp bid as well.
+	// Zero when the venue publishes no size — the guard then reports
+	// LIQUIDITY_UNKNOWN for the lane instead of pretending a bound
+	// exists.
+	BidQty decimal.Decimal
+	AskQty decimal.Decimal
 	// FundingRate is the current (last-settled or currently-accruing,
 	// venue-dependent) per-interval rate; PredictedFundingRate is the
 	// venue's forecast for the NEXT interval where published (zero value
