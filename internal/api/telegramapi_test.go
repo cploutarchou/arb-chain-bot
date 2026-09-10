@@ -41,6 +41,8 @@ func TestTelegramStatusRoute(t *testing.T) {
 
 	// Configured: the route serves exactly what the provider returns —
 	// allowlist as ids only, no token field exists on the type at all.
+	// S5: the allowlist (operator chat ids) is the operator's — a VIEWER
+	// gets the status without it, the platform admin with it.
 	lastPoll := time.Unix(1_700_000_000, 0).UTC()
 	s.Telegram = func() TelegramStatusView {
 		return TelegramStatusView{
@@ -59,8 +61,26 @@ func TestTelegramStatusRoute(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}
+	if !env.Data.Enabled || len(env.Data.Allowlist) != 0 || env.Data.BotUsername != "arb_ops_bot" {
+		t.Fatalf("viewer sees a stripped status = %+v", env.Data)
+	}
+	if strings.Contains(rec.Body.String(), "111") || strings.Contains(rec.Body.String(), "222") {
+		t.Fatalf("allowlist leaked to a viewer: %s", rec.Body.String())
+	}
+
+	adminCookie, _ := login(t, mux, "admin@example.test", "admin-pw")
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/telegram/status", nil)
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin telegram GET = %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
 	if !env.Data.Enabled || len(env.Data.Allowlist) != 2 || env.Data.BotUsername != "arb_ops_bot" {
-		t.Fatalf("configured status = %+v", env.Data)
+		t.Fatalf("admin status = %+v", env.Data)
 	}
 	if strings.Contains(rec.Body.String(), "token") {
 		t.Fatalf("token-related field leaked into response: %s", rec.Body.String())

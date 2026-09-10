@@ -361,6 +361,10 @@ func (s *MemoryStore) UpdateUserRole(_ context.Context, id string, role Role) er
 				return ErrLastAdmin
 			}
 			u.Role = role
+			// S8: platform_admin follows the console role on every
+			// change, matching CreateUser's insert-time rule (see the
+			// pgx store's UpdateUserRole for the rationale).
+			u.PlatformAdmin = role == RoleAdmin
 			s.users[email] = u
 			return nil
 		}

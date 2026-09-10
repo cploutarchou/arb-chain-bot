@@ -41,10 +41,12 @@ func extractParentVersion(body []byte) (int64, []byte, error) {
 }
 
 // configRoutes serve the versioned strategy configuration. Reads need
-// PermViewSystem; writes map each changed top-level section to its RBAC
-// permission (risk → PermRiskConfig, everything else → PermScannerConfig)
-// so an OPERATOR tunes strategy within bounds while risk limits stay
-// ADMIN-only, per the matrix.
+// PermScannerConfig (audit S5: you read what you can edit — an OPERATOR
+// holds it, a VIEWER does not, so the tuning surface is no longer
+// enumerable by a read-only seat); writes map each changed top-level
+// section to its RBAC permission (risk → PermRiskConfig, everything
+// else → PermScannerConfig) so an OPERATOR tunes strategy within bounds
+// while risk limits stay ADMIN-only, per the matrix.
 func (s *Server) configRoutes(mux *http.ServeMux) {
 	gate := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -55,10 +57,10 @@ func (s *Server) configRoutes(mux *http.ServeMux) {
 			next(w, r)
 		}
 	}
-	mux.HandleFunc("GET /api/v1/config", s.requirePerm(auth.PermViewSystem, gate(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/config", s.requirePerm(auth.PermScannerConfig, gate(func(w http.ResponseWriter, r *http.Request) {
 		WriteData(w, http.StatusOK, s.Strategy.Current())
 	})))
-	mux.HandleFunc("GET /api/v1/config/version/{n}", s.requirePerm(auth.PermViewSystem, gate(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/config/version/{n}", s.requirePerm(auth.PermScannerConfig, gate(func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.PathValue("n"), 10, 64)
 		if err != nil || n <= 0 {
 			WriteError(w, http.StatusBadRequest, "bad_version", "version must be a positive integer", correlationID(r))
@@ -71,7 +73,7 @@ func (s *Server) configRoutes(mux *http.ServeMux) {
 		}
 		WriteData(w, http.StatusOK, snap)
 	})))
-	mux.HandleFunc("GET /api/v1/config/versions", s.requirePerm(auth.PermViewSystem, gate(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/config/versions", s.requirePerm(auth.PermScannerConfig, gate(func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		list, err := s.Strategy.List(r.Context(), limit)
 		if err != nil {

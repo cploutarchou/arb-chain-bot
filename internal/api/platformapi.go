@@ -83,15 +83,21 @@ func (s *Server) platformRoutes(mux *http.ServeMux) {
 	// providers — three lists, one shape, one source each — plus the
 	// secrets-vault status and the field_timing map. Static except for
 	// the vault status; not behind `gate` for the same reason as venues.
+	// The vault status (key fingerprint) is operator-only: it is stripped
+	// for non-platform-admins below (audit S5) rather than gating the
+	// whole route, because the capability tables themselves are what the
+	// console's tenant-facing surfaces render from.
 	mux.HandleFunc("GET /api/v1/platform/capabilities", s.requirePerm(auth.PermViewSystem, s.handlePlatformCapabilities))
-	mux.HandleFunc("GET /api/v1/platform/settings", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformGet)))
-	mux.HandleFunc("GET /api/v1/platform/settings/versions", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformVersions)))
-	mux.HandleFunc("GET /api/v1/platform/settings/version/{n}", s.requirePerm(auth.PermViewSystem, gate(s.handlePlatformVersion)))
-	// P3-8: preview is read-only (a dry-run diff, never a write) but was
-	// gated on requireAuth alone — any authenticated session, regardless
-	// of role, could probe it. Real RBAC needs at least view:system, same
-	// as the GET routes above.
-	mux.HandleFunc("POST /api/v1/platform/settings/preview", s.requirePerm(auth.PermViewSystem, s.requireCSRF(gate(s.handlePlatformPreview))))
+	// S5: the settings DOCUMENT (mode, venues, fees, paper balances,
+	// telegram allowlist, AI provider selection) is the deployment's own
+	// configuration — operator staff only (platform_admin), not
+	// something a VIEWER or a tenant ADMIN can enumerate. Same for the
+	// version history and the preview dry-run (it accepts an arbitrary
+	// document; same power as apply minus persistence).
+	mux.HandleFunc("GET /api/v1/platform/settings", s.requirePlatformAdmin(gate(s.handlePlatformGet)))
+	mux.HandleFunc("GET /api/v1/platform/settings/versions", s.requirePlatformAdmin(gate(s.handlePlatformVersions)))
+	mux.HandleFunc("GET /api/v1/platform/settings/version/{n}", s.requirePlatformAdmin(gate(s.handlePlatformVersion)))
+	mux.HandleFunc("POST /api/v1/platform/settings/preview", s.requirePlatformAdmin(s.requireCSRF(gate(s.handlePlatformPreview))))
 	// Platform settings and engine restarts are system routes: platform
 	// operator only (T-081), on top of the section-level RBAC below.
 	mux.HandleFunc("POST /api/v1/platform/settings", s.requirePlatformAdmin(s.requireCSRF(gate(s.handlePlatformApply))))
@@ -110,7 +116,7 @@ func (s *Server) platformRoutes(mux *http.ServeMux) {
 	// table; they serve the identical status payload.
 	mux.HandleFunc("GET /api/v1/engine/status", s.requirePerm(auth.PermViewSystem, restartGate(s.handleEngineStatus)))
 	mux.HandleFunc("GET /api/v1/engine/restart", s.requirePerm(auth.PermViewSystem, restartGate(s.handleEngineStatus)))
-	mux.HandleFunc("POST /api/v1/engine/restart", s.requirePerm(auth.PermSystemConfig, s.requireOnlyPlatformAdmin(s.requireCSRF(restartGate(s.handleEngineRestartPost)))))
+	mux.HandleFunc("POST /api/v1/engine/restart", s.requirePerm(auth.PermSystemConfig, s.requirePlatformAdmin(s.requireCSRF(restartGate(s.handleEngineRestartPost)))))
 }
 
 func (s *Server) handlePlatformGet(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +137,11 @@ func (s *Server) handlePlatformCapabilities(w http.ResponseWriter, r *http.Reque
 		"venues":       platform.VenueTable(),
 		"ai_providers": platform.AIProviderTable(),
 		"log_levels":   platform.LogLevels,
-		"secrets":      s.secretsVaultStatus(),
+	}
+	// S5: the vault status (configured, key id, reason) is the
+	// operator's; everyone else gets the tables without it.
+	if p, ok := PrincipalFrom(r.Context()); ok && p.PlatformAdmin {
+		out["secrets"] = s.secretsVaultStatus()
 	}
 	if s.Platform != nil {
 		snap := s.Platform.Current()

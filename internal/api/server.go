@@ -351,9 +351,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.apiKeyRoutes(mux)
 	s.billingRoutes(mux)
 	if s.MetricsHandler != nil {
-		// Same-mux dev convenience stays behind RBAC (audit S-003):
-		// metric names and label values map the platform's internals.
-		mux.HandleFunc("GET /metrics", s.requirePerm(auth.PermViewSystem, func(w http.ResponseWriter, r *http.Request) {
+		// Same-mux dev convenience stays operator-only (audit S5:
+		// metric names and label values map the platform's internals,
+		// including per-tenant scanner activity — not a VIEWER surface).
+		// Production sets ARB_METRICS_ADDR for a private port instead.
+		mux.HandleFunc("GET /metrics", s.requirePlatformAdmin(func(w http.ResponseWriter, r *http.Request) {
 			s.MetricsHandler.ServeHTTP(w, r)
 		}))
 	}
