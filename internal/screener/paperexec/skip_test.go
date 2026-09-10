@@ -1,6 +1,8 @@
 package paperexec
 
 import (
+	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
+
 	"context"
 	"testing"
 	"time"
@@ -415,5 +417,34 @@ func TestPerpLegDepthBoundsTheFill(t *testing.T) {
 	}
 	if ex := h.execs(r.ID); len(ex) == 0 {
 		t.Fatal("no executions recorded")
+	}
+}
+
+// TestTruncStepMatchesCanonicalQuantize (audit T10): the screener's
+// quantity quantization IS the engine's — exchange.QuantizeQty's exact
+// QuoRem, not a 28-digit Div-Floor-Mul that can drift at precision
+// edges. The differential grid must hold for every (q, step) the
+// executor can produce; any divergence would mean the two paper stacks
+// fill different sizes for the same rule.
+func TestTruncStepMatchesCanonicalQuantize(t *testing.T) {
+	qs := []string{"0", "0.0000001", "0.3", "1", "1.7", "2.9999999", "12345.67890123456789012345678",
+		"0.9999999999999999999999999999", "3.0000000000000000000000000001"}
+	steps := []string{"0.00000001", "0.001", "0.01", "1", "5", "0.3000000000000000000000000001"}
+	for _, qs_ := range qs {
+		q := dec(qs_)
+		for _, ss := range steps {
+			step := dec(ss)
+			want, err := exchange.InstrumentRules{QtyMode: exchange.PrecisionStep, QtyStep: step}.QuantizeQty(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := truncStep(q, step); !got.Equal(want) {
+				t.Fatalf("truncStep(%s, %s) = %s, canonical = %s", q, step, got, want)
+			}
+		}
+	}
+	// A non-positive step leaves the quantity untouched.
+	if got := truncStep(dec("1.2345"), dec("0")); !got.Equal(dec("1.2345")) {
+		t.Fatalf("zero step: %s", got)
 	}
 }

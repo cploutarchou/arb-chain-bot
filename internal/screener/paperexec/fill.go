@@ -8,6 +8,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/simulation"
 )
@@ -110,12 +111,22 @@ func (x *Executor) simulateLeg(ctx context.Context, key string, r legReq, slipBp
 	return f
 }
 
-// truncStep truncates (never rounds) q to the step (§0 Rounding).
+// truncStep quantizes q down to the instrument's step through the ONE
+// canonical helper (audit T10): exchange.InstrumentRules.QuantizeQty,
+// whose QuoRem is exact, rather than a local Div-Floor-Mul on a
+// 28-digit division result that can drift at precision edges. A zero or
+// unset step leaves the quantity as is (the rule's default step is
+// positive, but a rule may explicitly widen it).
 func truncStep(q, step decimal.Decimal) decimal.Decimal {
 	if !step.IsPositive() {
 		return q
 	}
-	return q.Div(step).Floor().Mul(step)
+	rules := exchange.InstrumentRules{QtyMode: exchange.PrecisionStep, QtyStep: step}
+	out, err := rules.QuantizeQty(q)
+	if err != nil {
+		return q
+	}
+	return out
 }
 
 // realisedSlipBps is §1.3's after-the-fact measure: (next − quote)/quote
