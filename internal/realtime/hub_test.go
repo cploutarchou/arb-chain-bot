@@ -179,7 +179,7 @@ func TestHandleClientOpAuthorization(t *testing.T) {
 	sawScanner := false
 	healthRefused, unknownRefused := false, false
 	deadline := time.After(2 * time.Second)
-	for !(sawScanner && healthRefused && unknownRefused) {
+	for !sawScanner || !healthRefused || !unknownRefused {
 		select {
 		case <-deadline:
 			t.Fatalf("frames incomplete: scanner=%v healthRefused=%v unknownRefused=%v", sawScanner, healthRefused, unknownRefused)
