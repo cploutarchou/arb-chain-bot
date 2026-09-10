@@ -15,7 +15,7 @@ import (
 // so this constant is the only thing arbd can compare the database
 // against. TestLatestMigrationVersionMatchesFiles fails when a new
 // migration lands without bumping it.
-const LatestMigrationVersion int64 = 21
+const LatestMigrationVersion int64 = 23
 
 // MigrationsPending is the boot-time db_migrations_pending input: 1 when
 // golang-migrate's schema_migrations row is behind
