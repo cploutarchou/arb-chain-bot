@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
+
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -114,5 +116,28 @@ func TestScreenerSettingsMaxPlausibleSpreadBpsValidated(t *testing.T) {
 	}
 	if !svc.Current().Settings.MaxPlausibleSpreadBps.Equal(decimal.NewFromInt(5000)) {
 		t.Fatal("hot value not applied")
+	}
+}
+
+// TestScreenerFundingHoursClampedToRetention (audit D9): the funding
+// window never exceeds the caller's history.retention_days — an
+// oversized request is trimmed instead of becoming an unbounded scan.
+func TestScreenerFundingHoursClampedToRetention(t *testing.T) {
+	watch := &Principal{} // no entitlements/org: falls back to Watch (1 day)
+	if got := clampFundingHours(2000, watch); got != 24 {
+		t.Fatalf("watch clamp = %d, want 24", got)
+	}
+	if got := clampFundingHours(0, watch); got != 24 {
+		t.Fatalf("default = %d, want the 1-day ceiling", got)
+	}
+	if got := clampFundingHours(-5, nil); got != 72 {
+		t.Fatalf("negative = %d, want default 72", got)
+	}
+	inst := &Principal{OrgID: tenancy.PlatformOrgID} // → Institution entitlements
+	if got := clampFundingHours(2000, inst); got != 2000 {
+		t.Fatalf("institution clamp = %d, want 2000 (under the ceiling)", got)
+	}
+	if got := clampFundingHours(500000, inst); got != 24*1095 {
+		t.Fatalf("institution ceiling = %d", got)
 	}
 }

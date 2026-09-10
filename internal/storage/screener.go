@@ -408,6 +408,14 @@ func (c *ScreenerFunding) UpsertFunding(ctx context.Context, venue screener.Venu
 	return err
 }
 
+// fundingRowLimit bounds every ListFunding branch (audit D9): the query
+// shares the API/outbox pool, so an unbounded scan of funding_history
+// could pin connections the hot path needs. The bound sits far above
+// any window the console requests (the default 72 h across every venue
+// and base is thousands of rows); the primary key's (venue, base, at)
+// order lets the index stop at the limit instead of sorting.
+const fundingRowLimit = 50000
+
 func (c *ScreenerFunding) ListFunding(ctx context.Context, base string, venues []screener.Venue, since time.Time) ([]screener.FundingSeries, error) {
 	venueStrs := make([]string, len(venues))
 	for i, v := range venues {
@@ -419,19 +427,19 @@ func (c *ScreenerFunding) ListFunding(ctx context.Context, base string, venues [
 	case base != "" && len(venueStrs) > 0:
 		rows, err = c.s.Pool.Query(ctx, `
 			SELECT venue, base, at, rate FROM funding_history
-			WHERE base = $1 AND venue = ANY($2) AND at >= $3 ORDER BY venue, base, at`, base, venueStrs, since)
+			WHERE base = $1 AND venue = ANY($2) AND at >= $3 ORDER BY venue, base, at LIMIT $4`, base, venueStrs, since, fundingRowLimit)
 	case base != "":
 		rows, err = c.s.Pool.Query(ctx, `
 			SELECT venue, base, at, rate FROM funding_history
-			WHERE base = $1 AND at >= $2 ORDER BY venue, base, at`, base, since)
+			WHERE base = $1 AND at >= $2 ORDER BY venue, base, at LIMIT $3`, base, since, fundingRowLimit)
 	case len(venueStrs) > 0:
 		rows, err = c.s.Pool.Query(ctx, `
 			SELECT venue, base, at, rate FROM funding_history
-			WHERE venue = ANY($1) AND at >= $2 ORDER BY venue, base, at`, venueStrs, since)
+			WHERE venue = ANY($1) AND at >= $2 ORDER BY venue, base, at LIMIT $3`, venueStrs, since, fundingRowLimit)
 	default:
 		rows, err = c.s.Pool.Query(ctx, `
 			SELECT venue, base, at, rate FROM funding_history
-			WHERE at >= $1 ORDER BY venue, base, at`, since)
+			WHERE at >= $1 ORDER BY venue, base, at LIMIT $2`, since, fundingRowLimit)
 	}
 	if err != nil {
 		return nil, err

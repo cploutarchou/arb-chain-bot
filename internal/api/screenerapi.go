@@ -340,16 +340,35 @@ func (s *Server) handleScreenerPerpetuals(w http.ResponseWriter, r *http.Request
 	WriteData(w, http.StatusOK, map[string]any{"rows": rows, "generated_at": time.Now().UTC()})
 }
 
+// clampFundingHours bounds the funding-history window to the caller's
+// entitlement retention (audit D9): hours past history.retention_days
+// can only return rows the retention job is about to delete anyway, so
+// an oversized request is trimmed rather than executed.
+func clampFundingHours(hours int, p *Principal) int {
+	if hours <= 0 {
+		hours = 72
+	}
+	if p != nil {
+		if max := 24 * p.Ent().History.RetentionDays; hours > max {
+			hours = max
+		}
+	}
+	return hours
+}
+
+func atoiOrZero(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
 func (s *Server) handleScreenerFunding(w http.ResponseWriter, r *http.Request) {
-	if s.Screener.Funding == nil {
+	if s.Screener == nil || s.Screener.Funding == nil {
 		WriteData(w, http.StatusOK, map[string]any{"series": []screener.FundingSeries{}})
 		return
 	}
 	q := r.URL.Query()
-	hours, err := strconv.Atoi(q.Get("hours"))
-	if err != nil || hours <= 0 {
-		hours = 72
-	}
+	p, _ := PrincipalFrom(r.Context())
+	hours := clampFundingHours(atoiOrZero(q.Get("hours")), &p)
 	venues := parseVenueSet(q.Get("venues"))
 	venueList := make([]screener.Venue, 0, len(venues))
 	for v := range venues {
