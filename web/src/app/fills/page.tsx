@@ -8,6 +8,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { orderFillStatusTone } from "@/lib/tones";
 import { api, ApiError, type FillListRow, type ListFilter } from "@/lib/api/client";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Badge, Button, ErrorBox, Loading, PageTitle, Section, VirtualTable, fmtTime } from "@/components/ui";
@@ -28,13 +29,6 @@ type ListState =
     };
 
 const STATUSES = ["", "NEW", "FILLED", "PARTIAL", "REJECTED", "CANCELED"];
-
-function statusTone(status: string): "ok" | "warn" | "bad" | "dim" {
-  if (status === "FILLED") return "ok";
-  if (status === "PARTIAL") return "warn";
-  if (status === "REJECTED" || status === "CANCELED") return "bad";
-  return "dim";
-}
 
 function FillsPageInner() {
   const searchParams = useSearchParams();
@@ -193,7 +187,7 @@ function FillsPageInner() {
                 f.symbol ?? "—",
                 f.leg_no,
                 f.side,
-                <Badge key="s" tone={statusTone(f.order_status)}>
+                <Badge key="s" tone={orderFillStatusTone(f.order_status)}>
                   {f.order_status}
                 </Badge>,
                 f.price,

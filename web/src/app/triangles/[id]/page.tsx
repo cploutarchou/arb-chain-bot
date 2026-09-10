@@ -9,6 +9,7 @@
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api/client";
+import { bookAgeText } from "@/lib/format";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
@@ -50,7 +51,7 @@ export default function TriangleDetailPage() {
                     leg.side,
                     `${leg.from} → ${leg.to}`,
                     leg.book_state ? <Badge key="s" tone={bookTone(leg.book_state)}>{leg.book_state}</Badge> : "—",
-                    leg.book_age_ms ?? "—",
+                    bookAgeText(leg.book_age_ms),
                     leg.top_bid ?? "—",
                     leg.top_ask ?? "—",
                     leg.vwap_price ?? "—",

@@ -133,7 +133,7 @@ export default function ReplayPage() {
     setDetailState({ kind: "loading" });
     try {
       const res = await api.replays.get(id);
-      setDetailState({ kind: "ready", data: res.run });
+      setDetailState({ kind: "ready", data: res.run, lastOkAt: Date.now() });
     } catch (err: unknown) {
       setDetailState(
         err instanceof ApiError
