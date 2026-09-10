@@ -147,7 +147,7 @@ export default function ScreenerReportsPage() {
                   r.strategy,
                   ruleCell(r.rule_id),
                   r.n,
-                  r.net_pnl_quote,
+                  r.realised_net_pnl_quote ?? r.net_pnl_quote ?? "—",
                   // report.Summary (the list row) does not carry hit_rate
                   // or its Wilson CI — those live only in the Stats block
                   // GET /reports/{id} returns (internal/screener/report/

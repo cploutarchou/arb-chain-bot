@@ -244,7 +244,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		if store != nil {
 			reportStore = store.ScreenerReports()
 		}
-		screenerReports = &report.Generator{Svc: screenerSvc, Ledger: ledger, Store: reportStore, Notify: notify.Notify,
+		screenerReports = &report.Generator{Svc: screenerSvc, Ledger: ledger, Store: reportStore, Notify: notify.Notify, MarkOpens: executor.MarkOpenPositions,
 			Dir: cfg.RecordingDir, Log: log, IDGen: newULID, Seed: 1}
 		// The nightly run covers every organisation separately (one
 		// ledger, one rule set, one document each); without a database

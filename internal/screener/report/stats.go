@@ -63,14 +63,29 @@ type Stats struct {
 	Wins         int64 `json:"wins"`
 	MatchedPairs int64 `json:"matched_pairs"`
 
-	NetPnLQuote        decimal.Decimal `json:"net_pnl_quote"`
-	FeesQuote          decimal.Decimal `json:"fees_quote"`
-	FundingQuote       decimal.Decimal `json:"funding_quote"`
-	FundingRows        int64           `json:"funding_rows"`
-	PnLAfterRebalance  decimal.Decimal `json:"pnl_after_rebalance"`
-	MatchedPairNet     decimal.Decimal `json:"matched_pair_net"`
-	UnwindCostQuote    decimal.Decimal `json:"unwind_cost_quote"`
-	PartialLegPnLQuote decimal.Decimal `json:"partial_leg_pnl_quote"`
+	// NetPnLQuote is REALISED net PnL (closed positions, unwind and
+	// partial-leg lines) — renamed on the wire (audit X6) so it can never
+	// read as total PnL while open positions carry exposure the number
+	// does not include. The open side lives in the fields below.
+	NetPnLQuote decimal.Decimal `json:"realised_net_pnl_quote"`
+	// Open-position exposure at window end (audit X6): count, the sum of
+	// the executor's unrealised exit marks (bid to leave the spot leg,
+	// ask to close the perp leg, funding to date), funding accrued on
+	// open positions, how stale the newest mark used is, and how many
+	// open positions carry no live mark (their venue's book is gone) —
+	// those are exposure with an unknown value, never a silent zero.
+	OpenPositions         int64           `json:"open_positions"`
+	UnmarkedOpenPositions int64           `json:"unmarked_open_positions"`
+	UnrealisedMarkQuote   decimal.Decimal `json:"unrealised_mark_quote"`
+	FundingAccruedOpen    decimal.Decimal `json:"funding_accrued_open"`
+	OpenMarkAgeMsMax      *int64          `json:"open_mark_age_ms_max"`
+	FeesQuote             decimal.Decimal `json:"fees_quote"`
+	FundingQuote          decimal.Decimal `json:"funding_quote"`
+	FundingRows           int64           `json:"funding_rows"`
+	PnLAfterRebalance     decimal.Decimal `json:"pnl_after_rebalance"`
+	MatchedPairNet        decimal.Decimal `json:"matched_pair_net"`
+	UnwindCostQuote       decimal.Decimal `json:"unwind_cost_quote"`
+	PartialLegPnLQuote    decimal.Decimal `json:"partial_leg_pnl_quote"`
 	// ConservativeNet is the §8 item 3 figure: matched-pair net for spot
 	// (after-rebalance when no pair matched yet), net incl. unwind costs
 	// otherwise.
@@ -160,9 +175,25 @@ func Compute(in Inputs) Stats {
 	var lifetimes []decimal.Decimal
 
 	// Positions: skipped counts (by opened_at), closed perp positions as
-	// samples (by closed_at), unwind / partial-leg PnL lines.
+	// samples (by closed_at), unwind / partial-leg PnL lines, and the
+	// open-position exposure at window end (X6).
 	for _, p := range in.Positions {
 		switch p.Status {
+		case paperexec.StatusOpen:
+			if p.OpenedAt.After(w.End) {
+				continue
+			}
+			st.OpenPositions++
+			st.FundingAccruedOpen = st.FundingAccruedOpen.Add(p.FundingQuote)
+			if p.MarkPnLQuote != nil {
+				st.UnrealisedMarkQuote = st.UnrealisedMarkQuote.Add(*p.MarkPnLQuote)
+				if p.MarkAgeMs != nil && (st.OpenMarkAgeMsMax == nil || *p.MarkAgeMs > *st.OpenMarkAgeMsMax) {
+					v := *p.MarkAgeMs
+					st.OpenMarkAgeMsMax = &v
+				}
+			} else {
+				st.UnmarkedOpenPositions++
+			}
 		case paperexec.StatusSkipped:
 			if !w.Contains(p.OpenedAt) {
 				continue

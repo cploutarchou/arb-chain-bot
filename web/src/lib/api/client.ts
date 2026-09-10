@@ -1846,7 +1846,16 @@ export interface ScreenerReportStats {
   n: number;
   wins: number;
   matched_pairs: number;
-  net_pnl_quote: string;
+  // Renamed on the wire (X6): realised-only, open positions carry
+  // exposure it does not include. Rows persisted before the rename
+  // carry the old net_pnl_quote key — read both, never fabricate 0.
+  realised_net_pnl_quote?: string;
+  net_pnl_quote?: string;
+  open_positions?: number;
+  unmarked_open_positions?: number;
+  unrealised_mark_quote?: string;
+  funding_accrued_open?: string;
+  open_mark_age_ms_max?: number;
   fees_quote: string;
   funding_quote: string;
   funding_rows: number;
@@ -1922,7 +1931,10 @@ export interface ScreenerReportSummary {
   strategy: string;
   rule_id: string;
   n: number;
-  net_pnl_quote: string;
+  // Renamed on the wire (X6); rows persisted before the rename carry
+  // the old net_pnl_quote key — read both.
+  realised_net_pnl_quote?: string;
+  net_pnl_quote?: string;
   gate_passed: number;
   gate_total: number;
   created_at: string;
