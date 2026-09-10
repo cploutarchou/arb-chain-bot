@@ -8,6 +8,8 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,7 +18,27 @@ import (
 // Store owns the connection pool.
 type Store struct {
 	Pool *pgxpool.Pool
+	// Log receives the store's own warnings (a cycle persisted without
+	// its opportunity row); nil falls back to slog.Default().
+	Log *slog.Logger
+
+	unlinkedCycles atomic.Int64
 }
+
+func (s *Store) logger() *slog.Logger {
+	if s.Log != nil {
+		return s.Log
+	}
+	return slog.Default()
+}
+
+// Ping reports whether the database answers; the outbox uses it to
+// detect recovery after a failed write.
+func (s *Store) Ping(ctx context.Context) error { return s.Pool.Ping(ctx) }
+
+// UnlinkedCycles counts cycles persisted with a NULL opportunity_id
+// because their opportunity row never landed (see InsertCycle).
+func (s *Store) UnlinkedCycles() int64 { return s.unlinkedCycles.Load() }
 
 // Open connects and verifies the schema is reachable.
 func Open(ctx context.Context, dsn string) (*Store, error) {

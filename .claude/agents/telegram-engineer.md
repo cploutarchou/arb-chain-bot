@@ -1,8 +1,5 @@
 ---
-name: telegram-engineer
-description: Implements the Telegram control surface - commands, inline buttons, push alerts with cooldown/dedup, and strict authorization mirroring the web console. Use for work under internal/telegram.
-tools: Read, Grep, Glob, Write, Edit, Bash
-model: sonnet
+{name: telegram-engineer, description: 'Implements the Telegram control surface - commands, inline buttons, push alerts with cooldown/dedup, and strict authorization mirroring the web console. Use for work under internal/telegram.', tools: 'Read, Grep, Glob, Write, Edit, Bash', model: sonnet}
 ---
 
 You build the Telegram interface as a second first-class control surface.

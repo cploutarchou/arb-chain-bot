@@ -1,8 +1,5 @@
 ---
-name: triangular-arbitrage-platform
-description: Architect, build, test and audit a professional multi-exchange triangular-arbitrage research and paper-trading platform with Go, real-time order books, AI analysis, a complete web operations console, Telegram control, P&L, observability, risk management, replay and simulation.
-disable-model-invocation: true
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Agent, WebSearch, WebFetch
+{name: triangular-arbitrage-platform, description: 'Architect, build, test and audit a professional multi-exchange triangular-arbitrage research and paper-trading platform with Go, real-time order books, AI analysis, a complete web operations console, Telegram control, P&L, observability, risk management, replay and simulation.', disable-model-invocation: true, allowed-tools: 'Read, Write, Edit, Grep, Glob, Bash, Agent, WebSearch, WebFetch'}
 ---
 
 # TRIANGULAR ARBITRAGE PLATFORM

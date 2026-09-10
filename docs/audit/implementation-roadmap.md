@@ -1,0 +1,124 @@
+# Implementation roadmap — consolidated backlog
+
+Consolidated from the specialist audits in this directory (`master` at
+`abddb55`, 2026-09-09). Each item names the source finding so the evidence
+can be re-read. Severity: P0 critical, P1 high, P2 medium, P3 low. Order
+within a band follows the implementation order in `master-report.md`
+(catastrophic correctness → execution safety → financial calculation →
+market data → risk controls → concurrency → reliability → security →
+observability → architecture → UX → polish → performance).
+
+## P0 — Critical
+
+| # | Item | Source | Fix shape |
+|---|---|---|---|
+| P0-1 | Slippage is measured against the buffered estimate at the planned size; partial fills produce values in the thousands of bps; persisted and scored | execution F1, trading T3 | baseline `Quote.FinalAmount` at the deployed size; persist the size ratio separately; fix the test that pins −5 bps |
+| P0-2 | Realized and unrealized PnL conflated in opposite directions (portfolio books the full input as a loss on a mid-cycle failure; the cycle row stores the marked total as `pnl_amount`, summed as realized by the quality score) | execution F9 | persist `realized_pnl` and `exposure_mark` separately; report cash-basis and marked figures side by side; score quality on realized |
+| P0-3 | Financial records can be lost silently: outbox write failures uncounted, paper-queue drops uncounted, persistence hook never wired, shutdown cancels the outbox before in-flight cycles settle, a dropped opportunity row cascades into a lost cycle row via the FK | database D3, observability O1, execution F7/F15 | counters + metrics, wire `OnPersistError` to a breaker and CRITICAL alert, staged shutdown with an `ABORTED` outcome, unlinked (NULL `opportunity_id`) cycle insert when the opportunity row is missing |
+
+### P0 status
+
+| # | Status | Landed as |
+|---|---|---|
+| P0-1 | Fixed | `slippageVsPlan` in `internal/simulation/paper.go`: planned and actual returns per unit of deployed input; `planned_return_bps` / `actual_return_bps` persisted; partial fills no longer report thousands of bps |
+| P0-2 | Fixed | `realized_pnl`, `exposure_mark`, `input_consumed`, `final_amount` on `paper_cycles` (migration 000016); quality score sums realized; `Portfolio.NetPnL` / `DailyLoss` net the marked exposure; API PnL rows carry `realized`, `exposure_mark`, `net_pnl`, `unmarked` |
+| P0-3 | Fixed | `storage.Outbox`: write failures and drain-deadline losses counted, closed state after shutdown, recovery probe; global `persistence` breaker trips on a failed write and closes on recovery; paper-queue drops counted (`paper_queue_dropped_total`, health `queues.paper.dropped`); `Engine.shutdownStaged` cancels the outbox only after the producers (paper engine included) return; cancellation mid-cycle settles as `ABORTED`, deadline as `TIMEOUT`; `InsertCycle` writes an unlinked cycle (NULL `opportunity_id`, counted as `unlinked_cycles`) instead of failing the FK |
+
+## P1 — High
+
+| # | Item | Source |
+|---|---|---|
+| P1-1 | Circuit breakers are never tripped by anything; breaker board, alert and metric permanently green | execution F2, observability O2 |
+| P1-2 | Daily-loss and drawdown limits never reach the risk gate | execution F3 |
+| P1-3 | No revalidation of books or risk before leg 1 | execution F4 |
+| P1-4 | Paper fills ignore book health at fill time | execution F5 |
+| P1-5 | Ledger invariants never verified at runtime | execution F6 |
+| P1-6 | Restart resets the paper ledger, PnL, exposure and drawdown; PnL history tables are dead schema | execution F8, database D4 |
+| P1-7 | Reconnect backoff never resets and gates the planned 24 h reconnect | market data M1 |
+| P1-8 | Clock manager unimplemented; `RISK_CLOCK_UNSAFE` dead | market data M2, observability O4 |
+| P1-9 | Size search can miss the profitable size at large `max_trade_size / min_input` ratios | trading T1 |
+| P1-10 | Login throttling keys on the proxy address: unauthenticated global lockout | security S1 |
+| P1-11 | `smtp_url` credential reaches logs, database and an API response through a parse error | security S2 |
+| P1-12 | API keys survive account disable and membership removal | security S3 |
+| P1-13 | Tenant isolation never engages (platform membership always wins); screener settings and nightly reports are platform-global and writable/readable by any organisation | security S4/S7, database D1/D2 |
+| P1-14 | Bootstrap admin re-upserted on every boot (password, role, status) | security S6, infra I2 |
+| P1-15 | Backups and restore drill cannot run against the declared managed database; drill writes to production | infra I1 |
+| P1-16 | Documented compose deployment publishes Postgres with a default password on all interfaces | infra I3 |
+| P1-17 | Production canary cannot pass and would run a second engine on the production database | infra I4 |
+| P1-18 | No retention job; `cmd/worker` builds no components; tables grow forever | database D5, infra I9 |
+| P1-19 | Audit/risk-event immutability enforced by nothing | database D6, security S9 |
+| P1-20 | Binance USDT and USDC perpetuals collide on one `(venue, base)` key; funding history mixes contracts | scanner X1 |
+| P1-21 | Evaluator lane universe truncated to the 500 highest-net rows with suspect lanes ranked first | scanner X2 |
+| P1-22 | Data-age gate plus unsynchronised poll/tick phases resets lifetimes and closes events; close reason not stored | scanner X3 |
+| P1-23 | Order/cycle latency chain never exported; rejections and outcomes have no reason/outcome labels | observability O3/O5 |
+| P1-24 | Console: mode banner absent on mobile; no emergency control (pause is 2–3 clicks, unconfirmed, generic failure copy); fee-inclusive figure labelled "Gross"; cycle-outcome vocabulary mismatch; overview fails the five-second test; Paper page is not a live-cycle monitor; request failures rendered as empty states; float division on a persisted threshold | ui F1–F8 |
+
+### P1 status
+
+| # | Status | Landed as |
+|---|---|---|
+| P1-1 | Fixed | Breaker policies in `internal/app/riskpolicy.go`: `feed_instability` (exchange scope) opens on 5 coalesced book faults per minute, probes after 30 s and closes after a quiet probe window; `simulation_inconsistency`, `daily_loss`, `drawdown` (global) open on their triggers and stay open until an operator closes them; `persistence` (P0-3). Book transitions reach the policy through `orderbook.Set.OnTransition`; the scanner gate also honours `market:` scopes |
+| P1-2 | Fixed | `scanner.LedgerView` (session loss and drawdown per start asset) feeds `risk.Context.DailyLoss/Drawdown`; the engine's `sessionLedger` refreshes after every settlement and on the tick, which also advances the portfolio's high-water mark |
+| P1-3 | Fixed | `scanner.Revalidate` re-quotes a qualified plan at its size on the current books (only when a book version moved) and re-runs the full risk gate; the paper engine calls it before reserving capital and skips, counts and reports refusals (`opportunities_revalidation_rejected_total`, risk_events) |
+| P1-4 | Fixed | `simulation.fillLeg` requires a HEALTHY fill-time book and honours `Config.MaxBookAge` (live paper: the scanner's 2 s budget); an unhealthy leg-1 book is REJECTED, a later one strands exposure like any other mid-cycle failure |
+| P1-5 | Fixed | The paper engine runs `reservation.CheckInvariants` after every settlement and release, pauses itself on a violation, counts it (`invariant_violations`) and opens the `simulation_inconsistency` breaker |
+| P1-6 | Fixed | A ledger snapshot (cash per start asset, realized, peak, drawdown, fees, exposure, counters) is written through the outbox after every settlement into `virtual_balances`, `balance_snapshots` and `pnl_snapshots`; a restart resumes the latest open paper session from its snapshot when the configured starting balances still match (a changed configuration or a paper reset ends the session instead); the supervisor no longer ends the outgoing session on restart |
+| P1-7 | Fixed | `binance.Feed` resets its backoff after a session that stayed up for `StableAfter` (60 s) and reconnects with zero delay on the pre-emptive 24 h rollover (`ErrPreemptiveReconnect`) |
+| P1-8 | Fixed | `marketdata.ClockMonitor` polls the venue's server time (RTT-halved offset, 30 s interval, 500 ms limit, 3 consecutive failures → unhealthy); the engine feeds `scanner.ClockHealthy` from it every tick, so qualification starts only after the first successful probe; health reports `clock.healthy`, `clock.offset_ms` |
+| P1-9 | Fixed | `pricing.SizeSearch.FindCycle` derives candidate sizes from every leg's depth breakpoints mapped back to the start asset, prices them exactly under a hard evaluation budget (24 candidates + 14 refinement steps + 2) and refines between adjacent breakpoints only when the gap's ceiling can beat the best quote; the scanner uses it. Measured on the shared host: the exact path 1.5–1.6 ms/op with 12 048 allocs (the previous grid search 6.8–8.1 ms/op, 108 231 allocs); the closure-only `Find` keeps its signature with a geometric coarse pass (57 832 allocs). The 3000:1 reproduction (profitable window 1000–1006 inside the first grid cell) now returns the optimum in one evaluation where the old search returned a loss |
+| P1-15 | Partly fixed (safety half) | The restore drill fails closed: it refuses unless `RESTORE_DRILL_TARGET_DISPOSABLE=1`, the target is not the production host, and a non-loopback target carries a scratch marker; it restores into an in-pod scratch instance (or verifies an operator-restored scratch instance) under a read-only session, and no longer writes to production. The managed-database backup path (provider PITR/snapshots, optional logical dumps, self-hosted pgBackRest) is documented for the operator's decision in `docs/runbooks/restore-drill.md`; provider automation is not implemented |
+| P1-16 | Fixed | `docker-compose.yml` publishes Postgres on `127.0.0.1` only and requires `POSTGRES_PASSWORD` (compose refuses to start without it); `.env.example`, `Makefile`, `scripts/create-secret.sh` and `docs/deployment.md` follow |
+| P1-17 | Fixed | The chart refuses a canary that shares the primary's database key, runs any mode but PAPER, enables the migrate hook, claims the recordings volume or takes weighted traffic (`arb.guards` in `_helpers.tpl`, proven by `deploy/helm/test-canary-guards.sh`); the canary overlay runs PAPER with persistence disabled and header-only routing, and `deploy/scripts/canary-check.sh` verifies readiness, isolation and live market data instead of a check that could never pass |
+| P1-18 | Fixed | `storage.RetentionScheduler` (nightly at `RETENTION_RUN_AT_UTC`, batched deletes with a statement timeout, dry-run mode) prunes only telemetry-class tables — qualified/rejected opportunities not referenced by a cycle, `exchange_health`, `system_events`, `funding_history`, expired sessions, closed recording metadata (disabled by default) — with per-table windows from `internal/config/retention.go`; `cmd/worker` runs it; migration 000019 adds the cutoff indexes. Financial evidence tables have no retention field at all |
+| P1-19 | Fixed | Migration 000018 attaches a row-level trigger to `audit_events` and `risk_events` that raises on UPDATE or DELETE (SQLSTATE P0001); test fixtures reset them with TRUNCATE |
+| P1-20 | Fixed | The screener book is keyed by contract (venue, base, quote); the poller keeps one contract per base by `perp_quote_preference` (default USDT), counts and logs the dropped ones, and records funding per contract; paper positions carry their quote |
+| P1-21 | Fixed | The evaluator ranks the whole universe clean-and-fresh first, applies `alerts.max_lanes_per_rule` (default unbounded) after ranking, and reports universe/lanes/truncated counts in the screener status diagnostics |
+| P1-22 | Fixed | A stale poll puts a lane on HOLD (lifetime kept, event open with `hold_reason`) until `alerts.stale_hold_s` (default 30 s) elapses, then closes it with `close_reason HOLD_TIMEOUT`; close reasons are recorded on events |
+| P1-24 | Fixed | F1 (mode banner at every width), F2 (one-click paper pause/resume in the shell with confirm, explicit failure copy and RBAC), F3 (fee-inclusive figures relabelled, buffers explained), F4 (one outcome map and badge for every backend outcome including ABORTED), F7 (request failures rendered as errors with status and retry), F8 (exact decimal handling, no float division) — lint, typecheck, build and Playwright pass; F5 (overview five-second test: PnL/drawdown/fees per start asset, breakers open with reasons, feed state derived from book states, venue-clock cell, capital-in-use count, a reason where the paper engine's N/A used to be) and F6 (Paper page as a live-cycle monitor: `GET /api/v1/paper/active` with per-leg stages polled every second, cycles table gains reason/fees/duration/realized-vs-marked/opportunity link, orders gain the order id and an exact remaining quantity) landed with the breaker acknowledgement below — the full e2e suite (47 tests) passes |
+| P1-23 | Fixed | `order_latency_ms{exchange,stage}` (submit_ack, ack_fill, submit_fill) and `cycle_duration_ms{exchange}` histograms recorded per settled cycle; `risk_rejections_total{exchange,stage,reason}` (qualification and revalidation), `paper_cycle_outcomes_total{exchange,outcome}` and `order_outcomes_total{exchange,status}` replace the flat aggregates; `paper_cycles_received_total` / `paper_cycles_skipped_total` exported (O6) |
+
+## P2 — Medium
+
+- Sizer objective ignores the impact cap and minimum edge (trading T2 — fixed, see P2 status); `MARKET_LOT_SIZE` not parsed (T4 — fixed); limit prices not tick-quantized (T5 — fixed); `ValidateOrder` on filled rather than submitted quantity (T6 — fixed); fee rates hard-coded rather than fetched from the venue (T7 — resolved by decision, see P2 status); topology and rules never refreshed (T8 — fixed as a metadata-diff breaker); `MaxSlippageBps` never evaluated (T9, execution F12 — fixed as the slippage breaker policy); constraint duplication in the screener (T10); sizer ~7× its documented latency budget (T11 — fixed by the breakpoint-aware search, see P1-9).
+- Duplicate ACTIVE reservation key accepted (execution F10); `max_concurrent_simulations` not honoured (F11); non-start-asset fees unvalued (F13); cycle row lacks expected-vs-actual (F14); optimistic exposure mark and no unwind (F16).
+- Replay never evaluates STALE (market data M3); no crossed-book / non-positive-price check (M4); resync goroutines outlive their session (M5).
+- Console RBAC lacks an organisation dimension; VIEWER reads platform settings, secrets inventory, config and `/metrics` (security S5); provider-group secrets writable by a promoted ADMIN (S8); member add without consent and roster disclosure (S10); WebSocket topics unauthorised (S11).
+- SLO bake gate fails open (infra I5); strategy params fall back to defaults silently (I6); migrations without lock/statement timeouts (I7); ExternalSecret hook lifecycle (I8); recorder disk-full invisible (I10); alert blind spots and label mismatch (I11); unused Redis (I12); CI/CD hardening and non-executable deploy pipeline (I13).
+- Missing indexes (database D7); shared small pool without timeouts (D8); unbounded funding query (D9); no CHECK constraints on financial columns (D10).
+- Funding attribution shifted one interval on previous-period venues (scanner X4); restart loses evaluator state (X5); reports omit open positions (X6); book never evicts (X7); perp legs have no depth (X8); hot-path cost scales with ledger size and real sleeps in the tick (X9); Coinbase 429 handling (X10); calculator without age/guard (X11).
+- `paper.Stats.Received/Skipped` not exported (observability O6); slippage unpanelled (O7); queue depths not exported (O8); no realization ratio (O9); screener venue health unpanelled (O10); no spans (O11).
+- Console: no data-age indicator on polled tables (ui F9); opportunities list gaps (F10); strategy parameters without units/defaults (F11); Risk Center gaps (F12); no cycle detail route (F13); Scanner net bps always green (F14); accessibility (F15); tooltips hiding decision text (F16); navigation dead ends (F17); duplicated helpers and one contrast failure (F18).
+
+### P2 status
+
+- Fixed: M3 (replay sweeps staleness on the recorded clock with the scanner's age budget; the backtest harness sets it), M4 (a crossed top of book or a non-positive price marks the book CORRUPTED on every snapshot and delta), M5 (snapshot priming and gap resyncs are scoped to their feed session).
+- Fixed: T8 (a bounded per-run monitor re-fetches `exchangeInfo` on `ARB_METADATA_CHECK_INTERVAL`, default 1 h, and opens the operator-closed `metadata_changed` breaker on a delisting, status change or filter change to a configured symbol — hot-swapping the topology mid-run was deliberately rejected; `0` disables).
+- Resolved by decision: T7 — fee rates are operator-configured per venue in platform settings (defaults + per-symbol overrides, hot-applied, provenance visible per leg as `default`/`override`); the automatic per-account fetch (`account/commission`) needs a signed request, and exchange credentials are write-only in the vault by design, so it stays unimplemented until a separately reviewed read consumer exists — see `docs/research/fees.md` §"Decision record" for the full rationale and the operator procedure.
+- Fixed: the S4 follow-up — `CreateUser` no longer joins every console account to organisation 1: `POST /api/v1/users` takes an optional `org_id`/`org_role` (ADMIN/MEMBER/VIEWER, OWNER refused), validated against tenancy, joined inside the same transaction; omitted, it keeps the platform placement for operator staff.
+- Fixed: the breaker acknowledgement the handover listed — `POST /api/v1/risk/breakers/close` (ADMIN via `risk:config`, CSRF, audited with the resulting state, type-to-confirm repeating the breaker's name) calls `risk.Registry.Close` through the engine; the daily_loss/drawdown/slippage/simulation_inconsistency breakers stay OPEN until an operator closes them from the Risk Center, and P1-15 is framed as an open operator decision in `docs/decisions/2026-09-10-backup-automation-open-operator-decision.md`.
+- Fixed: T4 (`MARKET_LOT_SIZE` parsed into `InstrumentRules.Market*`; `ForMarketOrders` applies it, and the simulator validates MARKET fills against it), T6 (sell legs are validated as submitted; a depth-limited fill is a partial with dust, not a rule violation).
+- Fixed: T2 (`pricing.SizeSearch.FindCycleConstrained` folds the gate's size-dependent limits — worst-leg price impact, minimum edge after buffers, minimum profit — into the search objective; infeasible sizes rank below feasible ones and steer the refinement toward the feasible frontier; when nothing is feasible the unconstrained optimum flows to the gate so the rejection reason stays real; the scanner uses it).
+- Fixed: F16 (`portfolio.BookMarker` with a fee schedule marks stranded exposure at its liquidation value — walked through the depth net of the taker fee, depth the book does not show counts for nothing; the engine wires it), T5 (IOC limit prices are snapped to the instrument's tick on the conservative side).
+- Fixed: F10 (`reservation.Reserve` refuses a duplicate key while the original hold is ACTIVE with `ErrDuplicateActive`; the paper engine skips it — concurrent duplicate test added), F11 (`paper.Engine.MaxConcurrent` comes from the strategy's `max_concurrent_simulations` at assembly), F12 (realized cycle slippage past `max_slippage_bps` on three consecutive completed cycles opens the operator-closed `slippage` breaker), F14 (planned and actual return persisted with P0-1), O6 (`paper_cycles_received_total`, `paper_cycles_skipped_total`), O8 (queue depths exported with P0-3).
+
+## P3 — Low
+
+- Trading precision cluster (T12): min-notional on exact cost, `NOTIONAL.applyMinToMarket`, `Usable()` without a `NOTIONAL` filter, `DepthExhausted` from the budget walk, dead `fees.Bps`, discount refusal location, 1e-28 clamp.
+- Execution dead code and duplicated paper stack (F17); metrics `time.Now()` in the book-age source (M6); `MarketDataConnector` doc drift (M7).
+- Argon2 parameter clamp (S12); HTTP server timeouts (S13); CI pinning and `npm audit` (S14); marketing-site headers and markdown sanitiser (S15).
+- Log/trace shipping mismatch (I14); configuration residue (I15); restore-drill table and stale runbook (D11).
+- Scanner reservation error handling (X12), funding edge cases (X13), asset identity heuristics (X14), dead code (X15).
+- Stale rules header (O12), `triangles_total` naming (O13), AI/Telegram panels (O14), `replay_runs_total` (O15).
+- Console responsive grids (ui F19) and primitive bypasses (F20).
+
+## Sequencing for this branch
+
+1. P0-1, P0-2, P0-3 with tests.
+2. Execution safety: P1-3, P1-4, P1-5, P1-1 (feed, loss, invariant, persistence triggers; paper gate), P1-2.
+3. Financial calculation: P1-9, T3 is covered by P0-1.
+4. Market data: P1-7.
+5. Security: P1-10, P1-11, P1-12, P1-14; the tenancy fix in P1-13 that is safe without a product decision (prefer the non-platform membership; gate platform-global screener settings).
+6. Observability: P1-23 and the counters from P0-3.
+7. Scanner: P1-20 (USDT filter), then P1-21/P1-22.
+8. Console: P1-24 items F1, F3, F4, F7, F8, then F2.
+9. Infra: P1-16 and the canary chart assertion from P1-17; P1-15, P1-18, P1-19 need operator decisions and are documented rather than changed here.

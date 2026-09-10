@@ -10,18 +10,20 @@ import (
 )
 
 // QualitySamples aggregates per-triangle history for the quality score
-// (T-043). Slippage statistics cover every slippage-measurable cycle
-// (reached leg 3: ALL_FILLED and both partial outcomes), and NULL
-// aggregates stay unmeasured — the scorer awards nothing for absent
-// evidence. DrawdownKnown stays false: per-triangle drawdown is not
-// recorded yet.
+// (T-043). PnL is the cash-basis realized figure (realized_pnl; rows
+// written before migration 000016 fall back to pnl_amount, which for
+// them is the marked total). Slippage statistics cover every
+// slippage-measurable cycle (reached leg 3: ALL_FILLED and both partial
+// outcomes), and NULL aggregates stay unmeasured — the scorer awards
+// nothing for absent evidence. DrawdownKnown stays false: per-triangle
+// drawdown is not recorded yet.
 func (s *Store) QualitySamples(ctx context.Context, from, to time.Time) ([]quality.Sample, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT o.triangle_id,
 		       count(c.id),
 		       count(*) FILTER (WHERE c.outcome = 'ALL_FILLED'),
-		       coalesce(sum(c.pnl_amount), 0)::text,
-		       coalesce(min(c.pnl_amount), 0)::text,
+		       coalesce(sum(coalesce(c.realized_pnl, c.pnl_amount)), 0)::text,
+		       coalesce(min(coalesce(c.realized_pnl, c.pnl_amount)), 0)::text,
 		       round(avg(c.slippage_bps), 4)::text,
 		       round(stddev_samp(c.slippage_bps), 4)::text,
 		       count(c.slippage_bps)
@@ -129,8 +131,8 @@ func (s *Store) QualitySamplesForTriangle(ctx context.Context, triangleID string
 	if err := s.Pool.QueryRow(ctx, `
 		SELECT count(c.id),
 		       count(*) FILTER (WHERE c.outcome = 'ALL_FILLED'),
-		       coalesce(sum(c.pnl_amount), 0)::text,
-		       coalesce(min(c.pnl_amount), 0)::text,
+		       coalesce(sum(coalesce(c.realized_pnl, c.pnl_amount)), 0)::text,
+		       coalesce(min(coalesce(c.realized_pnl, c.pnl_amount)), 0)::text,
 		       round(avg(c.slippage_bps), 4)::text,
 		       round(stddev_samp(c.slippage_bps), 4)::text,
 		       count(c.slippage_bps)

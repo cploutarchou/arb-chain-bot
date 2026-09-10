@@ -12,18 +12,27 @@ type PairKey struct {
 	Quote string
 }
 
-// PerpKey identifies one venue's perpetual contract for a base asset
-// (design §2: "perps store keyed by (venue, base)").
+// PerpKey identifies one venue's perpetual contract: (venue, base,
+// quote). A (venue, base) pair is NOT a contract identity — Binance
+// USDⓈ-M lists a USDT-margined and a USDC-margined perpetual on the
+// same base (AAVEUSDT / AAVEUSDC in the recorded 2026-08-27
+// exchangeInfo), and keying on (venue, base) alone let whichever
+// contract the venue listed last overwrite the other's mark, book and
+// funding fields. Every contract this suite collects is a linear
+// perpetual, so the quote (= margin) asset completes the key; a
+// delivery/quarterly contract type would need a further component and
+// is filtered out by every collector.
 type PerpKey struct {
 	Venue Venue
 	Base  string
+	Quote string
 }
 
 // Book is the concurrency-safe latest-quote store: one Quote per
-// (base, quote, venue) and one Perp per (venue, base), always the most
-// recently observed value (a poller overwrites in place — the book never
-// keeps history; lifetime tracking is a separate, explicit concern in
-// spreads.go). Safe for concurrent readers and writers.
+// (base, quote, venue) and one Perp per (venue, base, quote), always the
+// most recently observed value (a poller overwrites in place — the book
+// never keeps history; lifetime tracking is a separate, explicit concern
+// in spreads.go). Safe for concurrent readers and writers.
 type Book struct {
 	mu     sync.RWMutex
 	quotes map[PairKey]map[Venue]Quote
@@ -56,11 +65,13 @@ func (b *Book) SetQuote(q Quote) {
 }
 
 // SetPerp records/overwrites the latest perp snapshot for its
-// (venue, base).
+// (venue, base, quote). Two contracts on the same base with different
+// quote/margin assets are two entries; the poller decides which of them
+// the suite tracks (venue.Poller: settings.perp_quote_preference).
 func (b *Book) SetPerp(p Perp) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.perps[PerpKey{Venue: p.Venue, Base: p.Base}] = p
+	b.perps[PerpKey{Venue: p.Venue, Base: p.Base, Quote: p.Quote}] = p
 }
 
 // QuotesFor returns a defensive copy of every venue's latest quote for
@@ -99,7 +110,7 @@ func (b *Book) Pairs() []PairKey {
 }
 
 // Perps returns a defensive copy of every perp this book holds, sorted
-// by (venue, base) for deterministic iteration.
+// by (venue, base, quote) for deterministic iteration.
 func (b *Book) Perps() []Perp {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -111,16 +122,23 @@ func (b *Book) Perps() []Perp {
 		if out[i].Venue != out[j].Venue {
 			return out[i].Venue < out[j].Venue
 		}
-		return out[i].Base < out[j].Base
+		if out[i].Base != out[j].Base {
+			return out[i].Base < out[j].Base
+		}
+		return out[i].Quote < out[j].Quote
 	})
 	return out
 }
 
-// PerpFor returns one venue's perp snapshot for base, if observed.
-func (b *Book) PerpFor(venue Venue, base string) (Perp, bool) {
+// PerpFor returns one venue's perp snapshot for the (base, quote)
+// contract, if observed. Callers always know the quote: a lane, a paper
+// position and a signal all carry the contract's quote asset, so there
+// is no "the perp for this base" lookup that could pick the wrong
+// contract.
+func (b *Book) PerpFor(venue Venue, base, quote string) (Perp, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	p, ok := b.perps[PerpKey{Venue: venue, Base: base}]
+	p, ok := b.perps[PerpKey{Venue: venue, Base: base, Quote: quote}]
 	return p, ok
 }
 
@@ -130,4 +148,25 @@ func (b *Book) PerpFor(venue Venue, base string) (Perp, bool) {
 // rather than this helper silently clamping to zero.
 func Age(t, now time.Time) time.Duration {
 	return now.Sub(t)
+}
+
+// DataAgeOK is the shared freshness gate (strategy-models §1.1) for a
+// two-leg lane: each leg observed no longer than maxAge ago, and the two
+// observations within maxAge/2 of each other, so a fresh leg is never
+// compared against a stale one. Negative ages (a leg stamped in the
+// future) fail. One definition serves the spreads ranking, the alert
+// evaluator and any caller that must agree with them on what "stale"
+// means.
+func DataAgeOK(ageA, ageB, maxAge time.Duration) bool {
+	if ageA < 0 || ageB < 0 {
+		return false
+	}
+	if ageA > maxAge || ageB > maxAge {
+		return false
+	}
+	diff := ageA - ageB
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= maxAge/2
 }

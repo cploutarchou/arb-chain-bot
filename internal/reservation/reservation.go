@@ -23,6 +23,11 @@ var (
 	ErrUnknownReservation = errors.New("reservation: unknown id")
 	ErrInvalidAmount      = errors.New("reservation: non-positive amount")
 	ErrOverConsume        = errors.New("reservation: consumed exceeds reserved amount")
+	// ErrDuplicateActive: a second Reserve with the key of a reservation
+	// that is still ACTIVE. The original is returned with it so the caller
+	// can inspect it, but it must not act on it — the first caller is
+	// already executing against that hold (audit F10).
+	ErrDuplicateActive = errors.New("reservation: duplicate key while the original is still active")
 )
 
 // State of one reservation.
@@ -91,7 +96,11 @@ func New(initial map[exchange.Asset]decimal.Decimal, nextID func() string, now f
 }
 
 // Reserve atomically holds amount of asset. A repeated key returns the
-// original reservation unchanged (idempotency) — callers inspect State.
+// original reservation unchanged (idempotency): with ErrDuplicateActive
+// while that reservation is still ACTIVE — two callers holding the same
+// key concurrently is the duplicate-execution shape a trading system must
+// never allow — and with a nil error once it has settled or been
+// released, when callers inspect State and skip the replay.
 func (m *Manager) Reserve(key string, asset exchange.Asset, amount decimal.Decimal, triangleID string, conflictKeys []string) (Reservation, error) {
 	if !amount.IsPositive() {
 		return Reservation{}, ErrInvalidAmount
@@ -100,6 +109,9 @@ func (m *Manager) Reserve(key string, asset exchange.Asset, amount decimal.Decim
 	defer m.mu.Unlock()
 
 	if existing, ok := m.byKey[key]; ok {
+		if existing.State == StateActive {
+			return *existing, fmt.Errorf("%w: %s", ErrDuplicateActive, key)
+		}
 		return *existing, nil
 	}
 	for _, ck := range conflictKeys {

@@ -171,7 +171,7 @@ func TestUnwindOnRejectedSecondLeg(t *testing.T) {
 		// Wait calls: 1 = spot submit, 2 = spot fill, 3 = perp submit.
 		// Before the perp re-read, move the perp bid 30 bps lower.
 		3: func() {
-			p, _ := h.svc.Book.PerpFor(screener.VenueBinance, "BTC")
+			p, _ := h.svc.Book.PerpFor(screener.VenueBinance, "BTC", "USDT")
 			p.Bid = d("49949")
 			h.svc.Book.SetPerp(p)
 		},

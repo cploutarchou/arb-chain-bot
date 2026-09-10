@@ -3,6 +3,7 @@ package marketdata
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange/binance"
@@ -26,6 +27,13 @@ type Replayer struct {
 	Transform func(*orderbook.DepthEvent)
 
 	syncers map[exchange.MarketID]*binance.Syncer
+	// MaxBookAge, when positive, degrades a book that has not received a
+	// frame within this recorded interval to STALE, exactly as the live
+	// engine's sweep does on the wall clock (audit M3): a quiet market in
+	// a recording must not stay HEALTHY forever. Zero keeps the previous
+	// behaviour (no sweep).
+	MaxBookAge time.Duration
+	lastSweep  time.Time
 }
 
 // NewReplayer prepares books for the recorded symbols.
@@ -44,8 +52,34 @@ func NewReplayer(streams map[uint16]exchange.Symbol) *Replayer {
 	return r
 }
 
-// Apply consumes one recorded frame.
+// Apply consumes one recorded frame, then sweeps staleness on the
+// frame's recorded receive time (at most every replaySweepInterval of
+// recorded time).
 func (r *Replayer) Apply(fr Frame) error {
+	err := r.applyFrame(fr)
+	r.sweep(fr.Recv)
+	return err
+}
+
+// replaySweepInterval mirrors the live engine's 500 ms staleness tick.
+const replaySweepInterval = 500 * time.Millisecond
+
+func (r *Replayer) sweep(now time.Time) {
+	if r.MaxBookAge <= 0 || now.IsZero() {
+		return
+	}
+	if !r.lastSweep.IsZero() && now.Sub(r.lastSweep) < replaySweepInterval {
+		return
+	}
+	r.lastSweep = now
+	for _, id := range r.Books.All() {
+		if b, ok := r.Books.Get(id); ok {
+			b.EvaluateStaleness(now, r.MaxBookAge)
+		}
+	}
+}
+
+func (r *Replayer) applyFrame(fr Frame) error {
 	switch fr.Dir {
 	case DirWS:
 		ev, err := binance.DecodeWSFrame(fr.Payload, fr.Recv)

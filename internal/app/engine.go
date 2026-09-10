@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -110,6 +111,7 @@ type Engine struct {
 	starts    []exchange.Asset  // this run's starting assets (E4 accessor source)
 	catalog   []exchange.Market // full bootstrap metadata slice, retained for Catalog() (E2)
 	marker    portfolio.BookMarker
+	clock     *marketdata.ClockMonitor // this run's venue clock monitor (P1-8)
 	ready     bool
 	sessionID string          // current paper/persistence session id; rotated by ResetPaper (BL-10)
 	outbox    *storage.Outbox // this run's outbox, nil without persistence (BL-18 queue depth)
@@ -129,6 +131,11 @@ type Engine struct {
 
 	metricsOnce   sync.Once // E4: RegisterEngine wired once across restarts
 	subscribeOnce sync.Once // E6: Strategy.Subscribe registered once across restarts
+
+	// paperDropped counts qualified opportunities the paper engine never
+	// received because its inbound queue was full (P0-3): cumulative
+	// since process start, like the scanner counters.
+	paperDropped atomic.Int64
 
 	oppMu             sync.Mutex
 	recentOpps        []RecentOpportunity
@@ -290,6 +297,10 @@ type EngineStatus struct {
 	Rejected    int64    `json:"rejected"`
 	Skipped     int64    `json:"skipped_unhealthy"`
 	Dropped     int64    `json:"dropped_events"`
+	// Revalidations counts pre-execution re-checks of qualified
+	// opportunities; RevalidationRejects those refused the second time.
+	Revalidations       int64 `json:"revalidations"`
+	RevalidationRejects int64 `json:"revalidation_rejects"`
 
 	Paper *PaperStatus `json:"paper,omitempty"`
 }
@@ -302,6 +313,14 @@ type PaperStatus struct {
 	Completed int64 `json:"completed"`
 	Failed    int64 `json:"failed"`
 	Skipped   int64 `json:"skipped"`
+	// Dropped: qualified opportunities refused by a full paper queue,
+	// never simulated (cumulative since process start).
+	Dropped int64 `json:"dropped"`
+	// RevalidationRejected: qualified opportunities the pre-execution
+	// re-check refused. InvariantViolations: ledger conservation
+	// failures; any non-zero value paused the engine.
+	RevalidationRejected int64 `json:"revalidation_rejected"`
+	InvariantViolations  int64 `json:"invariant_violations"`
 }
 
 func (e *Engine) Status() EngineStatus {
@@ -320,6 +339,8 @@ func (e *Engine) Status() EngineStatus {
 		st.Rejected = e.scn.Stats.Rejected.Load()
 		st.Skipped = e.scn.Stats.SkippedBooks.Load()
 		st.Dropped = e.scn.Stats.DroppedEvts.Load()
+		st.Revalidations = e.scn.Stats.Revalidations.Load()
+		st.RevalidationRejects = e.scn.Stats.RevalidationRejects.Load()
 	}
 	if e.pap != nil {
 		ps := e.pap.Snapshot()
@@ -327,6 +348,9 @@ func (e *Engine) Status() EngineStatus {
 			Running: e.pap.Running(), Active: e.pap.Active(),
 			Received: ps.Received, Completed: ps.Completed,
 			Failed: ps.Failed, Skipped: ps.Skipped,
+			Dropped:              e.paperDropped.Load(),
+			RevalidationRejected: ps.RevalidationRejected,
+			InvariantViolations:  ps.InvariantViolations,
 		}
 	}
 	return st
@@ -338,6 +362,28 @@ func (e *Engine) Recorder() *marketdata.RecorderControl {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.rctl
+}
+
+// CloseBreaker closes a registered breaker after an explicit operator
+// action. The loss, drawdown, slippage and simulation-inconsistency
+// policies deliberately never close their breakers (docs/risk.md §5:
+// automatic resume is off) — until this existed, one of them opening
+// meant a restart was the only way to resume qualification. Closing is
+// still the operator's decision made from the Risk Center with the
+// breaker's own evidence in view; the registry's observer records the
+// transition (risk_events, notification) and the HTTP layer audits the
+// action itself. found=false: no such breaker in this build/run.
+func (e *Engine) CloseBreaker(name, scope string) (risk.BreakerState, bool) {
+	reg := e.currentBreakers()
+	if reg == nil {
+		return risk.BreakerClosed, false
+	}
+	if _, ok := reg.State(name, scope); !ok {
+		return risk.BreakerClosed, false
+	}
+	reg.Close(name, scope, time.Now())
+	state, _ := reg.State(name, scope)
+	return state, true
 }
 
 // Paper exposes the paper engine control surface (nil outside PAPER mode).
@@ -479,6 +525,14 @@ func (e *Engine) currentReservation() *reservation.Manager {
 	return e.resv
 }
 
+// currentClock exposes this run's venue clock monitor (nil before Run
+// reaches it or after it returns).
+func (e *Engine) currentClock() *marketdata.ClockMonitor {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.clock
+}
+
 func (e *Engine) currentBreakers() *risk.Registry {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -612,7 +666,15 @@ func (e *Engine) ResetPaper(ctx context.Context) error {
 	if err := pap.Reset(initial); err != nil {
 		return err
 	}
+	previous := e.currentSessionID()
 	e.setSessionID(newSession)
+	// The reset session is finished: end it so a later restart resumes
+	// the new one, never the ledger the operator just discarded.
+	if e.Store != nil && previous != "" {
+		if err := e.Store.EndPaperSession(ctx, previous, time.Now()); err != nil {
+			e.log.Warn("ending reset paper session failed", "session", previous, "error", err)
+		}
+	}
 	return nil
 }
 
@@ -623,6 +685,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.mu.Lock()
 	e.scn, e.topo, e.pap, e.rctl, e.port = nil, nil, nil, nil, nil
 	e.feed, e.resv, e.brk, e.books, e.starts, e.catalog = nil, nil, nil, nil, nil, nil
+	e.clock = nil
 	e.marker = portfolio.BookMarker{}
 	e.ready = false
 	e.outbox = nil
@@ -723,7 +786,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		if err := e.Store.UpsertMarkets(runCtx, markets); err != nil {
 			e.log.Warn("market metadata sync failed", "error", err)
 		}
-		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID}
+		outbox = &storage.Outbox{Store: e.Store, Log: e.log, SessionID: sessionID,
+			DrainTimeout: outboxDrainTimeout}
 	}
 	e.mu.Lock()
 	e.outbox = outbox
@@ -797,6 +861,24 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 		initial[exchange.Asset(asset)] = v
 	}
+	// P1-6: a restart continues the open paper session's ledger when the
+	// configured starting balances still match it, so a restart can never
+	// reset a loss, a drawdown or stranded exposure. The snapshot's cash
+	// becomes the reservation ledger's baseline; the portfolio state is
+	// restored once the portfolio exists (below).
+	configuredInitial := cloneAssets(initial)
+	resume, resumed := e.resumeLedger(runCtx, mode, configuredInitial)
+	if resumed {
+		sessionID = resume.SessionID
+		e.setSessionID(sessionID)
+		initial = cloneAssets(resume.Balances)
+		for a, v := range resume.FoldedReserved {
+			e.log.Warn("paper ledger resumed with capital still reserved by the previous process; released to available",
+				"asset", string(a), "amount", v.String())
+		}
+		e.log.Info("paper session resumed", "session", sessionID, "snapshot_at", resume.At,
+			"cycles", resume.Portfolio.Cycles)
+	}
 	resv := reservation.New(initial, newULID, time.Now)
 
 	wsHost := e.WSHost
@@ -847,6 +929,46 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	})
 
+	// Breaker policies (docs/risk.md §3, §5): the registry records
+	// states; riskpolicy.go decides what opens and closes each breaker.
+	// feed_instability probes and closes itself; the loss, drawdown and
+	// inconsistency breakers stay open until an operator closes them.
+	feedScope := "exchange:" + string(binance.ID)
+	breakers.Register(breakerFeed, feedScope, feedProbeAfter)
+	breakers.Register(breakerMetadata, feedScope, 0) // T8: operator-closed; re-arms while the diff persists
+	faults := newFaultWindow(feedFaultWindow)
+	books.OnTransition(feedFaultObserver(breakers, faults, time.Now))
+	feedPol := &feedPolicy{reg: breakers, faults: faults, scope: feedScope}
+	slipPol := &slippagePolicy{}
+	ledger := newSessionLedger()
+
+	// T8: re-check the venue's metadata against the rules this run
+	// prices with; a material change opens the metadata_changed breaker
+	// instead of executing on constraints the venue no longer enforces.
+	scopedBaseline := make(map[string]exchange.Market, len(scoped))
+	for _, m := range scoped {
+		scopedBaseline[string(m.ID.Symbol)] = m
+	}
+	go e.watchMetadata(runCtx, rest, breakers, feedScope, scopedBaseline,
+		e.cfg.MetadataCheckInterval, time.Now)
+
+	if outbox != nil {
+		// P0-3: a database that refuses writes is a reason to stop
+		// qualifying — paper cycles that cannot be persisted are evidence
+		// lost, not evidence gathered. The global persistence breaker
+		// pauses qualification at the scanner gate until a write or the
+		// outbox's probe succeeds; the observer above raises the CRITICAL
+		// alert and records the transition. The reason stays generic:
+		// the outbox already logged the error, and driver errors can
+		// carry connection details that do not belong in risk_events.
+		outbox.OnPersistError = func(error) {
+			breakers.Trip(breakerPersistence, "", "database write failed; qualification paused until persistence recovers", time.Now())
+		}
+		outbox.OnPersistRecovered = func() {
+			breakers.Close(breakerPersistence, "", time.Now())
+		}
+	}
+
 	scn := &scanner.Scanner{
 		Topo:     topo,
 		Books:    books,
@@ -855,6 +977,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		Resolver: defaultRiskLimits(),
 		Breakers: breakers,
 		Capital:  resv,
+		Ledger:   ledger,
 		Clock:    time.Now,
 		IDGen:    newULID,
 		Cfg: scanner.Config{
@@ -869,7 +992,15 @@ func (e *Engine) Run(ctx context.Context) error {
 		},
 		Out: make(chan scanner.Event, 256),
 	}
-	scn.ClockHealthy.Store(true)
+	// P1-8: the clock monitor polls the venue's server time and the gate
+	// reads it every tick. Until its first successful probe the clock is
+	// unverified, which the risk engine reports as RISK_CLOCK_UNSAFE —
+	// qualification starts only once the offset has been measured.
+	clock := marketdata.NewClockMonitor(rest)
+	scn.ClockHealthy.Store(clock.Healthy())
+	e.mu.Lock()
+	e.clock = clock
+	e.mu.Unlock()
 	e.attachRunObservers(scn, feed)
 	if e.Strategy != nil {
 		// E6: register the hot-swap callback ONCE across the engine's
@@ -904,18 +1035,24 @@ func (e *Engine) Run(ctx context.Context) error {
 	// PAPER mode: assemble the full simulation loop behind the scanner.
 	var paperEng *paper.Engine
 	var paperIn chan scanner.Event
-	port := portfolio.New(resv, initial)
+	var marker portfolio.BookMarker // set in PAPER mode; the ledger refresh runs only then
+	port := portfolio.New(resv, configuredInitial)
+	if resumed {
+		port.Restore(resume.Portfolio)
+	}
 	if mode == config.ModePaper {
 		if e.Store != nil {
 			balances := map[string]string{}
-			for a, v := range initial {
+			for a, v := range configuredInitial {
 				balances[string(a)] = v.String()
 			}
 			if err := e.Store.EnsurePaperSession(runCtx, sessionID, string(mode), balances, 1, e.cfg.Seed); err != nil {
 				e.log.Warn("paper session registration failed", "error", err)
 			}
 		}
-		marker := portfolio.BookMarker{Books: books, Markets: scoped}
+		// Liquidation marks: stranded exposure is valued through the
+		// book's depth net of the taker fee, not at the top level.
+		marker = portfolio.BookMarker{Books: books, Markets: scoped, Fees: sched, Depth: 50}
 		executor := simulation.NewPaper(
 			books, rulesLookup(rules), sched,
 			simulation.WallClock{}, simulation.RealWaiter{}, marker,
@@ -927,6 +1064,9 @@ func (e *Engine) Run(ctx context.Context) error {
 				LimitToleranceBps: decimal.NewFromInt(20),
 				Depth:             50,
 				Seed:              e.cfg.Seed,
+				// Same age budget as the scanner's pre-gate: a fill on a
+				// book older than this is a fill on a market we cannot see.
+				MaxBookAge: scn.Cfg.MaxBookAge,
 			},
 			newULID,
 		)
@@ -943,13 +1083,58 @@ func (e *Engine) Run(ctx context.Context) error {
 			In:        paperIn,
 			Clock:     time.Now,
 			IDGen:     newULID,
+			// The operator's max_concurrent_simulations, not a literal
+			// (audit F11); the risk gate reads the live value, this cap
+			// backs it at the next restart.
+			MaxConcurrent: scn.CurrentLimits().MaxConcurrentSimulations,
+			// Pre-execution revalidation and the ledger invariant check
+			// are the paper engine's two guards around a cycle; the
+			// scanner owns the first, the reservation ledger the second.
+			Revalidate: scn.Revalidate,
+			OnRevalidationReject: func(op opportunity.Opportunity, dec risk.Decision) {
+				e.countReject(dec.ReasonCode)
+				if e.Metrics != nil {
+					e.Metrics.CountRejection(string(op.Exchange), "revalidation", dec.ReasonCode)
+				}
+				e.log.Info("opportunity refused at revalidation",
+					"opportunity_id", op.ID, "triangle_id", op.TriangleID, "reason", dec.ReasonCode)
+				if outbox != nil && e.shouldPersistRiskReject(op.TriangleID, "revalidation:"+dec.ReasonCode, time.Now()) {
+					var observed, threshold string
+					for _, c := range dec.Checks {
+						if c.Name == dec.ReasonCode {
+							observed, threshold = c.Observed, c.Threshold
+							break
+						}
+					}
+					outbox.Enqueue(storage.Record{Kind: "risk_event", RiskEvent: &storage.RiskEvent{
+						ID: newULID(), TS: time.Now(), Kind: "risk_reject",
+						Subject: "triangle:" + op.TriangleID, LimitName: dec.ReasonCode,
+						Observed: observed, Threshold: threshold,
+						Action: "revalidation: " + dec.ReasonCode,
+					}})
+				}
+			},
+			OnInvariantViolation: func(err error) {
+				e.log.Error("paper ledger invariant violated; paper engine paused", "error", err)
+				breakers.Trip(breakerInconsistency, "", "ledger invariant violated: "+err.Error(), time.Now())
+			},
 			OnResult: func(res execution.CycleResult) {
 				e.log.Info("paper cycle settled",
 					"cycle_id", res.CycleID, "outcome", string(res.Outcome),
 					"pnl", res.TotalPnL.String(), "consumed", res.InputConsumed.String())
+				// Loss and drawdown are re-read after every settlement so
+				// the next evaluation gates on them and a breached limit
+				// opens its breaker at once, not on the next tick.
+				ledger.refresh(time.Now(), port, marker, starts, scn.CurrentLimits(), breakers)
+				slipPol.observe(res, scn.CurrentLimits(), breakers, time.Now())
+				if outbox != nil {
+					snap := buildLedgerSnapshot(e.currentSessionID(), string(binance.ID), time.Now(), resv, port, marker, starts)
+					outbox.Enqueue(storage.Record{Kind: "ledger_snapshot", Ledger: &snap})
+				}
 				if e.Metrics != nil && res.Outcome == execution.OutcomeAllFilled {
 					e.Metrics.ObserveSlippage(string(binance.ID), res.SlippageBps.InexactFloat64())
 				}
+				e.observeCycle(string(binance.ID), res)
 				if res.Outcome != execution.OutcomeAllFilled {
 					e.notify(notification.SeverityWarning, "paper:cycle_failed",
 						"Paper cycle "+string(res.Outcome),
@@ -993,6 +1178,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		} else {
 			paperEng.Resume()
 		}
+		// F6: the executor's leg-stage events feed the paper engine's
+		// live-cycle registry — the console's "what is executing right
+		// now and where is it stuck" view. Observation only: progress
+		// never alters execution.
+		executor.SetProgressHook(paperEng.TrackLeg)
 		scn.Sims = paperEng.Active
 	}
 
@@ -1064,23 +1254,33 @@ func (e *Engine) Run(ctx context.Context) error {
 	// would produce two feeds, two scanners and two outboxes racing on
 	// e.scn, and the outbox's cancel-path drain (3s deadline) would never
 	// get to run before the next Run starts overwriting persisted state.
-	var wg sync.WaitGroup
+	//
+	// P0-3: the outbox is a writer, not a producer. It runs under its own
+	// context and is cancelled only after every producer has returned —
+	// the paper engine's Run waits for its in-flight cycles, which settle
+	// as ABORTED and enqueue their result — so a shutdown or restart can
+	// no longer close the writer while the records it exists to keep are
+	// still being produced (shutdownStaged below).
+	var producers, writers sync.WaitGroup
 	errCh := make(chan error, 8)
-	spawn := func(fn func(context.Context) error) {
+	persistCtx, cancelPersist := context.WithCancel(context.Background())
+	defer cancelPersist()
+	spawn := func(wg *sync.WaitGroup, c context.Context, fn func(context.Context) error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errCh <- fn(runCtx)
+			errCh <- fn(c)
 		}()
 	}
-	spawn(feed.Run)
-	spawn(scn.Run)
-	spawn(func(c context.Context) error { return e.consumeEvents(c, scn, paperIn, outbox) })
+	spawn(&producers, runCtx, feed.Run)
+	spawn(&producers, runCtx, scn.Run)
+	spawn(&producers, runCtx, clock.Run)
+	spawn(&producers, runCtx, func(c context.Context) error { return e.consumeEvents(c, scn, paperIn, outbox) })
 	if paperEng != nil {
-		spawn(paperEng.Run)
+		spawn(&producers, runCtx, paperEng.Run)
 	}
 	if outbox != nil {
-		spawn(outbox.Run)
+		spawn(&writers, persistCtx, outbox.Run)
 	}
 
 	// Staleness sweep: books that stop ticking degrade to STALE.
@@ -1115,18 +1315,57 @@ loop:
 			// so an arbitrary number of concurrent readers can no longer
 			// steal part of the delta window from one another.
 			e.msgRate.sample(now, feed.Stats.Frames.Load())
+			feedPol.tick(now)
+			scn.ClockHealthy.Store(clock.Healthy())
+			if paperEng != nil {
+				ledger.refresh(now, port, marker, starts, scn.CurrentLimits(), breakers)
+			}
 		}
 	}
 	cancelRun()
+	e.shutdownStaged(&producers, &writers, cancelPersist, outboxDrainTimeout)
+	return runErr
+}
 
+// outboxDrainTimeout bounds the outbox's final flush at shutdown; the
+// writer stage of shutdownStaged always gets at least this window.
+const outboxDrainTimeout = 5 * time.Second
+
+// shutdownStaged is Run's exit sequence (P0-3): wait for the producers
+// (feed, scanner, event fan-out, paper engine with its in-flight cycles)
+// to return, then cancel the persistence context and wait for the
+// outbox to drain. Each stage is bounded so a stuck goroutine can never
+// hold a restart forever, and the writers keep at least their drain
+// window even when the producers used up the grace — cutting the
+// writer short is exactly the record loss this ordering exists to
+// prevent.
+func (e *Engine) shutdownStaged(producers, writers *sync.WaitGroup, cancelPersist context.CancelFunc, drain time.Duration) {
+	deadline := time.Now().Add(e.cfg.ShutdownGrace)
+	if !waitGroupWithin(producers, time.Until(deadline)) {
+		e.log.Error("engine: shutdown grace exceeded; producer goroutines still running",
+			"grace", e.cfg.ShutdownGrace.String())
+	}
+	cancelPersist()
+	window := time.Until(deadline)
+	if floor := drain + time.Second; window < floor {
+		window = floor
+	}
+	if !waitGroupWithin(writers, window) {
+		e.log.Error("engine: outbox did not finish draining within the shutdown window",
+			"window", window.String())
+	}
+}
+
+// waitGroupWithin waits for wg, giving up after d.
+func waitGroupWithin(wg *sync.WaitGroup, d time.Duration) bool {
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(e.cfg.ShutdownGrace):
-		e.log.Error("engine: shutdown grace exceeded; child goroutines still running", "grace", e.cfg.ShutdownGrace.String())
+		return true
+	case <-time.After(d):
+		return false
 	}
-	return runErr
 }
 
 // consumeEvents fans scanner events out: qualified opportunities go to
@@ -1144,6 +1383,9 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 			}
 			if ev.Opportunity.Status == opportunity.StatusRejected {
 				e.countReject(ev.Decision.ReasonCode)
+				if e.Metrics != nil {
+					e.Metrics.CountRejection(string(ev.Opportunity.Exchange), "qualification", ev.Decision.ReasonCode)
+				}
 				// BL-31: persist the rejection so the Risk Center's
 				// timeline survives a restart (today only the in-memory
 				// reject_reason_counts histogram did) — but only the
@@ -1192,8 +1434,13 @@ func (e *Engine) consumeEvents(ctx context.Context, scn *scanner.Scanner, paperI
 					select {
 					case paperIn <- ev:
 					default:
-						e.log.Warn("paper queue full; opportunity dropped",
-							"opportunity_id", ev.Opportunity.ID)
+						// P0-3: counted (status, health, metrics), not
+						// just logged — a qualified opportunity that was
+						// never simulated is a gap in the evidence.
+						e.paperDropped.Add(1)
+						e.log.Warn("paper queue full; qualified opportunity not simulated",
+							"opportunity_id", ev.Opportunity.ID,
+							"dropped_total", e.paperDropped.Load())
 					}
 				}
 				e.log.Info("opportunity qualified",
@@ -1307,11 +1554,13 @@ func (e *Engine) registerMetricsOnce() {
 					return metrics.ScannerStats{}
 				}
 				return metrics.ScannerStats{
-					Evaluations:   scn.Stats.Evaluations.Load(),
-					Qualified:     scn.Stats.Qualified.Load(),
-					Rejected:      scn.Stats.Rejected.Load(),
-					SkippedBooks:  scn.Stats.SkippedBooks.Load(),
-					DroppedEvents: scn.Stats.DroppedEvts.Load(),
+					Evaluations:         scn.Stats.Evaluations.Load(),
+					Qualified:           scn.Stats.Qualified.Load(),
+					Rejected:            scn.Stats.Rejected.Load(),
+					SkippedBooks:        scn.Stats.SkippedBooks.Load(),
+					DroppedEvents:       scn.Stats.DroppedEvts.Load(),
+					Revalidations:       scn.Stats.Revalidations.Load(),
+					RevalidationRejects: scn.Stats.RevalidationRejects.Load(),
 				}
 			},
 			Triangles: func() int64 {
@@ -1426,6 +1675,27 @@ func (e *Engine) registerMetricsOnce() {
 				}
 				st := c.Status()
 				return st.Written, st.Dropped
+			},
+			Outbox: func() *metrics.QueueStats {
+				ob := e.currentOutbox()
+				if ob == nil {
+					return nil
+				}
+				return &metrics.QueueStats{
+					Depth: int64(ob.Depth()), Capacity: int64(ob.Capacity()),
+					Dropped: ob.Dropped(), Written: ob.Written(),
+					WriteFailures: ob.WriteFailures(),
+				}
+			},
+			PaperQueue: func() *metrics.QueueStats {
+				pap := e.Paper()
+				if pap == nil {
+					return nil
+				}
+				return &metrics.QueueStats{
+					Depth: int64(pap.QueueDepth()), Capacity: int64(pap.QueueCapacity()),
+					Dropped: e.paperDropped.Load(),
+				}
 			},
 		}
 		if err := m.RegisterEngine(src); err != nil {

@@ -30,6 +30,10 @@ const (
 	ReasonDailyLoss        = "RISK_DAILY_LOSS"
 	ReasonDrawdown         = "RISK_DRAWDOWN"
 	ReasonExpired          = "RISK_TTL_EXPIRED"
+	// ReasonRevalidation: the pre-execution re-quote found no executable
+	// cycle at the qualified size (depth gone, venue minimums no longer
+	// cleared) — the scanner's Revalidate emits it before the gate runs.
+	ReasonRevalidation = "RISK_REVALIDATION"
 )
 
 // Context is the risk-relevant world snapshot at evaluation time. The

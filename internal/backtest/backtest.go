@@ -175,6 +175,10 @@ func Run(opts Options) (Result, error) {
 
 	// World: replayed books, optionally thinned.
 	replayer := marketdata.NewReplayer(opts.Streams)
+	// Books in a recording degrade to STALE on the recorded clock with the
+	// same age budget the scanner gates on (audit M3), so a quiet market
+	// in replay is judged the way live would judge it.
+	replayer.MaxBookAge = params.ScannerConfig(1).MaxBookAge
 	if !sc.WorldDepthFactor.Equal(decimal.NewFromInt(1)) {
 		f := sc.WorldDepthFactor
 		replayer.Transform = func(ev *orderbook.DepthEvent) {

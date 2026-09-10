@@ -29,19 +29,24 @@ func orgFilter(ctx context.Context, col string, argIdx int) (string, []any) {
 }
 
 // ScreenerSettings adapts the store to screener.SettingsStore: immutable
-// version rows in screener_settings with exactly one active at a time
-// (same shape as PlatformSettings, internal/storage/platformsettings.go).
+// version rows in screener_settings with exactly one active per
+// organisation (migration 000017; same shape as PlatformSettings,
+// internal/storage/platformsettings.go, plus the org_id every other
+// screener table carries). The organisation comes from ctx: Insert
+// deactivates and writes within it, Active reads it, Get/List filter on
+// it like the sibling stores; unscoped means the platform organisation.
 type ScreenerSettings struct{ s *Store }
 
 func (s *Store) ScreenerSettings() *ScreenerSettings { return &ScreenerSettings{s: s} }
 
 func (c *ScreenerSettings) Insert(ctx context.Context, createdBy string, payload, diff json.RawMessage, parent int64) (int64, time.Time, error) {
+	org := tenancy.OrgOrPlatform(ctx)
 	tx, err := c.s.Pool.Begin(ctx)
 	if err != nil {
 		return 0, time.Time{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `UPDATE screener_settings SET active = FALSE WHERE active`); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE screener_settings SET active = FALSE WHERE active AND org_id = $1`, org); err != nil {
 		return 0, time.Time{}, err
 	}
 	var (
@@ -49,10 +54,10 @@ func (c *ScreenerSettings) Insert(ctx context.Context, createdBy string, payload
 		createdAt time.Time
 	)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO screener_settings (created_by, active, payload, diff, parent_version)
-		VALUES (NULLIF($1,''), TRUE, $2, $3, NULLIF($4,0))
+		INSERT INTO screener_settings (created_by, active, payload, diff, parent_version, org_id)
+		VALUES (NULLIF($1,''), TRUE, $2, $3, NULLIF($4,0), $5)
 		RETURNING version, created_at`,
-		createdBy, payload, diff, parent).Scan(&version, &createdAt)
+		createdBy, payload, diff, parent, org).Scan(&version, &createdAt)
 	if err != nil {
 		return 0, time.Time{}, err
 	}
@@ -63,7 +68,7 @@ func (c *ScreenerSettings) Insert(ctx context.Context, createdBy string, payload
 }
 
 func (c *ScreenerSettings) Active(ctx context.Context) (screener.Snapshot, bool, error) {
-	snap, err := c.scanOne(ctx, `WHERE active`)
+	snap, err := c.scanOne(ctx, `WHERE active AND org_id = $1`, tenancy.OrgOrPlatform(ctx))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return screener.Snapshot{}, false, nil
 	}
@@ -74,7 +79,8 @@ func (c *ScreenerSettings) Active(ctx context.Context) (screener.Snapshot, bool,
 }
 
 func (c *ScreenerSettings) Get(ctx context.Context, version int64) (screener.Snapshot, error) {
-	snap, err := c.scanOne(ctx, `WHERE version = $1`, version)
+	where, args := orgFilter(ctx, "org_id", 2)
+	snap, err := c.scanOne(ctx, `WHERE version = $1`+where, append([]any{version}, args...)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return screener.Snapshot{}, screener.ErrNotFound
 	}
@@ -111,9 +117,10 @@ func (c *ScreenerSettings) List(ctx context.Context, limit int) ([]screener.Vers
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	where, args := orgFilter(ctx, "org_id", 2)
 	rows, err := c.s.Pool.Query(ctx, `
 		SELECT version, created_by, created_at, active, diff, parent_version
-		FROM screener_settings ORDER BY version DESC LIMIT $1`, limit)
+		FROM screener_settings WHERE TRUE`+where+` ORDER BY version DESC LIMIT $1`, append([]any{limit}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +249,7 @@ func (c *ScreenerEvents) ListEvents(ctx context.Context, ruleID string, limit in
 	rows, err := c.s.Pool.Query(ctx, `
 		SELECT id, rule_id, kind, base, quote, buy_venue, sell_venue,
 		       opened_at, closed_at, lifetime_s, peak_net_bps,
-		       telegram_sent, paper_execution_id, delivered
+		       telegram_sent, paper_execution_id, delivered, close_reason
 		FROM screener_events WHERE ($1 = '' OR rule_id = $1)`+where+` ORDER BY opened_at DESC LIMIT $2`,
 		append([]any{ruleID, limit}, args...)...)
 	if err != nil {
@@ -257,10 +264,14 @@ func (c *ScreenerEvents) ListEvents(ctx context.Context, ruleID string, limit in
 			peakNetBps          string
 			paperExecID         *string
 			delivered           []byte
+			closeReason         *string
 		)
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.Kind, &e.Base, &e.Quote, &buyVenue, &sellVenue,
-			&e.OpenedAt, &e.ClosedAt, &e.LifetimeS, &peakNetBps, &e.TelegramSent, &paperExecID, &delivered); err != nil {
+			&e.OpenedAt, &e.ClosedAt, &e.LifetimeS, &peakNetBps, &e.TelegramSent, &paperExecID, &delivered, &closeReason); err != nil {
 			return nil, err
+		}
+		if closeReason != nil {
+			e.CloseReason = *closeReason
 		}
 		if buyVenue != nil {
 			e.BuyVenue = screener.Venue(*buyVenue)

@@ -247,3 +247,34 @@ func (s *Service) AutoPaper() AutoPaperSource {
 	defer s.mu.Unlock()
 	return s.autoPaper
 }
+
+// RegisterDiagnostics attaches one ticker's counter snapshot under name
+// (the alert evaluator registers its lane accounting: how many lanes it
+// evaluated, how many its cap cut, how many are on hold). fn is called
+// on every GET /screener/status and must be cheap and concurrency-safe.
+// Registering the same name again replaces the earlier function.
+func (s *Service) RegisterDiagnostics(name string, fn func() map[string]int64) {
+	s.diagMu.Lock()
+	defer s.diagMu.Unlock()
+	if s.diag == nil {
+		s.diag = map[string]func() map[string]int64{}
+	}
+	s.diag[name] = fn
+}
+
+// Diagnostics returns every registered ticker's counters by name (an
+// empty map when nothing registered — the status route then shows no
+// automation block rather than zeros that look measured).
+func (s *Service) Diagnostics() map[string]map[string]int64 {
+	s.diagMu.Lock()
+	fns := make(map[string]func() map[string]int64, len(s.diag))
+	for name, fn := range s.diag {
+		fns[name] = fn
+	}
+	s.diagMu.Unlock()
+	out := make(map[string]map[string]int64, len(fns))
+	for name, fn := range fns {
+		out[name] = fn()
+	}
+	return out
+}

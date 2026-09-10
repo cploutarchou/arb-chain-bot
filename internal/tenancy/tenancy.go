@@ -88,10 +88,23 @@ var (
 // Store is the persistence surface (pgx in internal/storage, memory
 // below for tests and database-less profiles).
 type Store interface {
-	// ContextForUser resolves the organisation the user acts in. A user
-	// with several memberships acts in the oldest one (v1: one
-	// organisation per user; switching lands with seats work).
+	// ContextForUser resolves the organisation the user acts in by
+	// default: the first entry of ContextsForUser. Because the platform
+	// organisation sorts last there, a member of both a tenant
+	// organisation and the platform acts in the tenant organisation
+	// unless the request names the platform explicitly (the API's
+	// X-Org-ID header); the platform is the default only for accounts
+	// that belong to nothing else (operator staff).
 	ContextForUser(ctx context.Context, userID string) (Context, error)
+	// ContextsForUser returns every membership the user holds with its
+	// organisation: tenant organisations first, oldest membership
+	// first, the platform organisation last. Empty when the user
+	// belongs to nothing.
+	ContextsForUser(ctx context.Context, userID string) ([]Context, error)
+	// ListOrgIDs returns every organisation id, ascending. Background
+	// work that must run once per tenant (the nightly screener reports)
+	// iterates it; the platform organisation is always included.
+	ListOrgIDs(ctx context.Context) ([]int64, error)
 	Org(ctx context.Context, id int64) (Org, error)
 	CreateOrg(ctx context.Context, o Org, ownerUserID string) (Org, error)
 	SetRiskAck(ctx context.Context, orgID int64, version string, at time.Time, ip string) error
@@ -101,6 +114,13 @@ type Store interface {
 	AddMember(ctx context.Context, m Membership) error
 	SetMemberRole(ctx context.Context, orgID int64, userID string, role Role) error
 	RemoveMember(ctx context.Context, orgID int64, userID string) error
+	// MembershipFor resolves one (org_id, user_id) membership row,
+	// ErrNoMembership if the user does not currently belong to the
+	// organisation. Used to verify an API key's owner still holds a
+	// live seat in the key's organisation at authentication time (audit
+	// S3/P1-12), independent of which organisation ContextForUser would
+	// pick by default.
+	MembershipFor(ctx context.Context, orgID int64, userID string) (Membership, error)
 	// OrgOfRule returns the organisation owning a screener rule (the
 	// engine has no request context; it resolves entitlements from the
 	// rule it is about to act on).

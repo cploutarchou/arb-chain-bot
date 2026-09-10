@@ -21,6 +21,10 @@ spec:
         {{- include "arb.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: arbd
         arb.io/mode: {{ include "arb.mode" . }}
+        arb.io/persistence: {{ ternary "enabled" "disabled" .Values.arbd.persistence.enabled | quote }}
+        {{- if .Values.canary.enabled }}
+        arb.io/canary: "true"
+        {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap-arbd.yaml") . | sha256sum }}
         prometheus.io/scrape: "true"
@@ -54,9 +58,17 @@ spec:
                 name: {{ include "arb.arbdName" . }}-config
             - secretRef:
                 name: {{ include "arb.secretName" . }}
-          {{- with .Values.arbd.extraEnv }}
+          {{- if or (not .Values.arbd.persistence.enabled) .Values.arbd.extraEnv }}
           env:
+            {{- if not .Values.arbd.persistence.enabled }}
+            # An explicit value beats envFrom, so even a hand-made Secret
+            # carrying ARB_DATABASE_URL cannot attach this pod to a database.
+            - name: ARB_DATABASE_URL
+              value: ""
+            {{- end }}
+            {{- with .Values.arbd.extraEnv }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           livenessProbe:
             httpGet: {path: {{ .Values.arbd.probes.liveness.path }}, port: http}

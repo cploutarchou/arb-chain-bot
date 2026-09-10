@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -137,8 +139,9 @@ func engine(t testing.TB, books fakeBooks, clock *VirtualClock, cfg Config) *Eng
 // --- tests -----------------------------------------------------------------
 
 // Unchanged books: the simulation must reproduce the plan's economics
-// exactly and settle ALL_FILLED. Realized slippage vs the buffered
-// estimate equals exactly the configured 5 bps of buffers.
+// exactly and settle ALL_FILLED. Realized slippage against the un-buffered
+// plan is exactly zero — the buffers are a risk allowance, never part of
+// the measurement.
 func TestAllFilledReproducesPlan(t *testing.T) {
 	books := planBooks()
 	clock := NewVirtualClock(t0)
@@ -173,10 +176,13 @@ func TestAllFilledReproducesPlan(t *testing.T) {
 	if len(res.Orders) != 3 || res.Orders[2].Status != execution.OrderFilled {
 		t.Fatalf("orders=%+v", res.Orders)
 	}
-	// Buffered estimate was 5 bps below the raw quote → slippage vs
-	// estimate = -5 bps (we did better than the buffered number).
-	if !res.SlippageBps.Equal(d("-5")) {
-		t.Fatalf("slippage = %s bps", res.SlippageBps)
+	// Identical books ⇒ the realized return equals the plan's return and
+	// slippage is zero, whatever the configured buffers (5 bps here).
+	if !res.SlippageBps.IsZero() {
+		t.Fatalf("slippage = %s bps, want 0", res.SlippageBps)
+	}
+	if !res.PlannedReturnBps.Equal(d("169.4204")) || !res.ActualReturnBps.Equal(res.PlannedReturnBps) {
+		t.Fatalf("planned = %s actual = %s bps", res.PlannedReturnBps, res.ActualReturnBps)
 	}
 	if !res.SettledAt.After(res.StartedAt) {
 		t.Fatal("virtual time did not advance")
@@ -228,6 +234,11 @@ func TestAdverseMoveWithinToleranceFills(t *testing.T) {
 	}
 	if res.RealizedPnL.GreaterThanOrEqual(d("16.94204")) {
 		t.Fatalf("pnl did not degrade: %s", res.RealizedPnL)
+	}
+	// The adverse move is the only case in this file that should register
+	// as cycle slippage: planned 169.4204 bps, actual below it.
+	if !res.SlippageBps.IsPositive() || !res.ActualReturnBps.LessThan(res.PlannedReturnBps) {
+		t.Fatalf("cycle slippage = %s (planned %s, actual %s)", res.SlippageBps, res.PlannedReturnBps, res.ActualReturnBps)
 	}
 }
 
@@ -334,6 +345,13 @@ func TestLeg1PartialFill(t *testing.T) {
 	if !res.Outcome.Complete() || !res.FinalAmount.IsPositive() {
 		t.Fatalf("partial cycle did not complete: %+v", res)
 	}
+	// Prices are byte-identical to the plan; only the size shrank. The
+	// return per unit deployed is therefore the plan's return and the
+	// slippage is zero — a size mismatch must never masquerade as
+	// slippage (the previous formula reported +15 229 bps here).
+	if !res.SlippageBps.IsZero() || !res.ActualReturnBps.Equal(res.PlannedReturnBps) {
+		t.Fatalf("slippage = %s (planned %s, actual %s)", res.SlippageBps, res.PlannedReturnBps, res.ActualReturnBps)
+	}
 }
 
 func TestExpiredPlanShortCircuits(t *testing.T) {
@@ -367,7 +385,10 @@ func (w *cancelAfterWaiter) Wait(ctx context.Context, dur time.Duration) error {
 	return nil
 }
 
-func TestTimeoutMidCycleTracksExposure(t *testing.T) {
+// Cancellation mid-cycle (engine shutdown or restart) settles as ABORTED
+// with the leg-1 proceeds as exposure: a controlled stop is not an
+// exchange timing failure, but the stranded position is just as real.
+func TestCancelMidCycleAbortsWithExposure(t *testing.T) {
 	books := planBooks()
 	clock := NewVirtualClock(t0)
 	e := engine(t, books, clock, Config{Seed: 1})
@@ -380,11 +401,76 @@ func TestTimeoutMidCycleTracksExposure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if res.Outcome != execution.OutcomeAborted {
+		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+	if res.Outcome.Complete() {
+		t.Fatal("ABORTED must not count as a completed cycle")
+	}
+	if !res.Exposure["BTC"].Equal(d("9.99")) {
+		t.Fatalf("exposure = %v", res.Exposure)
+	}
+	if !res.FinalAmount.IsZero() || !res.InputConsumed.IsPositive() {
+		t.Fatalf("aborted cycle must show deployed input and no return: consumed=%s final=%s", res.InputConsumed, res.FinalAmount)
+	}
+	if len(res.Orders) != 2 || res.Orders[1].Status != execution.OrderExpired {
+		t.Fatalf("orders = %+v", res.Orders)
+	}
+}
+
+// deadlineWaiter fails the nth wait with a deadline, the way a per-cycle
+// timeout would.
+type deadlineWaiter struct {
+	inner Waiter
+	left  int
+}
+
+func (w *deadlineWaiter) Wait(ctx context.Context, dur time.Duration) error {
+	w.left--
+	if w.left == 0 {
+		return context.DeadlineExceeded
+	}
+	return w.inner.Wait(ctx, dur)
+}
+
+// A deadline, unlike a cancellation, is a TIMEOUT.
+func TestDeadlineMidCycleIsTimeout(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+	e.wait = &deadlineWaiter{inner: VirtualWaiter{Clock: clock}, left: 3}
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res.Outcome != execution.OutcomeTimeout {
 		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
 	}
 	if !res.Exposure["BTC"].Equal(d("9.99")) {
 		t.Fatalf("exposure = %v", res.Exposure)
+	}
+}
+
+// Cancellation before leg 1 is acknowledged deploys nothing: ABORTED with
+// no exposure, no input consumed, so the paper engine's settle releases
+// the whole reservation.
+func TestCancelBeforeLeg1DeploysNothing(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := e.ExecuteCycle(ctx, plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAborted {
+		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+	if len(res.Exposure) != 0 || !res.InputConsumed.IsZero() {
+		t.Fatalf("nothing should be deployed: exposure=%v consumed=%s", res.Exposure, res.InputConsumed)
 	}
 }
 
@@ -413,5 +499,223 @@ func BenchmarkExecuteCycle(b *testing.B) {
 		if _, err := e.ExecuteCycle(context.Background(), p2); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// --- fill-time book health --------------------------------------------------
+
+// A book that degraded between qualification and the fill carries no
+// knowable price: the leg fails rather than filling on the last levels
+// it showed, and whatever leg 1 deployed is exposure.
+func TestUnhealthyBookAtFillTimeFailsTheLeg(t *testing.T) {
+	books := planBooks()
+	stale := books[mETHBTC]
+	stale.State = orderbook.StateStale
+	books[mETHBTC] = stale
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeLeg1FilledLeg2Failed {
+		t.Fatalf("outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+	if !res.Exposure["BTC"].Equal(d("9.99")) {
+		t.Fatalf("exposure = %v", res.Exposure)
+	}
+	if !strings.Contains(res.Reason, "STALE") {
+		t.Fatalf("reason %q does not name the book state", res.Reason)
+	}
+}
+
+// Leg 1 on a book that is not HEALTHY deploys nothing: REJECTED.
+func TestUnhealthyLeg1BookRejectsBeforeDeploying(t *testing.T) {
+	for _, state := range []orderbook.State{orderbook.StateSyncing, orderbook.StateCorrupted, orderbook.StateDisconnected} {
+		books := planBooks()
+		v := books[mBTCUSDT]
+		v.State = state
+		books[mBTCUSDT] = v
+		clock := NewVirtualClock(t0)
+		e := engine(t, books, clock, Config{Seed: 1})
+
+		res, err := e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome != execution.OutcomeRejected || !res.InputConsumed.IsZero() || len(res.Exposure) != 0 {
+			t.Fatalf("%s: outcome=%s consumed=%s exposure=%v", state, res.Outcome, res.InputConsumed, res.Exposure)
+		}
+	}
+}
+
+// With an age budget, a fill-time view older than the budget fails the
+// leg even when its state is still HEALTHY (the staleness sweep lags).
+func TestBookAgeAtFillTimeIsEnforced(t *testing.T) {
+	fresh := func() fakeBooks {
+		books := planBooks()
+		for id, v := range books {
+			v.ReceiveTime = t0
+			books[id] = v
+		}
+		return books
+	}
+	clock := NewVirtualClock(t0)
+	e := engine(t, fresh(), clock, Config{Seed: 1, MaxBookAge: time.Second})
+	res, err := e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAllFilled {
+		t.Fatalf("within budget: outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+
+	clock = NewVirtualClock(t0)
+	e = engine(t, fresh(), clock, Config{Seed: 1, MaxBookAge: time.Millisecond})
+	res, err = e.ExecuteCycle(context.Background(), plan(t, planBooks(), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeRejected || !strings.Contains(res.Reason, "old") {
+		t.Fatalf("over budget: outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+}
+
+// IOC limits are snapped to the instrument's tick on the conservative
+// side of the tolerance: down for a buy, up for a sell (audit T5).
+func TestLimitPriceIsTickQuantized(t *testing.T) {
+	rules := exchange.InstrumentRules{PriceMode: exchange.PrecisionStep, PriceTick: d("0.01"),
+		QtyMode: exchange.PrecisionStep, QtyStep: d("0.001")}
+	buy, err := quantizeLimit(rules, d("100.23456"), exchange.SideBuy)
+	if err != nil || !buy.Equal(d("100.23")) {
+		t.Fatalf("buy limit = %s err=%v", buy, err)
+	}
+	sell, err := quantizeLimit(rules, d("99.76543"), exchange.SideSell)
+	if err != nil || !sell.Equal(d("99.77")) {
+		t.Fatalf("sell limit = %s err=%v", sell, err)
+	}
+	// Through the executor: the planned VWAP 100 with 20 bps tolerance is
+	// 100.2, already on a 0.01 tick; with a 0.5 tick it snaps to 100.
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1})
+	coarse := rules
+	coarse.PriceTick = d("0.5")
+	e.rules = fakeRules{mBTCUSDT: coarse, mETHBTC: stepRules(), mETHUSDT: stepRules()}
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Orders[0].LimitPrice.Equal(d("100")) {
+		t.Fatalf("leg-1 limit = %s, want 100 on a 0.5 tick", res.Orders[0].LimitPrice)
+	}
+}
+
+// MARKET orders are validated against the venue's market-order quantity
+// filter (audit T4): a size the limit filter allows but the market
+// filter refuses is rejected before anything is deployed.
+func TestMarketOrdersUseTheMarketLotSizeFilter(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 1, MarketOrders: true})
+	tight := stepRules()
+	tight.MaxQty = d("100")
+	tight.MarketMaxQty = d("5") // the plan buys ~9.99 BTC on leg 1
+	e.rules = fakeRules{mBTCUSDT: tight, mETHBTC: stepRules(), mETHUSDT: stepRules()}
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeRejected || !strings.Contains(res.Reason, "maximum") {
+		t.Fatalf("outcome = %s (%s), want REJECTED by the market filter", res.Outcome, res.Reason)
+	}
+
+	// The same rules in limit mode fill: the limit filter allows 100.
+	e = engine(t, books, clock, Config{Seed: 1})
+	e.rules = fakeRules{mBTCUSDT: tight, mETHBTC: stepRules(), mETHUSDT: stepRules()}
+	res, err = e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAllFilled {
+		t.Fatalf("limit mode outcome = %s (%s)", res.Outcome, res.Reason)
+	}
+}
+
+// TestProgressHookReportsLegStages: the executor reports one SUBMITTED
+// and one FILLED event per leg on an all-filled cycle, carrying the
+// cycle and opportunity ids the monitor joins on (audit F6).
+func TestProgressHookReportsLegStages(t *testing.T) {
+	books := planBooks()
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 7})
+	var mu sync.Mutex
+	var events []execution.CycleProgress
+	e.SetProgressHook(func(p execution.CycleProgress) {
+		mu.Lock()
+		events = append(events, p)
+		mu.Unlock()
+	})
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeAllFilled {
+		t.Fatalf("outcome = %s", res.Outcome)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 6 {
+		t.Fatalf("events = %d, want 6: %+v", len(events), events)
+	}
+	for i := 0; i < 3; i++ {
+		sub, fill := events[2*i], events[2*i+1]
+		if sub.CycleID != "cycle-1" || sub.OpportunityID != "op-1" || sub.LegNo != i+1 {
+			t.Fatalf("submit event %d = %+v", 2*i, sub)
+		}
+		if sub.Stage != execution.LegStageSubmitted || fill.Stage != execution.LegStageFilled {
+			t.Fatalf("stages = %s/%s", sub.Stage, fill.Stage)
+		}
+		if fill.LegNo != i+1 {
+			t.Fatalf("fill leg = %d", fill.LegNo)
+		}
+	}
+}
+
+// TestProgressHookReportsFailure: an unhealthy fill-time book fails the
+// leg and the hook reports FAILED for it — the monitor's "where is it
+// stuck" answer must not lag the failure by a settlement.
+func TestProgressHookReportsFailure(t *testing.T) {
+	books := planBooks()
+	// Leg 3's book goes STALE after the plan was priced.
+	stale := books[mETHUSDT]
+	stale.State = orderbook.StateStale
+	books[mETHUSDT] = stale
+	clock := NewVirtualClock(t0)
+	e := engine(t, books, clock, Config{Seed: 7})
+	var mu sync.Mutex
+	var events []execution.CycleProgress
+	e.SetProgressHook(func(p execution.CycleProgress) {
+		mu.Lock()
+		events = append(events, p)
+		mu.Unlock()
+	})
+
+	res, err := e.ExecuteCycle(context.Background(), plan(t, books, time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != execution.OutcomeLeg12FilledLeg3Failed {
+		t.Fatalf("outcome = %s", res.Outcome)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	last := events[len(events)-1]
+	if last.LegNo != 3 || last.Stage != execution.LegStageFailed {
+		t.Fatalf("last event = %+v, want leg 3 FAILED", last)
 	}
 }

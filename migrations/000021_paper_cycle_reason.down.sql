@@ -1,0 +1,1 @@
+ALTER TABLE paper_cycles DROP COLUMN IF EXISTS reason;

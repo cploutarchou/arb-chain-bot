@@ -1,9 +1,9 @@
 ---
 name: console-feature
-description: Workflow and conventions for adding an operator-facing feature to the arb-chain-bot console end to end — DB-backed settings, Go API with RBAC/CSRF/audit, Next.js page, e2e, review. Use for any "manage X from the UI" request (settings, providers, venues, users, jobs, secrets).
-when_to_use: "manage from the UI", "add a settings section", "store in the database instead of env", "new console page", "expose endpoint to the console", "enable/disable X from the console"
+description: 'Workflow and conventions for adding an operator-facing feature to the arb-chain-bot console end to end — DB-backed settings, Go API with RBAC/CSRF/audit, Next.js page, e2e, review. Use for any "manage X from the UI" request (settings, providers, venues, users, jobs, secrets). Use when the request mentions: manage from the UI, add a settings section, store in the database instead of env, new console page, expose endpoint to the console, enable/disable X from the console.'
+when_to_use: [manage from the UI, add a settings section, store in the database instead of env, new console page, expose endpoint to the console, enable/disable X from the console]
 allowed-tools: Read Grep Glob Write Edit Bash Agent
-argument-hint: [feature name]
+argument-hint: '[feature name]'
 ---
 
 # Console feature workflow

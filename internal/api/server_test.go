@@ -31,7 +31,7 @@ func newTestServer(t *testing.T) (*Server, *http.ServeMux) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		store.AddUser(auth.User{ID: u.id, Email: u.email, PasswordHash: hash, Role: u.role})
+		store.AddUser(auth.User{ID: u.id, Email: u.email, PasswordHash: hash, Role: u.role, PlatformAdmin: u.role == auth.RoleAdmin})
 	}
 	s.Auth = &auth.Manager{
 		Users: store, Sessions: store,

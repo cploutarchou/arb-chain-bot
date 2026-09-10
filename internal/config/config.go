@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -49,6 +50,12 @@ type Bootstrap struct {
 	LogLevel      string // debug|info|warn|error
 	ShutdownGrace time.Duration
 
+	// MetadataCheckInterval re-fetches the venue's exchangeInfo and
+	// diffs it against the running topology/instrument rules (audit T8);
+	// a material change opens the operator-closed metadata_changed
+	// breaker. Zero or negative disables the monitor.
+	MetadataCheckInterval time.Duration
+
 	// Recording / replay
 	RecordingDir  string
 	ReplaySession string // recording session id for REPLAY/BACKTEST
@@ -83,7 +90,21 @@ type Bootstrap struct {
 	AllowedOrigin string
 	AdminEmail    string
 	AdminPassword string
+
+	// TrustedProxies gates when the API server may honour
+	// X-Forwarded-For/X-Real-IP for login throttling and audit forensics
+	// (audit S1/P1-10): behind the documented reverse proxy, every
+	// request's TCP peer is the proxy itself, so those headers are
+	// consulted ONLY when the immediate peer address falls inside one of
+	// these CIDRs. Empty (the default) means no proxy is trusted — the
+	// resolved address is always the raw TCP peer, which is safe (if
+	// wrong behind an unconfigured proxy) rather than spoofable.
+	TrustedProxies []netip.Prefix
 }
+
+// DefaultMetadataCheckInterval is the venue-metadata monitor's cadence
+// (audit T8); see Bootstrap.MetadataCheckInterval.
+const DefaultMetadataCheckInterval = time.Hour
 
 // Load reads Bootstrap from the environment. Missing optional values get
 // safe defaults; invalid values return an error rather than a guess.
@@ -122,6 +143,15 @@ func Load() (Bootstrap, error) {
 		}
 		b.ShutdownGrace = d
 	}
+	// T8: default on (hourly); "0" disables the venue-metadata monitor.
+	b.MetadataCheckInterval = DefaultMetadataCheckInterval
+	if v := os.Getenv("ARB_METADATA_CHECK_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Bootstrap{}, fmt.Errorf("config: invalid ARB_METADATA_CHECK_INTERVAL: %w", err)
+		}
+		b.MetadataCheckInterval = d
+	}
 	if v := os.Getenv("ARB_SEED"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
@@ -142,8 +172,24 @@ func Load() (Bootstrap, error) {
 			b.TelegramAllowlist = append(b.TelegramAllowlist, id)
 		}
 	}
+	if v := os.Getenv("ARB_TRUSTED_PROXIES"); v != "" {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			prefix, err := parseTrustedProxy(part)
+			if err != nil {
+				return Bootstrap{}, fmt.Errorf("config: invalid ARB_TRUSTED_PROXIES entry %q: %w", part, err)
+			}
+			b.TrustedProxies = append(b.TrustedProxies, prefix)
+		}
+	}
 	if b.Mode.UsesRecordedClock() && b.ReplaySession == "" {
 		return Bootstrap{}, fmt.Errorf("config: mode %s requires ARB_REPLAY_SESSION", b.Mode)
+	}
+	if err := validateAdminPassword(b.AdminPassword); err != nil {
+		return Bootstrap{}, err
 	}
 	return b, nil
 }
@@ -176,6 +222,55 @@ func (b Bootstrap) Redacted() Bootstrap {
 		c.AdminPassword = "***"
 	}
 	return c
+}
+
+// parseTrustedProxy accepts either a CIDR ("10.0.0.0/8") or a bare
+// address ("10.0.0.5", treated as a single-host /32 or /128) — an
+// operator listing one load balancer address should not have to spell
+// out a host prefix.
+func parseTrustedProxy(s string) (netip.Prefix, error) {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p, nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(a, a.BitLen()), nil
+}
+
+// minAdminPasswordLength mirrors auth.MinPasswordLength. Kept as a
+// local constant (rather than importing internal/auth) so this
+// foundational package — read before anything else at process start —
+// stays free of dependencies on the layers built on top of it.
+const minAdminPasswordLength = 12
+
+// defaultAdminPassword is the placeholder shipped in .env.example and
+// scripts/create-secret.sh. Booting with it configured almost always
+// means an operator copied the example file verbatim rather than
+// choosing a credential (audit S6/P1-14); a publicly documented
+// password is not a secret, so this refuses rather than mints a real
+// administrator account with it.
+const defaultAdminPassword = "change-me-local-dev-only"
+
+// validateAdminPassword refuses to boot with a bootstrap admin password
+// that is too short or is the documented example value — both are
+// "the operator never actually set a password" in practice, and the
+// consequence (a standing, widely-guessable administrator credential)
+// is worse than refusing to start. An unset password is fine: bootstrap
+// is then simply skipped (buildAuth logs and leaves login unavailable
+// until an account exists some other way).
+func validateAdminPassword(password string) error {
+	if password == "" {
+		return nil
+	}
+	if len(password) < minAdminPasswordLength {
+		return fmt.Errorf("config: ARB_ADMIN_PASSWORD must be at least %d characters", minAdminPasswordLength)
+	}
+	if password == defaultAdminPassword {
+		return fmt.Errorf("config: ARB_ADMIN_PASSWORD must not be the documented example value; set a unique credential")
+	}
+	return nil
 }
 
 func maskDSN(dsn string) string {

@@ -35,6 +35,32 @@ type InstrumentRules struct {
 	MaxQty      decimal.Decimal // maximum base quantity (0 = none)
 	MinNotional decimal.Decimal // minimum order value in quote (0 = none)
 	MaxNotional decimal.Decimal // maximum order value in quote (0 = none)
+
+	// MARKET orders carry their own quantity filter on Binance
+	// (MARKET_LOT_SIZE, volume-derived and usually far tighter than
+	// LOT_SIZE). Zero fields fall back to the LOT_SIZE values; see
+	// ForMarketOrders.
+	MarketQtyStep decimal.Decimal
+	MarketMinQty  decimal.Decimal
+	MarketMaxQty  decimal.Decimal
+}
+
+// ForMarketOrders returns the rules a MARKET order is validated against:
+// the market-order quantity filter where the venue publishes one, the
+// limit-order filter otherwise. Callers pricing MARKET fills use these so
+// the model cannot "fill" a size the venue would reject (audit T4).
+func (r InstrumentRules) ForMarketOrders() InstrumentRules {
+	out := r
+	if r.MarketQtyStep.IsPositive() {
+		out.QtyMode, out.QtyStep = PrecisionStep, r.MarketQtyStep
+	}
+	if r.MarketMinQty.IsPositive() {
+		out.MinQty = r.MarketMinQty
+	}
+	if r.MarketMaxQty.IsPositive() {
+		out.MaxQty = r.MarketMaxQty
+	}
+	return out
 }
 
 var (

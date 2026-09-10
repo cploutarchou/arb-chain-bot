@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { api, type ScreenerPerpRow } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
+import { percentToFractionStr } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
   NO_TRANSFER_NOTE,
@@ -57,10 +58,11 @@ export default function PerpetualsPage() {
         base: base.trim().toUpperCase() || undefined,
         // The field renders as "% APR" but the wire contract
         // (internal/screener/basis.go PerpFilters.MinCarryAPR) is a
-        // fraction, e.g. 0.10 for 10% — convert percent to fraction here,
-        // never send the raw percent value.
+        // fraction, e.g. 0.10 for 10% — convert percent to an exact
+        // fraction string here (never `Number(x) / 100`, which leaves
+        // float noise in the querystring the backend parses exactly).
         min_carry_apr: minCarryApr.trim()
-          ? Number(minCarryApr) / 100
+          ? percentToFractionStr(minCarryApr.trim())
           : undefined,
         limit: 200,
       }),

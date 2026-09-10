@@ -58,6 +58,10 @@ type Server struct {
 	ScannerStatus func() any
 	// Paper, when set, backs the paper control routes (PAPER mode only).
 	Paper PaperController
+	// Breakers, when set, backs the operator's breaker acknowledgement
+	// route (POST /api/v1/risk/breakers/close) — engine profiles only;
+	// without an engine there is no registry to close.
+	Breakers BreakerController
 	// Strategy, when set, backs the versioned config routes.
 	Strategy *strategy.Service
 	// MetricsHandler, when set, serves GET /metrics on this mux (dev
@@ -331,6 +335,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.configRoutes(mux)
 	s.alertRoutes(mux)
 	s.aiRoutes(mux)
+	s.riskRoutes(mux)
 	s.readRoutes(mux)
 	s.pnlRoutes(mux)
 	s.triangleRoutes(mux)
@@ -375,7 +380,7 @@ func (s *Server) auditWith(r *http.Request, actor, action, entity string, after 
 			s.log.Error("audit payload not marshalled", "action", action, "error", err)
 		}
 	}
-	s.AuditAction(actor, action, entity, clientAddr(r).String(), correlationID(r), payload)
+	s.AuditAction(actor, action, entity, s.clientAddr(r).String(), correlationID(r), payload)
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {

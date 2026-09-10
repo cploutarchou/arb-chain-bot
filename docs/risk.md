@@ -55,6 +55,21 @@ severity of the emitted alert. Safe default on any uncertainty: OPEN =
 qualification paused = DO NOTHING. Breaker transitions are risk_events
 (insert-only) and notifications.
 
+Breakers the engine manages today (`internal/app/riskpolicy.go`; the
+registry itself is policy-free):
+
+| Breaker | Scope | Opens when | Closes when |
+|---|---|---|---|
+| `persistence` | global | the outbox's database write fails | a write or the outbox's probe succeeds |
+| `feed_instability` | exchange | 5 book faults (CORRUPTED / DISCONNECTED, coalesced per second) within 60 s | probes to HALF_OPEN after 30 s; closes after a 30 s quiet probe window; a fault while probing reopens it |
+| `simulation_inconsistency` | global | a reservation-ledger invariant fails after a settlement (the paper engine pauses itself first) | operator |
+| `daily_loss` | global | a start asset's session loss (realized plus marked exposure) reaches `max_daily_loss` | operator |
+| `drawdown` | global | a start asset's peak-to-trough drawdown reaches `max_drawdown` | operator |
+| `slippage` | global | three consecutive completed cycles realize more slippage than `max_slippage_bps` (measured against the un-buffered plan) | operator |
+
+The scanner gate consults the global scope plus `exchange:`, `triangle:`
+and each leg's `market:` scope; HALF_OPEN does not gate.
+
 ## 4. Capital reservation
 
 `internal/reservation` guards virtual capital with atomic semantics:

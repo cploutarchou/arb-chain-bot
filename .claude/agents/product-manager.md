@@ -1,6 +1,6 @@
 ---
 name: product-manager
-description: Owns the product definition for the crypto arbitrage platform: packages and limits, roadmap phasing, acceptance criteria, competitive analysis (arbitragescanner.io and peers), and turning operator asks into MASTER_PLAN tasks. Use for scoping, prioritisation and "what should this package include" questions. Produces specs, not code.
+description: 'Owns the product definition for the crypto arbitrage platform: packages and limits, roadmap phasing, acceptance criteria, competitive analysis (arbitragescanner.io and peers), and turning operator asks into MASTER_PLAN tasks. Use for scoping, prioritisation and "what should this package include" questions. Produces specs, not code.'
 tools: Read, Grep, Glob, Write, Edit, WebSearch, WebFetch
 ---
 

@@ -54,11 +54,14 @@ func OpenText(s Signal, lifetimeS int64) (title, body string) {
 	return title, b.String()
 }
 
-// CloseText renders the alert-closed message (lifetime and peak).
-func CloseText(s Signal, lifetimeS int64, peak decimal.Decimal) (title, body string) {
+// CloseText renders the alert-closed message (lifetime, peak and the
+// reason the event closed — a market reason, "lane_gone", or
+// HOLD_TIMEOUT when the quotes stayed stale — so a reader can tell an
+// ended spread from lost data).
+func CloseText(s Signal, lifetimeS int64, peak decimal.Decimal, reason string) (title, body string) {
 	pair := s.Lane.Base + "/" + s.Lane.Quote
 	title = fmt.Sprintf("Screener rule %q: %s signal ended after %ds", s.Rule.Name, pair, lifetimeS)
-	body = fmt.Sprintf("%s %s → %s: peak %s, now %s; data age %s / %s\n\n%s",
-		pair, s.Lane.VenueA, s.Lane.VenueB, bps(peak), bps(s.Score()), ageS(s.AgeAMs), ageS(s.AgeBMs), Footer)
+	body = fmt.Sprintf("%s %s → %s: peak %s, now %s; data age %s / %s; reason %s\n\n%s",
+		pair, s.Lane.VenueA, s.Lane.VenueB, bps(peak), bps(s.Score()), ageS(s.AgeAMs), ageS(s.AgeBMs), reason, Footer)
 	return title, body
 }

@@ -131,6 +131,51 @@ func TestTenancyStoreAndPlatformAdmin(t *testing.T) {
 	}
 }
 
+// Acceptance (audit S3/P1-12): MembershipFor resolves exactly the
+// (org, user) pair asked for — unlike ContextForUser, which picks one
+// organisation for the caller — and reports ErrNoMembership once a
+// membership is removed, which is what the API-key authentication path
+// relies on to refuse a key whose owner lost their seat.
+func TestTenancyMembershipFor(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ts := s.Tenancy()
+	seedUser(t, s, "mf-owner", "mf-owner@example.test", auth.RoleAdmin)
+
+	org, err := ts.CreateOrg(ctx, tenancy.Org{Name: "MF Org", PackageCode: "signal", RiskAckVersion: "1"}, "mf-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := ts.MembershipFor(ctx, org.ID, "mf-owner")
+	if err != nil || mem.Role != tenancy.RoleOwner {
+		t.Fatalf("MembershipFor = %+v err=%v", mem, err)
+	}
+	// Not a member of the platform organisation (only of org.ID).
+	if _, err := ts.MembershipFor(ctx, tenancy.PlatformOrgID, "mf-owner"); !errors.Is(err, tenancy.ErrNoMembership) {
+		t.Fatalf("platform membership = %v, want ErrNoMembership", err)
+	}
+	// An unknown organisation is also ErrNoMembership (no row either way).
+	if _, err := ts.MembershipFor(ctx, 999_999, "mf-owner"); !errors.Is(err, tenancy.ErrUnknownOrg) && !errors.Is(err, tenancy.ErrNoMembership) {
+		t.Fatalf("unknown org membership = %v", err)
+	}
+
+	// Add a second member, then remove them: MembershipFor must flip
+	// from a live row to ErrNoMembership.
+	seedUser(t, s, "mf-viewer", "mf-viewer@example.test", auth.RoleViewer)
+	if err := ts.AddMember(ctx, tenancy.Membership{OrgID: org.ID, UserID: "mf-viewer", Role: tenancy.RoleViewer}); err != nil {
+		t.Fatal(err)
+	}
+	if mem, err := ts.MembershipFor(ctx, org.ID, "mf-viewer"); err != nil || mem.Role != tenancy.RoleViewer {
+		t.Fatalf("MembershipFor after add = %+v err=%v", mem, err)
+	}
+	if err := ts.RemoveMember(ctx, org.ID, "mf-viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.MembershipFor(ctx, org.ID, "mf-viewer"); !errors.Is(err, tenancy.ErrNoMembership) {
+		t.Fatalf("MembershipFor after remove = %v, want ErrNoMembership", err)
+	}
+}
+
 // TestScreenerOrgScoping: a user of organisation B cannot read, update
 // or delete organisation A's rules/templates/events/paper rows; an
 // unscoped (engine) context sees everything and events inherit the

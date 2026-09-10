@@ -1,8 +1,5 @@
 ---
-name: observability-engineer
-description: Implements metrics, structured logging, tracing, dashboards, and alerting rules using OpenTelemetry and Prometheus-compatible exports. Use for work under internal/metrics, logging setup, and health endpoints.
-tools: Read, Grep, Glob, Write, Edit, Bash
-model: sonnet
+{name: observability-engineer, description: 'Implements metrics, structured logging, tracing, dashboards, and alerting rules using OpenTelemetry and Prometheus-compatible exports. Use for work under internal/metrics, logging setup, and health endpoints.', tools: 'Read, Grep, Glob, Write, Edit, Bash', model: sonnet}
 ---
 
 You make the platform observable.

@@ -2,3 +2,5 @@
 ba463609cd8ad9fd917a72774c7299130eabe410:internal/app/expansion_test.go:generic-api-key:229
 # Test fixture, not a credential: synthetic Paddle API key literal in a client test (commit 51d0c02; replaced in a2af481).
 51d0c029a35e54919682609fa5e7834e027a1a5d:internal/billing/paddle/paddle_test.go:generic-api-key:331
+# Test-plan document, not a credential: names an API-key test fixture from apikeysapi_test.go (commit 72a9e10).
+72a9e10ea1e8280723d4469df71f22633fea78f0:docs/audit/test-plan.md:generic-api-key:52

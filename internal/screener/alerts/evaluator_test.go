@@ -273,7 +273,7 @@ func TestHarvestBreakevenMatchesSpec(t *testing.T) {
 	in := Inputs{Book: svc.Book, SpotFees: feeLookup(svc, false), PerpFees: feeLookup(svc, true), FundingHistory: svc.Funding, PollInterval: 5 * time.Second}
 	set := func(rate string) {
 		setCarry(svc.Book, t0)
-		p, _ := svc.Book.PerpFor(screener.VenueBinance, "BTC")
+		p, _ := svc.Book.PerpFor(screener.VenueBinance, "BTC", "USDT")
 		p.PredictedFundingRate = d(rate)
 		p.FundingRate = d(rate)
 		p.Bid = d("49990") // basis −2 bps

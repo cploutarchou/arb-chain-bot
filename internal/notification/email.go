@@ -22,6 +22,15 @@ const EmailTimeout = 10 * time.Second
 // skipped rather than failing the whole alert.
 var ErrSMTPNotConfigured = errors.New("notification: smtp_url is not configured")
 
+// ErrInvalidSMTPURL is returned when smtp_url fails to parse. It is a
+// fixed sentinel, never a wrapped url.Parse error (audit S2/P1-11):
+// Go's *url.Error embeds the exact input it failed on, and smtp_url is
+// a credential (smtp://user:pass@host). The caller (screener/alerts)
+// logs this error and persists its .Error() verbatim as a delivery
+// outcome's Reason, which is later served to any authenticated viewer
+// — so the message here must never depend on raw in any way.
+var ErrInvalidSMTPURL = errors.New("notification: smtp_url is not a valid URL")
+
 // Transport sends one already-composed RFC 5322 message. EmailSink's
 // default implementation is SMTPTransport (net/smtp, STARTTLS); tests
 // inject a fake to assert on the composed message without a network.
@@ -96,7 +105,7 @@ func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, msg 
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("notification: invalid smtp_url: %w", err)
+		return ErrInvalidSMTPURL
 	}
 	host := u.Hostname()
 	port := u.Port()

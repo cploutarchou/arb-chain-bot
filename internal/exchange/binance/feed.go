@@ -30,10 +30,23 @@ type Feed struct {
 	MaxDepth int // book truncation (0 = unlimited)
 
 	// Reconnect policy (SKILL.md §11): bounded backoff with jitter,
-	// respecting the 300-attempts/5min budget by construction.
+	// respecting the 300-attempts/5min budget by construction. Backoff
+	// only ratchets across back-to-back failures: Run resets it to
+	// BackoffMin once a session has stayed up for at least StableAfter,
+	// so a handful of failures spread across hours never leaves every
+	// later reconnect paying BackoffMax (audit M1).
 	BackoffMin time.Duration
 	BackoffMax time.Duration
-	// PreemptAfter forces a clean reconnect before the venue's 24h cut.
+	// StableAfter is how long a session must stay connected before Run
+	// treats its eventual end as a fresh fault and resets backoff to
+	// BackoffMin, rather than continuing to ratchet up from wherever a
+	// prior, unrelated failure left it. Default 60s.
+	StableAfter time.Duration
+	// PreemptAfter is the safety margin ahead of the venue's 24h forced
+	// disconnect (ForcedDisconnectHours) at which the feed voluntarily
+	// ends the session for a clean rollover. That rollover is healthy by
+	// construction (nothing failed), so Run reconnects immediately with
+	// zero backoff — see ErrPreemptiveReconnect.
 	PreemptAfter time.Duration
 
 	// RawTap and SnapTap, when set, receive every WS frame and every REST
@@ -102,6 +115,9 @@ func (f *Feed) defaults() {
 	if f.BackoffMax <= 0 {
 		f.BackoffMax = 30 * time.Second
 	}
+	if f.StableAfter <= 0 {
+		f.StableAfter = 60 * time.Second
+	}
 	if f.PreemptAfter <= 0 {
 		f.PreemptAfter = 23 * time.Hour
 	}
@@ -109,20 +125,52 @@ func (f *Feed) defaults() {
 
 func (f *Feed) Name() string { return "binance-feed" }
 
+// ErrPreemptiveReconnect is what session returns when it ends its own
+// connection ahead of Binance's 24h forced disconnect (PreemptAfter). Run
+// treats it as a distinct, healthy-by-construction case: unlike a real
+// failure it never waits out a backoff, so the rollover costs at most one
+// fresh dial's worth of DISCONNECTED time instead of adding a ratcheted
+// (or worst-case maxed-out) backoff on top of it.
+var ErrPreemptiveReconnect = errors.New("pre-emptive reconnect before 24h cut")
+
 // Run connects and reads until ctx cancels, reconnecting with backoff on
 // any failure. Books transition DISCONNECTED→SYNCING→HEALTHY per session.
+//
+// Backoff ratchets only across back-to-back failures. Two cases reset it
+// to BackoffMin instead of carrying it forward (audit M1):
+//   - the session ended via ErrPreemptiveReconnect (a scheduled, healthy
+//     rollover — Run also skips the wait entirely and redials at once), or
+//   - the session stayed up for at least StableAfter before failing, so
+//     whatever just happened is a fresh fault, not a continuation of
+//     earlier, unrelated ones.
+//
+// Without this, a handful of failures anywhere in the feed's history
+// (including its own daily pre-emptive rollovers) would ratchet backoff
+// to BackoffMax and keep it there, so every later reconnect — including
+// the pre-emptive one — pays the maximum delay purely by policy.
 func (f *Feed) Run(ctx context.Context) error {
 	f.defaults()
 	backoff := f.BackoffMin
 	rng := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // jitter only
 	for {
+		start := time.Now()
 		err := f.session(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		f.Stats.Reconnects.Add(1)
-		f.Log.Warn("binance feed session ended; reconnecting", "error", err, "backoff", backoff.String())
 		f.markAll(func(b *orderbook.Book) { b.MarkDisconnected() })
+
+		if errors.Is(err, ErrPreemptiveReconnect) {
+			f.Log.Info("binance feed pre-emptive reconnect before 24h cut", "session_age", time.Since(start).String())
+			backoff = f.BackoffMin // reset for whatever failure, if any, follows
+			continue               // zero delay: the old session ended cleanly
+		}
+
+		if time.Since(start) >= f.StableAfter {
+			backoff = f.BackoffMin
+		}
+		f.Log.Warn("binance feed session ended; reconnecting", "error", err, "backoff", backoff.String())
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -164,10 +212,17 @@ func (f *Feed) session(ctx context.Context) error {
 	f.syncers = fresh
 	f.syncMu.Unlock()
 
+	// Everything this session spawns — snapshot priming and gap resyncs —
+	// ends with it (audit M5): a resync still retrying for a dead session
+	// would contend the shared REST weight gate against the new session's
+	// own resyncs, exactly during a reconnect storm.
+	sctx, cancelSession := context.WithCancel(ctx)
+	defer cancelSession()
+
 	// Snapshot fetches run beside the read loop; depthSnapshot meters
 	// them against the REST weight budget.
 	snapErr := make(chan error, 1)
-	go f.fetchSnapshots(ctx, snapErr)
+	go f.fetchSnapshots(sctx, snapErr)
 
 	preempt := time.NewTimer(f.PreemptAfter)
 	defer preempt.Stop()
@@ -184,7 +239,7 @@ func (f *Feed) session(ctx context.Context) error {
 			resetDeadline()
 			select {
 			case frames <- frame:
-			case <-ctx.Done():
+			case <-sctx.Done():
 				return
 			}
 		}
@@ -195,7 +250,7 @@ func (f *Feed) session(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-preempt.C:
-			return errors.New("pre-emptive reconnect before 24h cut")
+			return ErrPreemptiveReconnect
 		case err := <-readErr:
 			return err
 		case err := <-snapErr:
@@ -203,7 +258,7 @@ func (f *Feed) session(ctx context.Context) error {
 				return err
 			}
 		case frame := <-frames:
-			f.handleFrame(ctx, frame)
+			f.handleFrame(sctx, frame)
 		}
 	}
 }

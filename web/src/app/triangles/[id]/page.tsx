@@ -11,6 +11,7 @@ import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { Await, Badge, PageTitle, Section, Table, fmtTime } from "@/components/ui";
 
 function bookTone(state?: string): "ok" | "warn" | "bad" | "dim" {
@@ -116,9 +117,7 @@ export default function TriangleDetailPage() {
                   ) : (
                     "—"
                   ),
-                  <Badge key="out" tone={c.outcome === "COMPLETED" ? "ok" : c.outcome === "FAILED" ? "bad" : "dim"}>
-                    {c.outcome}
-                  </Badge>,
+                  <OutcomeBadge key="out" code={c.outcome} />,
                   c.pnl_amount ? `${c.pnl_amount} ${c.pnl_asset ?? ""}` : "—",
                   c.slippage_bps ?? "—",
                   fmtTime(c.started_at),

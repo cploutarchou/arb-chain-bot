@@ -24,6 +24,7 @@ import (
 	"github.com/cploutarchou/arb-chain-bot/internal/realtime"
 	"github.com/cploutarchou/arb-chain-bot/internal/replay"
 	"github.com/cploutarchou/arb-chain-bot/internal/reporting"
+	"github.com/cploutarchou/arb-chain-bot/internal/risk"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/alerts"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener/paperexec"
@@ -239,6 +240,12 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		}
 		screenerReports = &report.Generator{Svc: screenerSvc, Ledger: ledger, Store: reportStore, Notify: notify.Notify,
 			Dir: cfg.RecordingDir, Log: log, IDGen: newULID, Seed: 1}
+		// The nightly run covers every organisation separately (one
+		// ledger, one rule set, one document each); without a database
+		// only the platform organisation exists.
+		if tenant.store != nil {
+			screenerReports.Orgs = tenant.store
+		}
 		others = append(others, &report.Scheduler{Gen: screenerReports})
 	}
 
@@ -482,6 +489,18 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		authMgr, userAdmin := buildAuth(cfg, log, store)
 		apiServer.Auth = authMgr
 		apiServer.Users = userAdmin
+		// audit S3/P1-12: disabling an account must cascade-revoke its
+		// API keys; AdminService does this itself (not the HTTP layer)
+		// so Telegram — a future caller of the same service — gets the
+		// same guarantee without having to remember it. tenant.apiKeys
+		// is nil in database-less profiles, same as apiServer.APIKeys
+		// below; AdminService already treats a nil APIKeys as "no keys
+		// in this profile", not a bug.
+		userAdmin.APIKeys = tenant.apiKeys
+		cascadeAudit := webAudit(log, store)
+		userAdmin.AuditCascade = func(actor, action, entity string) {
+			cascadeAudit(actor, action, entity, "", "", nil)
+		}
 		apiServer.Strategy = stratSvc
 		hub := realtime.NewHub(256)
 		apiServer.Hub = hub
@@ -555,6 +574,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			// boot mode would 404 the paper routes after a switch into
 			// PAPER until a redeploy.
 			apiServer.Paper = paperProxy{engine}
+			apiServer.Breakers = breakerProxy{engine}
 			apiServer.Recorder = recorderProxy{engine}
 		}
 		if supervisor != nil {
@@ -671,6 +691,16 @@ func (p paperProxy) Reset(ctx context.Context) error {
 		return api.ErrPaperNotIdle
 	}
 	return err
+}
+
+// breakerProxy exposes the engine's breaker registry to the API's
+// operator acknowledgement route; before bootstrap (or in an engine-less
+// profile) it answers "not found" honestly because there is no registry
+// to close anything on.
+type breakerProxy struct{ e *Engine }
+
+func (p breakerProxy) CloseBreaker(name, scope string) (risk.BreakerState, bool) {
+	return p.e.CloseBreaker(name, scope)
 }
 
 // aiRuntime is the advisor's current runtime state for the status
@@ -1194,47 +1224,25 @@ func buildScreener(log *slog.Logger, store *storage.Store) (*screener.Service, e
 
 // buildAuth wires auth stores: pgx-backed when persistence is enabled
 // (sessions survive restarts), in-memory otherwise. The bootstrap admin
-// from the environment is upserted either way (dev convenience;
-// production users are managed through the console). It also returns
-// the users & roles admin service (BL-11) over the same backing store,
-// so console user management works identically with or without a
-// database.
+// from the environment is created ONLY when no account holds that
+// email yet (audit S6/P1-14; see bootstrapAdmin) — never re-upserted on
+// every boot. It also returns the users & roles admin service (BL-11)
+// over the same backing store, so console user management works
+// identically with or without a database.
 func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*auth.Manager, *auth.AdminService) {
 	var users auth.UserStore
 	var sessions auth.SessionStore
 	var admin auth.AdminStore
 
-	bootstrapAdmin := func(add func(auth.User) error) {
-		if cfg.AdminEmail == "" || cfg.AdminPassword == "" {
-			log.Warn("no bootstrap admin configured (ARB_ADMIN_EMAIL/ARB_ADMIN_PASSWORD); login unavailable until users exist")
-			return
-		}
-		hash, err := auth.HashPassword(cfg.AdminPassword)
-		if err != nil {
-			log.Error("bootstrap admin hash failed", "error", err)
-			return
-		}
-		u := auth.User{ID: "admin-bootstrap", Email: cfg.AdminEmail, PasswordHash: hash, Role: auth.RoleAdmin, CreatedAt: time.Now().UTC()}
-		if err := add(u); err != nil {
-			log.Error("bootstrap admin store failed", "error", err)
-			return
-		}
-		log.Info("bootstrap admin configured", "email", cfg.AdminEmail)
-	}
-
 	if store != nil {
 		as := store.Auth()
 		users, sessions, admin = as, as, as
-		bootstrapAdmin(func(u auth.User) error {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			return as.UpsertUser(ctx, u)
-		})
 	} else {
 		mem := auth.NewMemoryStore()
 		users, sessions, admin = mem, mem, mem
-		bootstrapAdmin(func(u auth.User) error { mem.AddUser(u); return nil })
 	}
+	bootstrapAdmin(cfg, log, admin)
+
 	mgr := &auth.Manager{
 		Users:    users,
 		Sessions: sessions,
@@ -1253,4 +1261,40 @@ func buildAuth(cfg config.Bootstrap, log *slog.Logger, store *storage.Store) (*a
 		PasswordThrottle: auth.NewThrottle(5, time.Minute, 10*time.Minute),
 	}
 	return mgr, adminSvc
+}
+
+// bootstrapAdmin creates the operator's first administrator account
+// when ARB_ADMIN_EMAIL/ARB_ADMIN_PASSWORD are configured. It is
+// insert-only (audit S6/P1-14): admin.CreateUser refuses with
+// ErrDuplicateEmail rather than overwriting a row that already holds
+// this email, and that is treated as success here, not failure — the
+// console (or a previous boot, before this fix) may since have changed
+// that account's password, role or disabled status, and re-asserting
+// the environment's values on every restart would silently undo
+// exactly that, turning the bootstrap credential into a standing
+// backdoor. config.Load already refuses to start with a bootstrap
+// password shorter than the platform minimum or equal to the
+// documented example value, so a value reaching here is at least not
+// trivially guessable.
+func bootstrapAdmin(cfg config.Bootstrap, log *slog.Logger, admin auth.AdminStore) {
+	if cfg.AdminEmail == "" || cfg.AdminPassword == "" {
+		log.Warn("no bootstrap admin configured (ARB_ADMIN_EMAIL/ARB_ADMIN_PASSWORD); login unavailable until users exist")
+		return
+	}
+	hash, err := auth.HashPassword(cfg.AdminPassword)
+	if err != nil {
+		log.Error("bootstrap admin hash failed", "error", err)
+		return
+	}
+	u := auth.User{ID: "admin-bootstrap", Email: cfg.AdminEmail, PasswordHash: hash, Role: auth.RoleAdmin, CreatedAt: time.Now().UTC()}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	switch err := admin.CreateUser(ctx, u); {
+	case err == nil:
+		log.Info("bootstrap admin created", "email", cfg.AdminEmail)
+	case errors.Is(err, auth.ErrDuplicateEmail):
+		log.Info("bootstrap admin email already registered; leaving the existing account untouched", "email", cfg.AdminEmail)
+	default:
+		log.Error("bootstrap admin store failed", "error", err)
+	}
 }

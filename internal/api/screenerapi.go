@@ -50,8 +50,12 @@ func (s *Server) screenerRoutes(mux *http.ServeMux) {
 	view := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requirePerm(auth.PermScreenerView, gate(next))
 	}
+	// Every mutation lands in the caller's organisation; in the platform
+	// organisation that takes platform_admin (requirePlatformScopeWrite):
+	// the platform's screener document, rules and reports are the
+	// operator's own, not any org-1 member's.
 	config := func(next http.HandlerFunc) http.HandlerFunc {
-		return s.requirePerm(auth.PermScreenerConfig, s.requireCSRF(gate(next)))
+		return s.requirePerm(auth.PermScreenerConfig, s.requirePlatformScopeWrite(s.requireCSRF(gate(next))))
 	}
 
 	mux.HandleFunc("GET /api/v1/screener/status", view(s.handleScreenerStatus))
@@ -97,8 +101,25 @@ func (s *Server) screenerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/screener/templates/{id}", s.requirePerm(auth.PermScreenerView, s.requireCSRF(gate(s.requireAPIScope("templates:write", s.handleScreenerTemplateDelete)))))
 }
 
+// screenerSnapshot returns the active settings document of the caller's
+// organisation (Service.SnapshotFor: the process-wide document for the
+// platform organisation, the tenant's own otherwise). A store failure
+// is answered 500 and reported as ok=false.
+func (s *Server) screenerSnapshot(w http.ResponseWriter, r *http.Request) (screener.Snapshot, bool) {
+	snap, err := s.Screener.SnapshotFor(r.Context())
+	if err != nil {
+		s.log.Error("screener settings load failed", "error", err)
+		WriteError(w, http.StatusInternalServerError, "settings_load_failed", "loading the screener settings failed", correlationID(r))
+		return screener.Snapshot{}, false
+	}
+	return snap, true
+}
+
 func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
-	snap := s.Screener.Current()
+	snap, ok := s.screenerSnapshot(w, r)
+	if !ok {
+		return
+	}
 	ids := screener.OrderedVenues
 	collectors, live := s.Screener.CollectorStatus()
 	liveBy := make(map[screener.Venue]screener.VenueStatus, len(live))
@@ -128,6 +149,7 @@ func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
 			row["perp_contracts"] = st.PerpContracts
 			row["rate_limited"] = st.RateLimited > 0
 			row["rate_limited_count"] = st.RateLimited
+			row["perps_dropped"] = st.PerpsDropped
 			row["polls"] = st.Polls
 			row["restarts"] = st.Restarts
 			row["error"] = st.LastError
@@ -141,6 +163,10 @@ func (s *Server) handleScreenerStatus(w http.ResponseWriter, r *http.Request) {
 		"poll_interval_s": snap.Settings.PollIntervalS,
 		"updated_at":      time.Now().UTC(),
 		"collectors":      collectors,
+		// Per-ticker counters (alerts: lanes evaluated / cut by the cap /
+		// on hold) so an operator sees how much of the universe the
+		// evaluator actually looked at; empty when no ticker registered.
+		"automation": s.Screener.Diagnostics(),
 	})
 }
 
@@ -221,7 +247,10 @@ func (s *Server) handleScreenerSpreads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	snap := s.Screener.Current()
+	snap, ok := s.screenerSnapshot(w, r)
+	if !ok {
+		return
+	}
 	if minLiquidity == nil {
 		v := snap.Settings.MinLiquidityQuote
 		minLiquidity = &v
@@ -302,7 +331,10 @@ func (s *Server) handleScreenerPerpetuals(w http.ResponseWriter, r *http.Request
 		MinCarryAPR: minCarry,
 		Limit:       limit,
 	}
-	snap := s.Screener.Current()
+	snap, ok := s.screenerSnapshot(w, r)
+	if !ok {
+		return
+	}
 	rows := screener.ComputePerps(s.Screener.Book, screenerSpotMidLookup(s.Screener.Book),
 		screenerSpotFeeLookup(snap), screenerPerpFeeLookup(snap), time.Now().UTC(), f)
 	WriteData(w, http.StatusOK, map[string]any{"rows": rows, "generated_at": time.Now().UTC()})
@@ -389,7 +421,10 @@ func (s *Server) handleScreenerCalculator(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	snap := s.Screener.Current()
+	snap, ok := s.screenerSnapshot(w, r)
+	if !ok {
+		return
+	}
 	res, err := screener.Calculate(s.Screener.Book, screenerSpotFeeLookup(snap), req)
 	if err != nil {
 		switch {
@@ -416,7 +451,11 @@ func (s *Server) screenerSettingsView(snap screener.Snapshot) map[string]any {
 }
 
 func (s *Server) handleScreenerSettingsGet(w http.ResponseWriter, r *http.Request) {
-	WriteData(w, http.StatusOK, s.screenerSettingsView(s.Screener.Current()))
+	snap, ok := s.screenerSnapshot(w, r)
+	if !ok {
+		return
+	}
+	WriteData(w, http.StatusOK, s.screenerSettingsView(snap))
 }
 
 func (s *Server) handleScreenerSettingsApply(w http.ResponseWriter, r *http.Request) {
