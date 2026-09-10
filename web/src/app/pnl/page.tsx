@@ -12,7 +12,7 @@ import Link from "next/link";
 import { api, type PnLBreakdownBy } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, HistogramChart, PageTitle, PnLSeriesChart, Section, Table } from "@/components/ui";
+import { Await, HistogramChart, PageTitle, PnLSeriesChart, Section, Table, ChipGroup} from "@/components/ui";
 
 const WINDOWS = [24, 72, 168, 720] as const;
 const BY_OPTIONS: { value: PnLBreakdownBy; label: string }[] = [
@@ -26,19 +26,7 @@ const BY_OPTIONS: { value: PnLBreakdownBy; label: string }[] = [
 
 function WindowPicker({ hours, onChange }: { hours: number; onChange: (h: number) => void }) {
   return (
-    <div className="mb-3 flex gap-2">
-      {WINDOWS.map((w) => (
-        <button
-          key={w}
-          onClick={() => onChange(w)}
-          className={`rounded border px-2 py-0.5 text-[12px] ${
-            hours === w ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
-          }`}
-        >
-          {w < 168 ? `${w}h` : `${Math.round(w / 24)}d`}
-        </button>
-      ))}
-    </div>
+    <ChipGroup label="PnL window" options={WINDOWS} value={hours} onChange={onChange} format={(w) => `${w}h`} />
   );
 }
 
@@ -63,17 +51,13 @@ export default function PnLAnalyticsPage() {
       <Section title="Breakdown">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-[13px]">
           <span className="text-[var(--text-dim)]">By:</span>
-          {BY_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              onClick={() => setBy(o.value)}
-              className={`rounded border px-2 py-0.5 text-[12px] ${
-                by === o.value ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
+          <ChipGroup
+            label="Breakdown dimension"
+            options={BY_OPTIONS}
+            value={BY_OPTIONS.find((o) => o.value === by) ?? BY_OPTIONS[0]!}
+            onChange={(o) => setBy(o.value)}
+            format={(o) => o.label}
+          />
         </div>
         <WindowPicker hours={breakdownHours} onChange={setBreakdownHours} />
         <Await state={breakdown} what="pnl breakdown">

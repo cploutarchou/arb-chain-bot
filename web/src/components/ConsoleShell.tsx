@@ -99,7 +99,10 @@ const GROUPS: NavGroup[] = [
       // docs/user-guide/reports.md's "two report systems ... do not
       // confuse them") — both GLYPHS and NavContent's activeGroupTitle
       // lookup key off this exact string, so it must not collide.
-      { label: "Screener Reports", href: "/screener-reports" },
+      // F17: console-v2 §2.2 lists an Evidence entry under Scanner
+      // Suite — the §7/§8 screener paper evidence IS this page, so the
+      // label says evidence rather than adding a dead second entry.
+      { label: "Evidence — Screener Reports", href: "/screener-reports" },
       { label: "Auto-Paper", href: "/auto-paper" },
     ],
   },
@@ -756,6 +759,17 @@ export function ConsoleShell({
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
+  // F15: Escape closes the mobile nav overlay, and focus returns to the
+  // hamburger that opened it — the overlay was closable only by tapping
+  // outside or navigating, and a keyboard user had no way out.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileOpen]);
   const modeState = useModeState();
   // Hoisted once for the whole shell, same reasoning as modeState above:
   // the mobile top bar, the mobile overlay and the desktop sidebar each

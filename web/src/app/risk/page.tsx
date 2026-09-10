@@ -18,7 +18,7 @@ import { usePoll, type PollState } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { useToast } from "@/components/Toast";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, Badge, Button, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
+import { Await, Badge, Button, PageTitle, Section, Stat, Table, fmtTime, ChipGroup} from "@/components/ui";
 
 const WINDOWS = [24, 72, 168, 720] as const;
 
@@ -199,20 +199,7 @@ export default function RiskPage() {
       </Await>
 
       <Section title="Risk event timeline (persisted — survives a restart, unlike the session counter above)">
-        <div className="mb-3 flex gap-2">
-          {WINDOWS.map((w) => (
-            <button
-              key={w}
-              onClick={() => setHours(w)}
-              aria-pressed={hours === w}
-              className={`rounded border px-2 py-0.5 text-[12px] ${
-                hours === w ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
-              }`}
-            >
-              {w < 168 ? `${w}h` : `${Math.round(w / 24)}d`}
-            </button>
-          ))}
-        </div>
+        <ChipGroup label="Event window" options={WINDOWS} value={hours} onChange={setHours} format={(w) => `${w}h`} />
         <Await state={events} what="risk events">
           {(res) => (
             <>

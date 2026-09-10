@@ -5,7 +5,7 @@ import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, Badge, PageTitle, Section, Table } from "@/components/ui";
+import { Await, Badge, PageTitle, Section, Table, ChipGroup} from "@/components/ui";
 
 const WINDOWS = [24, 72, 168] as const;
 
@@ -28,19 +28,7 @@ export default function TrianglesPage() {
         </Await>
       </Section>
       <Section title="Quality score (/100, SKILL §81 — never pure win rate)">
-        <div className="mb-3 flex gap-2">
-          {WINDOWS.map((w) => (
-            <button
-              key={w}
-              onClick={() => setHours(w)}
-              className={`rounded border px-2 py-0.5 text-[12px] ${
-                hours === w ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
-              }`}
-            >
-              {w}h
-            </button>
-          ))}
-        </div>
+        <ChipGroup label="Quality window" options={WINDOWS} value={hours} onChange={setHours} format={(w) => `${w}h`} />
         <Await state={quality} what="quality scores">
           {(q) => (
             <>
