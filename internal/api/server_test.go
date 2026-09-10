@@ -411,3 +411,30 @@ func TestWSTopicAuthorization(t *testing.T) {
 		}
 	}
 }
+
+// Acceptance (audit S13): the listener bounds every phase a client can
+// stretch — headers, body read, response write, keep-alive idle, and the
+// header block itself. The WebSocket route hijacks its connection, so
+// these govern only its handshake.
+func TestHTTPServerEnvelope(t *testing.T) {
+	s, _ := newTestServer(t)
+	srv := s.newHTTPServer(http.NewServeMux())
+	if srv.ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v", srv.ReadHeaderTimeout)
+	}
+	if srv.ReadTimeout != 30*time.Second {
+		t.Errorf("ReadTimeout = %v", srv.ReadTimeout)
+	}
+	if srv.WriteTimeout != 60*time.Second {
+		t.Errorf("WriteTimeout = %v", srv.WriteTimeout)
+	}
+	if srv.IdleTimeout != 120*time.Second {
+		t.Errorf("IdleTimeout = %v", srv.IdleTimeout)
+	}
+	if srv.MaxHeaderBytes != 1<<16 {
+		t.Errorf("MaxHeaderBytes = %d", srv.MaxHeaderBytes)
+	}
+	if srv.Handler == nil {
+		t.Error("handler not wrapped")
+	}
+}
