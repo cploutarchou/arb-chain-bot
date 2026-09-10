@@ -176,7 +176,7 @@ func (e *Engine) Shadow() bool { return e.shadow }
 func cycleRNG(seed int64, cycleID string, leg int) *rand.Rand {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(cycleID))
-	_, _ = h.Write([]byte{byte(leg)})
+	_, _ = h.Write([]byte{byte(leg)})                        //nolint:gosec // leg is always 0..2
 	return rand.New(rand.NewSource(seed ^ int64(h.Sum64()))) //nolint:gosec // simulation jitter, not crypto
 }
 
