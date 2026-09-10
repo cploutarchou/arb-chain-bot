@@ -257,6 +257,14 @@ func (s *Server) handleScreenerSpreads(w http.ResponseWriter, r *http.Request) {
 	}
 	minLifetime, _ := strconv.ParseInt(q.Get("min_lifetime_s"), 10, 64)
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	// X7: the table's own freshness gate, defaulting to 3 × the poll
+	// interval (the same budget the book's eviction sweep uses). A row
+	// whose legs fail it is ranked after every fresh row and carries
+	// stale=true rather than disappearing.
+	maxLegAge := 3 * time.Duration(snap.Settings.PollIntervalS) * time.Second
+	if v, _ := strconv.ParseInt(q.Get("max_age_ms"), 10, 64); v > 0 {
+		maxLegAge = time.Duration(v) * time.Millisecond
+	}
 
 	f := screener.SpreadFilters{
 		MinSpreadBpsNet:         minSpread,
@@ -269,6 +277,7 @@ func (s *Server) handleScreenerSpreads(w http.ResponseWriter, r *http.Request) {
 		IncludeSuspect:          queryFlag(q.Get("include_suspect")),
 		IncludeUnknownLiquidity: queryFlag(q.Get("include_unknown_liquidity")),
 		MaxPlausibleSpreadBps:   snap.Settings.EffectiveMaxPlausibleSpreadBps(),
+		MaxLegAge:               maxLegAge,
 	}
 	if base := q.Get("base"); base != "" {
 		f.BasesAllow = map[string]bool{base: true}

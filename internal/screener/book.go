@@ -142,6 +142,38 @@ func (b *Book) PerpFor(venue Venue, base, quote string) (Perp, bool) {
 	return p, ok
 }
 
+// EvictOlderThan removes quotes and perps last observed strictly before
+// cutoff (audit X7). The book is otherwise overwrite-only, so a delisted
+// pair or a venue that went offline kept its last quote forever —
+// feeding the guard's median, pairs_tracked and the lane cap with data
+// no poll will ever refresh. The poller sweeps with cutoff = now −
+// 3 × poll interval: nothing a live venue republishes every interval
+// can age that far, and an offline venue's artefacts are gone after
+// three missed polls. Empty per-pair venue maps are dropped with their
+// last quote so Pairs() and pairs_tracked tell the truth too.
+func (b *Book) EvictOlderThan(cutoff time.Time) (quotes, perps int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for key, byVenue := range b.quotes {
+		for v, q := range byVenue {
+			if q.At.Before(cutoff) {
+				delete(byVenue, v)
+				quotes++
+			}
+		}
+		if len(byVenue) == 0 {
+			delete(b.quotes, key)
+		}
+	}
+	for k, p := range b.perps {
+		if p.At.Before(cutoff) {
+			delete(b.perps, k)
+			perps++
+		}
+	}
+	return quotes, perps
+}
+
 // Age returns how long ago t was observed, relative to now. Negative
 // durations (a clock skew or a future timestamp slipping through a
 // collector) are returned as-is — callers decide how to treat them
