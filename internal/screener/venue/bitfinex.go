@@ -374,6 +374,13 @@ func (c *bitfinexCollector) Perps(ctx context.Context) ([]screener.Perp, error) 
 // when at least one of its methods has DEP_STATUS=1 AND WD_STATUS=1
 // (1 = active, 0 = maintenance), closed when it has methods but none
 // fully active, unknown when no method lists it.
+// FundingIsPreviousPeriod implements PreviousPeriodFundingReporter
+// (audit X4): CURRENT_FUNDING is documented "funding applied in the
+// current 8h period" — the rate charged at this period's start, so the
+// row that settles when NEXT_FUNDING_EVT_MTS advances is the newly
+// observed CURRENT_FUNDING, not the one seen before it.
+func (c *bitfinexCollector) FundingIsPreviousPeriod() bool { return true }
+
 func (c *bitfinexCollector) Networks(ctx context.Context) (map[string]screener.NetworkStatus, error) {
 	c.mu.Lock()
 	conf := c.conf

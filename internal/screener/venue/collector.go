@@ -72,6 +72,19 @@ type Fees struct {
 
 // Collector is the per-venue contract the Poller drives. Every method
 // is safe for concurrent use and honours ctx.
+// PreviousPeriodFundingReporter is implemented by collectors whose bulk
+// funding field reports the PREVIOUS period's settled rate, not the
+// period currently accruing (audit X4: BitMart's rate_value is
+// documented "previous period", Crypto.com's funding_hist rows are past
+// settlements). For them the rate that settled when NextFundingAt
+// advances is the NEWLY observed one — recordFunding attributes
+// accordingly instead of shifting every settlement one interval.
+type PreviousPeriodFundingReporter interface {
+	Collector
+	// FundingIsPreviousPeriod reports the bulk field's semantics.
+	FundingIsPreviousPeriod() bool
+}
+
 type Collector interface {
 	ID() screener.Venue
 	// Instruments fetches (and caches) the venue's spot + perp list.
