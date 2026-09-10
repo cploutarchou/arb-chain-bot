@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/tenancy"
 )
 
 func TestUsersListRequiresPermUserManage(t *testing.T) {
@@ -267,5 +270,64 @@ func TestSelfPasswordChangeRoute(t *testing.T) {
 	}
 	if _, _, code := tryLogin(mux, "op@example.test", "a-brand-new-password"); code != http.StatusOK {
 		t.Fatalf("new password login = %d", code)
+	}
+}
+
+// TestCreateUserOrgPlacement covers the S4 follow-up on the route:
+// org_id places the new account in that organisation (validated against
+// tenancy, OWNER refused, unknown org 404, tenancy-less profile 400);
+// omitted org_id keeps the platform placement. The response carries the
+// account; the placement is audited.
+func TestCreateUserOrgPlacement(t *testing.T) {
+	s, mux := newTestServer(t)
+	adminCookie, adminCSRF := login(t, mux, "admin@example.test", "admin-pw")
+
+	// No tenancy wired: org_id is refused honestly, not 500'd by an FK.
+	if rec := postJSON(t, mux, adminCookie, adminCSRF, "/api/v1/users",
+		`{"email":"t1@example.test","role":"VIEWER","password":"a-strong-password","org_id":2}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("org without tenancy = %d %s", rec.Code, rec.Body.String())
+	}
+
+	mem := tenancy.NewMemoryStore()
+	org, err := mem.CreateOrg(context.Background(), tenancy.Org{Name: "acme", PackageCode: "watch", CustomerType: tenancy.CustomerBusiness}, "u-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Tenancy = mem
+
+	if rec := postJSON(t, mux, adminCookie, adminCSRF, "/api/v1/users",
+		`{"email":"t2@example.test","role":"VIEWER","password":"a-strong-password","org_id":99999}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown org = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := postJSON(t, mux, adminCookie, adminCSRF, "/api/v1/users",
+		`{"email":"t3@example.test","role":"VIEWER","password":"a-strong-password","org_id":`+itoa(org.ID)+`,"org_role":"OWNER"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("OWNER org_role = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := postJSON(t, mux, adminCookie, adminCSRF, "/api/v1/users",
+		`{"email":"t4@example.test","role":"VIEWER","password":"a-strong-password","org_id":-1}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative org_id = %d", rec.Code)
+	}
+
+	var audits []string
+	s.AuditAction = func(_, action, _, _, _ string, _ []byte) {
+		audits = append(audits, action)
+	}
+	rec := postJSON(t, mux, adminCookie, adminCSRF, "/api/v1/users",
+		`{"email":"tenant-op@example.test","role":"OPERATOR","password":"a-strong-password","org_id":`+itoa(org.ID)+`,"org_role":"ADMIN"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("tenant create = %d %s", rec.Code, rec.Body.String())
+	}
+	// The memory auth store has no memberships; the route's own success
+	// (201 + audit) is what this layer owns — the join itself is proven
+	// against PostgreSQL in internal/storage.
+	if len(audits) == 0 || audits[len(audits)-1] != "user.create" {
+		t.Fatalf("audits = %v", audits)
+	}
+
+	// Default placement still works with tenancy wired.
+	rec = postJSON(t, mux, adminCookie, adminCSRF, "/api/v1/users",
+		`{"email":"staff@example.test","role":"OPERATOR","password":"a-strong-password"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("platform create = %d %s", rec.Code, rec.Body.String())
 	}
 }

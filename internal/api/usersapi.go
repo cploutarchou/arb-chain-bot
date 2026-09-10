@@ -24,6 +24,9 @@ type UserAdmin interface {
 	// every request (audit S3/P1-12), not only console user management.
 	UserByID(ctx context.Context, id string) (auth.User, error)
 	CreateUser(ctx context.Context, email string, role auth.Role, password string) (auth.User, error)
+	// CreateUserInOrg creates the account directly inside a tenant
+	// organisation (audit S4 follow-up) instead of the platform one.
+	CreateUserInOrg(ctx context.Context, email string, role auth.Role, password string, orgID int64, orgRole string) (auth.User, error)
 	UpdateUserRole(ctx context.Context, actorID, targetID string, role auth.Role) (auth.User, error)
 	SetUserDisabled(ctx context.Context, actorID, targetID string, disabled bool) (auth.User, error)
 	SetUserPassword(ctx context.Context, targetID, password string) (auth.User, error)
@@ -109,19 +112,61 @@ func (s *Server) usersRoutes(mux *http.ServeMux) {
 			Email    string `json:"email"`
 			Role     string `json:"role"`
 			Password string `json:"password"`
+			// Optional organisation placement (audit S4 follow-up):
+			// omitted/zero keeps the historical platform-organisation
+			// join; a positive id creates the account inside that
+			// organisation instead, so a tenant's operator never
+			// receives a platform seat by accident.
+			OrgID   int64  `json:"org_id"`
+			OrgRole string `json:"org_role"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid_body", "malformed user request", correlationID(r))
 			return
 		}
+		if req.OrgID < 0 {
+			WriteError(w, http.StatusBadRequest, "invalid_org", "org_id must be a positive organisation id or omitted", correlationID(r))
+			return
+		}
+		if req.OrgID > 0 {
+			// OWNER is refused: organisation ownership is granted by
+			// CreateOrg behind the last-owner guard, never by an
+			// account-creation form. Empty defaults to MEMBER.
+			switch req.OrgRole {
+			case "":
+				req.OrgRole = "MEMBER"
+			case "ADMIN", "MEMBER", "VIEWER":
+			default:
+				WriteError(w, http.StatusBadRequest, "invalid_org_role", "org_role must be ADMIN, MEMBER or VIEWER", correlationID(r))
+				return
+			}
+			if s.Tenancy == nil {
+				WriteError(w, http.StatusBadRequest, "tenancy_absent", "organisations are not available in this profile; omit org_id to create a platform account", correlationID(r))
+				return
+			}
+			if _, err := s.Tenancy.Org(r.Context(), req.OrgID); err != nil {
+				WriteError(w, http.StatusNotFound, "org_not_found", "no organisation with that id", correlationID(r))
+				return
+			}
+		}
 		p, _ := PrincipalFrom(r.Context())
-		u, err := s.Users.CreateUser(r.Context(), req.Email, auth.Role(req.Role), req.Password)
+		var u auth.User
+		var err error
+		if req.OrgID > 0 {
+			u, err = s.Users.CreateUserInOrg(r.Context(), req.Email, auth.Role(req.Role), req.Password, req.OrgID, req.OrgRole)
+		} else {
+			u, err = s.Users.CreateUser(r.Context(), req.Email, auth.Role(req.Role), req.Password)
+		}
 		if err != nil {
 			s.writeUserAdminError(w, r, err)
 			return
 		}
-		s.audit(r, p.UserID, "user.create", "user:"+u.ID)
-		s.log.Info("user created", "actor", p.UserID, "user", u.ID, "role", string(u.Role))
+		if req.OrgID > 0 {
+			s.auditWith(r, p.UserID, "user.create", "user:"+u.ID, map[string]any{"org_id": req.OrgID, "org_role": req.OrgRole})
+		} else {
+			s.audit(r, p.UserID, "user.create", "user:"+u.ID)
+		}
+		s.log.Info("user created", "actor", p.UserID, "user", u.ID, "role", string(u.Role), "org_id", req.OrgID)
 		WriteData(w, http.StatusCreated, map[string]any{"user": toUserDTO(u)})
 	}))))
 
