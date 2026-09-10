@@ -89,7 +89,7 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		"orderbook_state",
 		"orderbook_sequence_errors_total",
 		"orderbook_resync_total",
-		"triangles_total",
+		"triangles_tracked",
 		"triangles_evaluated_total",
 		"triangle_evaluation_duration_bucket",
 		"opportunities_detected_total",

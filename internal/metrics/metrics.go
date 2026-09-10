@@ -345,7 +345,7 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		rejected   = i64c("opportunities_rejected", "opportunities rejected by the risk engine")
 		skipped    = i64c("scanner_skipped_unhealthy", "evaluations skipped on missing/unhealthy books")
 		dropped    = i64c("scanner_dropped_events", "scanner events dropped by slow consumers")
-		triangles  = i64g("triangles_total", "triangles in the active topology")
+		triangles  = i64g("triangles_tracked", "triangles in the active topology (a gauge: rate() on it would be nonsense; renamed from triangles_total at the pre-production breaking window, audit O13)")
 		frames     = i64c("market_messages", "market data frames received")
 		reconnects = i64c("exchange_reconnects", "feed session reconnects")
 		apiErrors  = i64c("exchange_api_errors", "exchange REST errors")
