@@ -78,6 +78,13 @@ type SessionStore interface {
 	RevokeUserSessions(ctx context.Context, userID string, at time.Time) error
 }
 
+// HashStore persists upgraded password hashes. Both backing stores
+// (pgx AuthStore, MemoryStore) already implement it via the admin
+// service's SetUserPassword.
+type HashStore interface {
+	SetUserPassword(ctx context.Context, id, passwordHash string) error
+}
+
 var (
 	ErrUnknownUser     = errors.New("auth: unknown user")
 	ErrUserDisabled    = errors.New("auth: user disabled")
@@ -118,6 +125,11 @@ type Manager struct {
 	IPThrottle *Throttle
 	TTL        time.Duration // absolute session lifetime
 	Now        func() time.Time
+	// HashStore, when set, receives a re-hash of the presented password
+	// after a successful login whose stored row still carries parameters
+	// weaker than the current ones (S12). Optional: nil leaves the row as
+	// it is until the next password change.
+	HashStore HashStore
 }
 
 // Login verifies credentials and mints a session. Failures feed the
@@ -153,6 +165,16 @@ func (m *Manager) Login(ctx context.Context, email, password string, ip netip.Ad
 	if u.Disabled {
 		fail()
 		return Session{}, ErrUserDisabled
+	}
+	// Transparent parameter upgrade (S12): the row verified, so the
+	// password is known here; if it was stored with weaker parameters
+	// than today's, rewrite it now. Best-effort by design — a failed
+	// write must not lock a valid credential out, and the next login
+	// retries the upgrade.
+	if m.HashStore != nil && NeedsRehash(u.PasswordHash) {
+		if hash, err := HashPassword(password); err == nil {
+			_ = m.HashStore.SetUserPassword(ctx, u.ID, hash)
+		}
 	}
 	token, err := NewToken(32)
 	if err != nil {

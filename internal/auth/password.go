@@ -26,6 +26,21 @@ const (
 	argonSaltLen = 16
 )
 
+// Parse-time ceilings for parameters read back from a stored hash (audit
+// S12). Hashes are produced only by HashPassword, but any write primitive
+// on users.password_hash would otherwise turn verification into an
+// allocation bomb (m=4 GiB, t=2^32). Deriving with clamped parameters
+// still fails the constant-time compare, so a tampered row fails closed
+// the same way a wrong password does.
+const (
+	argonMaxMem    = 256 * 1024 // KiB
+	argonMaxTime   = 10
+	argonMaxPar    = 8
+	argonMaxSalt   = 64 // bytes
+	argonMinSalt   = 8  // bytes
+	argonMaxKeyLen = 512
+)
+
 var ErrPasswordMismatch = errors.New("auth: password mismatch")
 
 // argonSem bounds concurrent Argon2id derivations process-wide. Each
@@ -55,38 +70,85 @@ func HashPassword(password string) (string, error) {
 	), nil
 }
 
-// VerifyPassword checks a password against an encoded hash in constant
-// time. Unknown formats fail closed.
-func VerifyPassword(password, encoded string) error {
+// argonParams is the decoded parameter set of a PHC-format hash.
+type argonParams struct {
+	mem, iters uint32
+	par        uint8
+	salt, key  []byte
+}
+
+// parseHash decodes an encoded Argon2id hash, validating the fields a
+// tampered row could abuse and clamping the derivation parameters to
+// the S12 ceilings. Zero parameters are malformed (no hash this package
+// ever wrote has them), oversized ones are clamped — the derivation then
+// simply no longer matches the stored key.
+func parseHash(encoded string) (argonParams, error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
-		return errors.New("auth: unsupported hash format")
+		return argonParams{}, errors.New("auth: unsupported hash format")
 	}
 	var version int
 	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
-		return errors.New("auth: unsupported argon2 version")
+		return argonParams{}, errors.New("auth: unsupported argon2 version")
 	}
-	var mem, iters uint32
-	var par uint8
-	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &iters, &par); err != nil {
-		return errors.New("auth: malformed parameters")
+	var p argonParams
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &p.mem, &p.iters, &p.par); err != nil {
+		return argonParams{}, errors.New("auth: malformed parameters")
+	}
+	if p.iters == 0 || p.mem == 0 || p.par == 0 {
+		return argonParams{}, errors.New("auth: malformed parameters")
+	}
+	if p.mem > argonMaxMem {
+		p.mem = argonMaxMem
+	}
+	if p.iters > argonMaxTime {
+		p.iters = argonMaxTime
+	}
+	if p.par > argonMaxPar {
+		p.par = argonMaxPar
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return errors.New("auth: malformed salt")
+		return argonParams{}, errors.New("auth: malformed salt")
 	}
-	want, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if len(salt) < argonMinSalt || len(salt) > argonMaxSalt {
+		return argonParams{}, errors.New("auth: malformed salt")
+	}
+	key, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return errors.New("auth: malformed hash")
+		return argonParams{}, errors.New("auth: malformed hash")
 	}
-	if len(want) == 0 || len(want) > 512 {
-		return errors.New("auth: malformed hash length")
+	if len(key) == 0 || len(key) > argonMaxKeyLen {
+		return argonParams{}, errors.New("auth: malformed hash length")
 	}
-	got := deriveKey([]byte(password), salt, iters, mem, par, uint32(len(want))) //nolint:gosec // bounded to (0,512] above
-	if subtle.ConstantTimeCompare(got, want) != 1 {
+	p.salt, p.key = salt, key
+	return p, nil
+}
+
+// VerifyPassword checks a password against an encoded hash in constant
+// time. Unknown formats fail closed.
+func VerifyPassword(password, encoded string) error {
+	p, err := parseHash(encoded)
+	if err != nil {
+		return err
+	}
+	got := deriveKey([]byte(password), p.salt, p.iters, p.mem, p.par, uint32(len(p.key))) //nolint:gosec // bounded to (0,512] above
+	if subtle.ConstantTimeCompare(got, p.key) != 1 {
 		return ErrPasswordMismatch
 	}
 	return nil
+}
+
+// NeedsRehash reports whether an encoded hash was written with weaker
+// parameters than HashPassword writes today, so a successful login can
+// transparently upgrade the stored row (S12) instead of waiting for the
+// user's next password change.
+func NeedsRehash(encoded string) bool {
+	p, err := parseHash(encoded)
+	if err != nil {
+		return false // unparseable rows are VerifyPassword's problem
+	}
+	return p.mem < argonMemory || p.iters < argonTime || uint32(len(p.key)) < argonKeyLen //nolint:gosec // bounded to (0,512] at parse
 }
 
 // NewToken returns a URL-safe random token with n bytes of entropy
