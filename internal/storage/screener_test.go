@@ -331,3 +331,51 @@ func TestScreenerFundingUpsertAndList(t *testing.T) {
 		t.Fatalf("venue-filtered series = %+v err=%v", venueFiltered, err)
 	}
 }
+
+// TestScreenerEventsCloseOpenEvents (audit X5): the sweeper closes
+// every open row with the restart reason and leaves already-closed rows
+// exactly as recorded — the storage half of the evaluator's startup
+// recovery.
+func TestScreenerEventsCloseOpenEvents(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	es := s.ScreenerEvents()
+
+	t0 := time.Unix(1_800_000_000, 0).UTC()
+	open := screener.Event{ID: "ev-open", RuleID: "rule-1", Kind: screener.RuleKindSpread, Base: "BTC", Quote: "USDT", OpenedAt: t0, PeakNetBps: "12.5"}
+	closed := screener.Event{ID: "ev-closed", RuleID: "rule-2", Kind: screener.RuleKindCarry, Base: "ETH", Quote: "USDT", OpenedAt: t0, PeakNetBps: "9"}
+	for _, ev := range []screener.Event{open, closed} {
+		if err := es.InsertEvent(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := es.CloseEventWithReason(ctx, closed.ID, t0.Add(time.Hour), 3600, "9", "below_min_spread"); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := es.CloseOpenEvents(ctx, t0.Add(2*time.Hour), screener.EventCloseReasonRestart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("CloseOpenEvents swept %d rows, want 1", n)
+	}
+	rows, err := es.ListEvents(ctx, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]screener.Event{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	if byID["ev-open"].ClosedAt == nil || byID["ev-open"].CloseReason != screener.EventCloseReasonRestart {
+		t.Fatalf("open row after sweep = %+v", byID["ev-open"])
+	}
+	if byID["ev-closed"].CloseReason != "below_min_spread" || byID["ev-closed"].LifetimeS != 3600 {
+		t.Fatalf("closed row rewritten by sweep = %+v", byID["ev-closed"])
+	}
+	// Idempotent: a second sweep finds nothing.
+	if n, _ := es.CloseOpenEvents(ctx, t0.Add(3*time.Hour), screener.EventCloseReasonRestart); n != 0 {
+		t.Fatalf("second sweep closed %d rows", n)
+	}
+}
