@@ -29,16 +29,25 @@ this branch since the test-database cleanup fix; the secret scan is green.
   (ADMIN, CSRF, audited, type-to-confirm) calls `risk.Registry.Close`;
   the Risk Center renders the control beside each open breaker's reason.
 
+- **Regression and the final review** — done: the full suite (below)
+  ran green, `master-report.md` §"FINAL PLATFORM REVIEW" carries the
+  per-area ratings, the measured before/after figures and the verdict
+  (**NOT READY FOR LIVE TRADING**, with the conditions that would change
+  it), `test-plan.md` and `performance-plan.md` list the new tests, and
+  the pull request description is current.
+
 ## What remains
 
-1. Regression and the final review: run the full suite (below), refresh
-   `master-report.md` §ratings and the verdict with measured evidence,
-   update `test-plan.md` and `performance-plan.md` with the new tests,
-   and update the pull request description.
-2. Optional hardening from the P2/P3 backlog (none block the review):
-   T10 (screener constraint duplication), D7–D10 database items, S5/S8/
-   S10/S11 console-RBAC and consent items, X-series scanner polish,
-   O7/O9/O10/O11 observability, F9–F19 console P2s.
+The branch is complete for review and merge. Nothing below blocks it:
+
+1. Optional hardening from the P2/P3 backlog: T10 (screener constraint
+   duplication), D7–D10 database items, S5/S8/S10/S11 console-RBAC and
+   consent items, X-series scanner polish, O7/O9/O10/O11 observability,
+   F9–F19 console P2s.
+2. The operator decisions the review names as conditions for a changed
+   verdict: a backup option chosen and a verify drill passed (P1-15), and
+   a `docs/campaigns/` report showing a positive net edge under the exact
+   fee, depth and quantization model.
 
 ## How to resume
 
