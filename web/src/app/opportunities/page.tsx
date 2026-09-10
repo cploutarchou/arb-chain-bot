@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
@@ -48,7 +49,18 @@ function fmtAge(fromIso: string | undefined, nowMs: number): string {
 }
 
 export default function OpportunitiesPage() {
-  const [status, setStatus] = useState<string>("QUALIFIED");
+  return (
+    <Suspense>
+      <OpportunitiesPageInner />
+    </Suspense>
+  );
+}
+
+function OpportunitiesPageInner() {
+  // A deep link (Risk Center rejection reasons) names the status to
+  // open on; without one the default view is the qualified set.
+  const deepStatus = useSearchParams().get("status") ?? "QUALIFIED";
+  const [status, setStatus] = useState<string>(deepStatus);
   const [triangle, setTriangle] = useState("");
   const history = usePoll(() => api.opportunities.history(status, 100), 10000, [status]);
 
