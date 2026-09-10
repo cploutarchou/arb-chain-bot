@@ -36,6 +36,10 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: install
         run: npm ci
+      - name: audit (fail on high)
+        run: npm audit --audit-level=high
+      - name: test
+        run: npm test
       - name: lint
         run: npm run lint
       - name: typecheck
