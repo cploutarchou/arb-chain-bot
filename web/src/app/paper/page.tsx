@@ -1,13 +1,38 @@
 "use client";
 
+// Paper Trading (audit F6): a live-cycle monitor first — what is
+// executing right now and where it is stuck — then the persisted
+// history with the full economics (fees, duration, the backend's own
+// close reason, the opportunity link). Money values are the backend's
+// decimal strings rendered verbatim; the only client-side arithmetic
+// is display-only (duration between two timestamps the backend sent,
+// remaining = requested − filled via the exact string helper).
+
+import Link from "next/link";
 import { useState } from "react";
-import { api, ApiError, type OrderRow } from "@/lib/api/client";
+import { api, ApiError, type CycleRow, type OrderRow } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
+import { subtractDecimalStr } from "@/lib/decimal";
+import { fmtDurationMs } from "@/lib/feedState";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { PaperControl } from "@/components/PaperControl";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
+import { ActiveCycles } from "@/components/ActiveCycles";
 import { Await, Badge, Button, ConfirmDialog, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
+
+function feesCell(cycle: CycleRow): string {
+  const fees = cycle.fees ?? {};
+  const parts = Object.entries(fees).map(([asset, v]) => `${v} ${asset}`);
+  return parts.length > 0 ? parts.join(" · ") : "—";
+}
+
+function durationCell(cycle: CycleRow): string {
+  if (!cycle.settled_at) return "—";
+  return fmtDurationMs(
+    new Date(cycle.settled_at).getTime() - new Date(cycle.started_at).getTime(),
+  );
+}
 
 export default function PaperPage() {
   const { state: auth } = useAuth();
@@ -117,6 +142,9 @@ export default function PaperPage() {
           }
         </Await>
       </Section>
+      <Section title="Live cycles (in flight)">
+        <ActiveCycles running={paperRunning} activeCount={status.kind === "ready" ? status.data.paper?.active_simulations : undefined} />
+      </Section>
       {mayReset && (
         <Section title="Danger zone">
           <div className="max-w-4xl rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-3">
@@ -149,21 +177,56 @@ export default function PaperPage() {
         <Await state={cycles} what="paper cycles">
           {(c) => (
             <Table
-              head={["Started", "Outcome", "PnL", "Slippage bps", "Cycle", ""]}
+              head={["Started", "Outcome", "Realized PnL", "Fees", "Slip bps", "Duration", "Reason", "Cycle", ""]}
               empty="persisted cycles yet. Persistence needs a database connection — see docs/deployment.md if this deployment doesn't have one configured"
               rows={(c.cycles ?? []).map((row) => [
                 fmtTime(row.started_at),
                 <OutcomeBadge key="o" code={row.outcome} />,
-                row.pnl_amount ? `${row.pnl_amount} ${row.pnl_asset ?? ""}` : "—",
+                row.realized_pnl !== undefined ? (
+                  <span key="pnl" title={`marked total ${row.pnl_amount ?? "—"} (realized ${row.realized_pnl ?? "—"} + exposure mark ${row.exposure_mark ?? "—"})`}>
+                    {row.realized_pnl} {row.pnl_asset ?? ""}
+                  </span>
+                ) : (
+                  <span key="pnl" title={`marked total ${row.pnl_amount ?? "—"}`}>
+                    {row.pnl_amount ?? "—"} {row.pnl_asset ?? ""}
+                  </span>
+                ),
+                <span key="f" title={feesCell(row)}>
+                  {feesCell(row)}
+                </span>,
                 row.slippage_bps ?? "—",
+                durationCell(row),
+                row.reason ? (
+                  <span key="r" className="block max-w-xs truncate text-[12px] text-[var(--text-dim)]" title={row.reason}>
+                    {row.reason}
+                  </span>
+                ) : (
+                  "—"
+                ),
                 <span key="id" className="text-[var(--text-dim)]">{row.id}</span>,
-                <Button
-                  key="b"
-                  onClick={() => showOrders(row.id)}
-                  disabled={ordersLoadingID === row.id}
-                >
-                  {ordersLoadingID === row.id ? "loading…" : "orders"}
-                </Button>,
+                <span key="act" className="flex items-center gap-2 whitespace-nowrap">
+                  <Button
+                    onClick={() => showOrders(row.id)}
+                    disabled={ordersLoadingID === row.id}
+                  >
+                    {ordersLoadingID === row.id ? "loading…" : "orders"}
+                  </Button>
+                  {row.opportunity_id ? (
+                    <Link
+                      href={`/opportunities/${encodeURIComponent(row.opportunity_id)}`}
+                      className="text-[12px] text-[var(--accent)] underline"
+                    >
+                      opportunity
+                    </Link>
+                  ) : (
+                    <span
+                      className="text-[12px] text-[var(--text-dim)]"
+                      title="persisted without its opportunity row (counted as an unlinked cycle)"
+                    >
+                      unlinked
+                    </span>
+                  )}
+                </span>,
               ])}
             />
           )}
@@ -174,15 +237,17 @@ export default function PaperPage() {
           <Await state={ordersState} what={`orders for cycle ${ordersCycle}`}>
             {(rows) => (
               <Table
-                head={["Leg", "Market", "Side", "Status", "Requested", "Filled", "Avg price", "Fee"]}
+                head={["Order ID", "Leg", "Market", "Side", "Status", "Requested", "Filled", "Remaining", "Avg price", "Fee"]}
                 empty="orders for this cycle"
                 rows={rows.map((o) => [
+                  <span key="oid" className="font-mono text-[11px] text-[var(--text-dim)]">{o.id}</span>,
                   o.leg_no,
                   o.market_id,
                   o.side,
                   <Badge key="s" tone={o.status === "FILLED" ? "ok" : "dim"}>{o.status}</Badge>,
                   o.qty ?? "—",
                   o.filled_qty ?? "—",
+                  subtractDecimalStr(o.qty, o.filled_qty) ?? "—",
                   o.avg_price ?? "—",
                   o.fee ? `${o.fee} ${o.fee_asset ?? ""}` : "—",
                 ])}
