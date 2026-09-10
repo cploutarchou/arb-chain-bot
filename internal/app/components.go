@@ -202,6 +202,12 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 			ledger = store.ScreenerPaper()
 		}
 		evaluator := alerts.New(screenerSvc, notify.Notify, log)
+		// X5: alert rows left open by a previous process can never be
+		// closed honestly by this one (their lane state died with it) —
+		// close them as "restart" before the first tick.
+		recCtx, recCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		evaluator.Recover(recCtx)
+		recCancel()
 		// T-082: alerts.per_day + alerts.channels are enforced at open
 		// time per the rule's organisation (nil without tenancy).
 		evaluator.SetEntitle(tenant.alertEntitle())

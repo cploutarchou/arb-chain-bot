@@ -37,6 +37,21 @@ func (c *ScreenerEvents) CloseEventWithReason(ctx context.Context, id string, cl
 	return nil
 }
 
+// CloseOpenEvents implements screener.OpenEventSweeper: startup recovery
+// (audit X5) closes every row the previous process left open, in one
+// statement, with the restart reason — this process holds none of their
+// lane state and could never close them the honest way. Rows already
+// closed keep their recorded lifetime and reason.
+func (c *ScreenerEvents) CloseOpenEvents(ctx context.Context, closedAt time.Time, reason string) (int64, error) {
+	tag, err := c.s.Pool.Exec(ctx, `
+		UPDATE screener_events SET closed_at = $1, close_reason = $2
+		WHERE closed_at IS NULL`, closedAt, nullStr(reason))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (c *ScreenerEvents) SetEventExecution(ctx context.Context, id, paperExecutionID string) error {
 	tag, err := c.s.Pool.Exec(ctx, `UPDATE screener_events SET paper_execution_id = $2 WHERE id = $1`, id, paperExecutionID)
 	if err != nil {

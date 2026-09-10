@@ -166,6 +166,35 @@ func (e *Evaluator) LaneStats() LaneStats {
 	return e.laneStats
 }
 
+// Recover reconciles persisted alert rows with a fresh process (audit
+// X5). Events that were open when the previous process stopped can
+// never be closed honestly by this one — lane lifetimes, cooldowns and
+// pending slippage measurements lived in its memory — so they are
+// closed now with reason "restart" instead of staying open forever.
+// What is deliberately NOT rehydrated: per-lane cooldowns and
+// lifetimes reset (a lane may re-alert immediately after a restart),
+// and the paper executor's pending slippage measurements from the
+// previous process are lost — the restart reason on the row is the
+// record of both.
+func (e *Evaluator) Recover(ctx context.Context) {
+	if e.svc.Events == nil {
+		return
+	}
+	sweeper, ok := e.svc.Events.(screener.OpenEventSweeper)
+	if !ok {
+		return
+	}
+	n, err := sweeper.CloseOpenEvents(ctx, time.Now().UTC(), screener.EventCloseReasonRestart)
+	if err != nil {
+		e.log.Error("screener alerts: restart recovery failed", "error", err)
+		return
+	}
+	if n > 0 {
+		e.log.Warn("screener alerts: closed events left open by a previous process",
+			"count", n, "reason", screener.EventCloseReasonRestart)
+	}
+}
+
 // diagnostics is the screener.Service diagnostics projection of
 // LaneStats for GET /screener/status (automation.alerts.*).
 func (e *Evaluator) diagnostics() map[string]int64 {

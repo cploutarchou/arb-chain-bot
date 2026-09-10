@@ -26,6 +26,19 @@ type EventCloseReasonRecorder interface {
 	CloseEventWithReason(ctx context.Context, id string, closedAt time.Time, lifetimeS int64, peakNetBps, reason string) error
 }
 
+// EventCloseReasonRestart is the close reason a recovering process
+// stamps on alert rows that were still open when the previous process
+// stopped (audit X5): this process holds none of their lane state, so
+// it can never close them the honest way.
+const EventCloseReasonRestart = "restart"
+
+// OpenEventSweeper is the optional EventStore extension the evaluator's
+// startup recovery uses (audit X5): close every row still open, with
+// one reason, in one statement.
+type OpenEventSweeper interface {
+	CloseOpenEvents(ctx context.Context, closedAt time.Time, reason string) (int64, error)
+}
+
 // EventCounter is the optional EventStore extension the auto-paper
 // summary uses for the per-rule "alerts" figure without paging through
 // ListEvents' capped result.
@@ -107,6 +120,23 @@ func (m *MemoryEventStore) CountEvents(_ context.Context, ruleID string) (int64,
 	var n int64
 	for _, e := range m.rows {
 		if ruleID == "" || e.RuleID == ruleID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// CloseOpenEvents implements OpenEventSweeper (audit X5).
+func (m *MemoryEventStore) CloseOpenEvents(_ context.Context, closedAt time.Time, reason string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for i := range m.rows {
+		if m.rows[i].ClosedAt == nil {
+			t := closedAt
+			m.rows[i].ClosedAt = &t
+			m.rows[i].CloseReason = reason
+			m.rows[i].HoldReason = ""
 			n++
 		}
 	}
