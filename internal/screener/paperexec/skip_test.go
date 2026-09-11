@@ -122,6 +122,10 @@ func TestSkipDriftCap(t *testing.T) {
 	rev.Params = &screener.RuleParams{MaxDriftQuote: &cap}
 	rev = h.rule(rev)
 	h.balance(screener.VenueOKX, "USDT", "100000")
+	// The forward buy's received-side fee left 0.0999 BTC on binance;
+	// the reverse sells 0.1 of it — seed the difference like a funded
+	// wallet would be.
+	h.balance(screener.VenueBinance, "BTC", "0.1")
 	setSpot(h.svc.Book, screener.VenueOKX, "49999", "1", "50000", "0.35", t0.Add(10*time.Second))
 	setSpot(h.svc.Book, screener.VenueBinance, "50250", "0.20", "50255", "1", t0.Add(10*time.Second))
 	h.x.loaded = false // reload wallets with the new OKX USDT row
@@ -196,9 +200,11 @@ func TestUnwindOnRejectedSecondLeg(t *testing.T) {
 	if e.Fills[1].Status != "REJECTED" || e.Fills[2].Status != "FILLED" {
 		t.Fatalf("fills = %+v", e.Fills)
 	}
-	// Cost: bought 0.2 at 50 010 (fee 10.002), sold at 49 998 × 0.9998 =
-	// 49 988.0004 (fee 9.99760008) → 0.2 × (49 988.0004 − 50 010) − 19.99960008.
-	want := d("0.2").Mul(d("49988.0004").Sub(d("50010"))).Sub(d("10.002")).Sub(d("9.99760008"))
+	// Cost under per-venue placement (audit T10): bought 0.2 at 50 010
+	// with the fee taken in base (0.1998 held, zero quote fee), unwound
+	// 0.1998 at 49 988.0004 with the sell fee in quote — the entry cost
+	// basis is the bare 0.2 notional.
+	want := d("0.1998").Mul(d("49988.0004")).Mul(d("0.999")).Sub(d("0.2").Mul(d("50010")))
 	if !e.PnLQuote.Equal(want) {
 		t.Errorf("unwind cost = %s, want %s", e.PnLQuote, want)
 	}
@@ -250,8 +256,10 @@ func TestSpotPartialLeg(t *testing.T) {
 	if e.Kind != KindPartialLeg || e.Fills[0].Status != "FILLED" || e.Fills[1].Status != "REJECTED" {
 		t.Fatalf("exec = %+v", e)
 	}
-	// Mark: bought 0.1 at 50 010, Binance mid 49 999.5 → 0.1 × (−10.5) − 5.001.
-	want := d("0.1").Mul(d("49999.5").Sub(d("50010"))).Sub(d("5.001"))
+	// Mark under placement (audit T10): bought 0.1 at 50 010 with the
+	// fee taken in base (0.0999 held, no quote fee), Binance mid
+	// 49 999.5 → 0.0999 × (−10.5).
+	want := d("0.0999").Mul(d("49999.5").Sub(d("50010")))
 	if !e.PnLQuote.Equal(want) {
 		t.Errorf("partial-leg mark = %s, want %s", e.PnLQuote, want)
 	}
@@ -297,7 +305,7 @@ func TestFundingAccrualSettledOnlyAndRetry(t *testing.T) {
 	setCarryBook(h.svc.Book, now, "49998", "50000", "50100", "50102", "50000", "0.0001", T2.Add(8*time.Hour))
 	h.x.Tick(ctx, now)
 	pos = h.positions(r.ID)[0]
-	want := d("0.2").Mul(d("50000")).Mul(d("-0.0002"))
+	want := d("0.1998").Mul(d("50000")).Mul(d("-0.0002")) // held size after the entry fee (audit T10)
 	if !pos.FundingQuote.Equal(want) {
 		t.Fatalf("funding = %s, want %s", pos.FundingQuote, want)
 	}

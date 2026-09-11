@@ -153,6 +153,17 @@ Spot ask 50 000 / bid 49 998; perp bid 50 100; predicted funding +0.0100 %/8 h, 
 - Fills: spot buy 0.2 at 50 010 (fee 10.002), perp sell 0.2 at 50 089.98 (fee 5.009); collateral 10 018.
 - Realised funding averaged +0.008 % over 90 settlements: `Σ funding ≈ 72.00 USDT`.
 - Close at spot bid 51 000 / perp ask 51 010 (max-hold exit, basis not converged): spot leg +177.80; perp leg −184.00 − 10.11 = −194.11; total **55.69 USDT** (55.7 bps over 30 days ≈ 6.8 % APR display). All of it came from funding; at +0.003 % mean funding the trade nets ≈ −17 USDT.
+
+> **Placement note (audit T10).** The figures above compute fees in
+> quote — the value-equivalent expression §1.3 permits. The executor now
+> applies the venue's actual placement: Binance takes the entry spot fee
+> in base, so a 0.2 buy holds 0.1998 and the position, perp leg,
+> collateral, funding and close all run on the held size. The same
+> worked example under placement: entry fee 0.0002 BTC (quote equivalent
+> 10.002 at the fill), funding 71.928, close legs +177.61 / −183.82 −
+> 10.10, total **55.62 USDT** — the golden tests pin these. The
+> difference is the fee's own basis risk, which is the point of
+> modelling placement at all.
 - Margin stop at 75 135 (50 %); liquidation would be ≈ 99 779.
 
 ### 3.6 Paper execution algorithm (each poll)

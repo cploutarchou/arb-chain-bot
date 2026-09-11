@@ -79,10 +79,19 @@ type Fill struct {
 	FillPrice   decimal.Decimal `json:"fill_price"`   // reread × (1 ± slip)
 	Qty         decimal.Decimal `json:"qty"`
 	FeeQuote    decimal.Decimal `json:"fee_quote"`
-	Status      string          `json:"status"` // FILLED|REJECTED
-	Reason      string          `json:"reason,omitempty"`
-	SubmitMs    int64           `json:"submit_ms"`
-	FillMs      int64           `json:"fill_ms"`
+	// Fee placement per venue convention (audit T10): FeeBase is a
+	// base-denominated fee (RECEIVED buys, SPENT sells) with
+	// FeeQuoteEquiv its value at the fill price; NetQty is the quantity
+	// that survives the fee on the side that matters (base received on
+	// buys, base sellable on sells). Quote-side fills leave FeeBase zero
+	// and NetQty = Qty.
+	FeeBase       decimal.Decimal `json:"fee_base,omitempty"`
+	FeeQuoteEquiv decimal.Decimal `json:"fee_quote_equiv,omitempty"`
+	NetQty        decimal.Decimal `json:"net_qty"`
+	Status        string          `json:"status"` // FILLED|REJECTED
+	Reason        string          `json:"reason,omitempty"`
+	SubmitMs      int64           `json:"submit_ms"`
+	FillMs        int64           `json:"fill_ms"`
 }
 
 // Execution is one ledger row (screener_paper_executions).

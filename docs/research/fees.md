@@ -253,6 +253,18 @@ products), bitget.com support 12560603820584 + 360060644351 + api-doc
 
 ---
 
+## Placement in the Scanner Suite (audit T10)
+
+`internal/screener.VenueFeeConvention` compiles this document's
+per-venue placement findings into the one table the screener's paper
+executor consults: Binance/OKX/Bybit/Bitget RECEIVED, Kraken SPENT,
+Coinbase/Gate QUOTE, everything else QUOTE-assumed until a verified
+statement lands here. The executor's fills charge the fee on the side
+the venue takes it (via `fees.PlacementFor`/`UsableInput`/`NetOutput`,
+the same functions the engine's simulator uses), and a hedged carry is
+sized to the post-fee spot holding so funding, collateral and the close
+run on one number.
+
 ## Decision record: how fee rates reach the engine (audit T7)
 
 Audit finding T7 asked for the fee schedule to be fetched from the

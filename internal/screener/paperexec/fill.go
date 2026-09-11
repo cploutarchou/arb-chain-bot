@@ -9,6 +9,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
+	"github.com/cploutarchou/arb-chain-bot/internal/fees"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 	"github.com/cploutarchou/arb-chain-bot/internal/simulation"
 )
@@ -72,6 +73,13 @@ type legReq struct {
 	Price  decimal.Decimal
 	Reread func() (decimal.Decimal, bool)
 	FeeBps decimal.Decimal
+	// Convention is the venue's taker-fee placement (audit T10's fee
+	// half): which side of the conversion the fee comes off. Spot legs
+	// pass screener.VenueFeeConvention(venue); linear USDT-margined
+	// perp legs pass exchange.FeeInQuote explicitly — the margin asset
+	// is where perp fees settle regardless of venue. Empty is quote
+	// (the historic assumption).
+	Convention exchange.FeeConvention
 }
 
 // simulateLeg applies §1.3: submit latency, limit-IOC re-read with
@@ -116,9 +124,71 @@ func (x *Executor) simulateLeg(ctx context.Context, key string, r legReq, slipBp
 	} else {
 		f.FillPrice = reread.Mul(decOne.Sub(slip))
 	}
-	f.FeeQuote = f.FillPrice.Mul(r.Qty).Mul(r.FeeBps.Div(decTenK))
+	x.applyFeePlacement(&f, r)
 	f.Status = "FILLED"
 	return f
+}
+
+// applyFeePlacement charges the leg's taker fee on the side the venue
+// actually takes it (audit T10's fee half), using the SAME functions the
+// engine's exact simulator uses (fees.PlacementFor / UsableInput /
+// NetOutput) so the two paper stacks cannot drift on placement:
+//
+//	BUY,  FeeOnOutput (RECEIVED): fee in BASE off the received amount —
+//	      the next leg sells NetQty, less base leaves the venue.
+//	BUY,  FeeOnInput (QUOTE/SPENT): fee in QUOTE off the notional — the
+//	      exact input-side shrink the engine's UsableInput applies.
+//	SELL, FeeOnOutput (RECEIVED/QUOTE): fee in QUOTE off the proceeds.
+//	SELL, FeeOnInput (SPENT): fee in BASE off the sold quantity — only
+//	      NetQty of it reaches the book.
+//
+// Quote-denominated fees land in FeeQuote; base-denominated fees in
+// FeeBase with their quote equivalent at the fill price in FeeQuoteEquiv
+// (the ledger bills in quote; the per-asset truth rides the fill).
+func (x *Executor) applyFeePlacement(f *Fill, r legReq) {
+	conv := r.Convention
+	if conv == "" {
+		conv = exchange.FeeInQuote
+	}
+	side := exchange.SideBuy
+	if r.Side == "SELL" {
+		side = exchange.SideSell
+	}
+	placement, err := fees.PlacementFor(conv, side)
+	if err != nil {
+		// An unknown convention was already defaulted above; PlacementFor
+		// only errors on the empty case, which cannot reach here.
+		placement = fees.FeeOnOutput
+	}
+	rate := r.FeeBps.Div(decTenK)
+	notional := f.FillPrice.Mul(f.Qty)
+	f.NetQty = f.Qty
+	switch placement {
+	case fees.FeeOnInput:
+		if side == exchange.SideBuy {
+			// Quote off the notional: usable = notional/(1+rate).
+			_, fee := fees.UsableInput(fees.FeeOnInput, notional, rate)
+			f.FeeQuote = fee
+		} else {
+			// Base off the sold quantity: only NetQty reaches the book.
+			usable, fee := fees.UsableInput(fees.FeeOnInput, f.Qty, rate)
+			f.NetQty = usable
+			f.FeeBase = fee
+			f.FeeQuoteEquiv = fee.Mul(f.FillPrice)
+		}
+	default: // FeeOnOutput
+		if side == exchange.SideBuy {
+			// Base off the received amount.
+			_, fee := fees.NetOutput(fees.FeeOnOutput, f.Qty, rate)
+			f.NetQty = f.Qty.Sub(fee)
+			f.FeeBase = fee
+			f.FeeQuoteEquiv = fee.Mul(f.FillPrice)
+		} else {
+			// Quote off the proceeds.
+			_, fee := fees.NetOutput(fees.FeeOnOutput, notional, rate)
+			f.FeeQuote = fee
+		}
+	}
 }
 
 // truncStep quantizes q down to the instrument's step through the ONE

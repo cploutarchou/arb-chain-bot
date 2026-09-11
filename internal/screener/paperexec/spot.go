@@ -91,26 +91,36 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 	execID := "exe-" + x.idGen()
 	legA := x.simulateLeg(ctx, execID, legReq{Leg: 1, Venue: s.Lane.VenueA, Market: "spot", Side: "BUY",
 		Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: size, Price: qa.Ask, FeeBps: fA,
+		Convention: screener.VenueFeeConvention(s.Lane.VenueA),
 		Reread: func() (decimal.Decimal, bool) {
 			return x.sidePrice(s.Lane.VenueA, "spot", "BUY", s.Lane.Base, s.Lane.Quote)
 		}}, slip)
+	// The second leg sells what actually survived the first leg's fee
+	// (audit T10): a received-side buy fee means less base arrives on
+	// venue B than was bought on venue A.
+	sellQty := size
+	if legA.Status == "FILLED" {
+		sellQty = legA.NetQty
+	}
 	legB := x.simulateLeg(ctx, execID, legReq{Leg: 2, Venue: s.Lane.VenueB, Market: "spot", Side: "SELL",
-		Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: size, Price: qb.Bid, FeeBps: fB,
+		Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: sellQty, Price: qb.Bid, FeeBps: fB,
+		Convention: screener.VenueFeeConvention(s.Lane.VenueB),
 		Reread: func() (decimal.Decimal, bool) {
 			return x.sidePrice(s.Lane.VenueB, "spot", "SELL", s.Lane.Base, s.Lane.Quote)
 		}}, slip)
 
-	// Settle wallets per leg outcome.
+	// Settle wallets per leg outcome. A sell that only walked NetQty of
+	// the reserved base (SPENT-side fee) returns the difference.
 	if legA.Status == "FILLED" {
 		cost := legA.FillPrice.Mul(size).Add(legA.FeeQuote)
 		_ = wa.Settle(resA.ID, cost)
-		_ = wa.Credit(baseAsset, size)
+		_ = wa.Credit(baseAsset, legA.NetQty)
 	} else {
 		_ = wa.Release(resA.ID)
 	}
 	if legB.Status == "FILLED" {
-		_ = wb.Settle(resB.ID, size)
-		_ = wb.Credit(quoteAsset, legB.FillPrice.Mul(size).Sub(legB.FeeQuote))
+		_ = wb.Settle(resB.ID, legB.NetQty)
+		_ = wb.Credit(quoteAsset, legB.FillPrice.Mul(legB.NetQty).Sub(legB.FeeQuote))
 	} else {
 		_ = wb.Release(resB.ID)
 	}
@@ -120,7 +130,9 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 	x.persistBalance(ctx, s.Lane.VenueB, string(baseAsset), now)
 
 	fills := []Fill{legA, legB}
-	fees := legA.FeeQuote.Add(legB.FeeQuote)
+	// The ledger bills in quote: quote-side fees plus the fill-price
+	// value of base-side fees (the per-asset truth rides the fills).
+	fees := legA.FeeQuote.Add(legA.FeeQuoteEquiv).Add(legB.FeeQuote).Add(legB.FeeQuoteEquiv)
 	exec := Execution{
 		ID: execID, RuleID: r.ID, EventID: ev.ID, Strategy: screener.StrategyCrossVenueSpot,
 		Base: s.Lane.Base, Quote: s.Lane.Quote, VenueA: s.Lane.VenueA, VenueB: s.Lane.VenueB,
@@ -137,10 +149,18 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 
 	switch {
 	case legA.Status == "FILLED" && legB.Status == "FILLED":
-		// §2.2 pnl_quote = size × [bid_B^fill (1 − f_B) − ask_A^fill (1 + f_A)]
+		// §2.2, per-venue fee placement (audit T10): what the second leg
+		// realises over what the first leg cost, each leg's fee charged
+		// on the side its venue takes it —
+		//   pnl = bid_B^fill × netQty_B − feeQuote_B
+		//       − (ask_A^fill × size + feeQuote_A)
+		// with base-side fees already inside netQty_B (a received-side
+		// buy fee shrinks what arrives on B; a spent-side sell fee
+		// shrinks what B can sell).
 		exec.Kind = KindSpot
 		exec.FeesQuote = fees
-		exec.PnLQuote = size.Mul(legB.FillPrice.Mul(decOne.Sub(fB.Div(decTenK))).Sub(legA.FillPrice.Mul(decOne.Add(fA.Div(decTenK)))))
+		exec.PnLQuote = legB.FillPrice.Mul(legB.NetQty).Sub(legB.FeeQuote).
+			Sub(legA.FillPrice.Mul(size).Add(legA.FeeQuote))
 		driftNotional := size.Mul(legA.FillPrice)
 		rebalance := driftNotional.Mul(fA.Add(fB).Div(decTenK))
 		exec.Payload["gross_bps"] = s.GrossBps.String()
@@ -172,9 +192,9 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 			mid = filled.FillPrice
 		}
 		if filled.Side == "BUY" {
-			exec.PnLQuote = size.Mul(mid.Sub(filled.FillPrice)).Sub(filled.FeeQuote)
+			exec.PnLQuote = filled.NetQty.Mul(mid.Sub(filled.FillPrice)).Sub(filled.FeeQuote)
 		} else {
-			exec.PnLQuote = size.Mul(filled.FillPrice.Sub(mid)).Sub(filled.FeeQuote)
+			exec.PnLQuote = filled.NetQty.Mul(filled.FillPrice.Sub(mid)).Sub(filled.FeeQuote)
 		}
 		exec.Payload["mark_mid"] = mid.String()
 		pos.PnLQuote = exec.PnLQuote
