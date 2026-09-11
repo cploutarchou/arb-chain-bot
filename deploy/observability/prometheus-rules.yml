@@ -71,6 +71,45 @@ groups:
         annotations:
           summary: "Recorder queue overflowing; recording has gaps"
 
+  - name: arbd-advisor-channels
+    rules:
+      - alert: AIAdvisorFailing
+        # O14: the advisor panels had no alert — a silently failing
+        # advisor just stops producing recommendations. Any failure in
+        # 30 m warns; a failure ratio over half of requests for 30 m is
+        # critical (the advisor is effectively down).
+        expr: sum(increase(ai_failures_total[30m])) > 0
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "AI advisor reported {{ $value }} failed request(s) in 30m"
+          description: "Check the advisor provider credentials (vault ai key) and provider status; /ai shows the last error."
+      - alert: AIAdvisorDown
+        expr: >
+          sum(increase(ai_failures_total[30m]))
+            / clamp_min(sum(increase(ai_requests_total[30m])), 1) > 0.5
+        for: 30m
+        labels: {severity: critical, team: platform}
+        annotations:
+          summary: "AI advisor failing over half its requests for 30m"
+          description: "Recommendations are effectively unavailable; the deterministic risk gate is unaffected (the advisor never gates anything)."
+      - alert: TelegramDeliveryErrors
+        expr: sum(increase(telegram_errors_total[15m])) > 0
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Telegram delivery hit {{ $value }} API error(s) in 15m"
+          description: "Alerts may not have reached operators. Check the bot token (vault telegram token) and Telegram API status."
+      - alert: TelegramSilent
+        # No updates AND no errors while the bot was sending earlier in
+        # the day: the poller likely stopped or the token was revoked
+        # (revocation often manifests as quiet failure, not error rows).
+        expr: >
+          sum(increase(telegram_messages_total[6h])) == 0
+            and sum(increase(telegram_messages_total[7d])) > 0
+        for: 1h
+        labels: {severity: warning, team: platform}
+        annotations:
+          summary: "Telegram bot went silent after previously handling updates"
+          description: "No updates handled for 6h despite a live last week; verify the bot poller and token."
   - name: arbd-slippage
     rules:
       - alert: PaperSlippageExceedsBuffer
