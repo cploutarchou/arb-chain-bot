@@ -637,3 +637,24 @@ green (44 packages). What remains of the entire remediation programme:
 the F17/T10 fee-model merge (one deliberate consolidation), alerts for
 the O14 panels, and the two verdict conditions that were never
 engineering. **NOT READY FOR LIVE TRADING** stands.
+
+## FOLLOW-UP ADDENDUM: the placement pass
+
+PR #26 closes the last two items the handover carried. O14's remainder:
+four alert rules behind the AI/Telegram panels. T10/F17's last half:
+the screener's paper fills charge the venue's actual fee placement — a
+compiled per-venue convention table from the fees research drives the
+same placement functions the engine's simulator uses; a hedged carry is
+sized to the post-fee spot holding; the close measures against the
+quote that actually left the wallet with exactly-charged perp fees, so
+wallet conservation is exact; and the §3.5 worked example recomputes
+under placement (55.62 USDT vs 55.69 quote-equivalent — the difference
+is the fee's own basis risk, which is the point of modelling placement
+at all).
+
+Verification: gofmt/vet/golangci-lint clean, `go test -race ./...`
+green (44 packages). **Nothing from the audited finding lists remains
+open.** What remains of the programme is evidence and operator
+decisions: the positive-edge campaign, the ≥30-day report window, the
+production-gate review — and the verdict stays **NOT READY FOR LIVE
+TRADING**.
