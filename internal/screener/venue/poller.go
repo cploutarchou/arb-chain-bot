@@ -1,6 +1,10 @@
 package venue
 
 import (
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/tracing"
+
 	"context"
 	"log/slog"
 	"sort"
@@ -245,6 +249,8 @@ func (p *Poller) loop(ctx context.Context, c Collector, st *screener.VenueStatus
 }
 
 func (p *Poller) pollOnce(ctx context.Context, c Collector, st *screener.VenueStatus, settings screener.Settings) {
+	ctx, span := tracing.Start(ctx, "screener.poll", attribute.String("venue", string(c.ID())))
+	defer span.End()
 	start := time.Now()
 	quotes, err := c.Spot(ctx)
 	var perps, dropped []screener.Perp

@@ -1,6 +1,10 @@
 package paperexec
 
 import (
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/tracing"
+
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -180,6 +184,10 @@ func (x *Executor) Outcomes() []OutcomeCount {
 
 // OnOpen is the alerts.OpenHook: called once per opened event.
 func (x *Executor) OnOpen(ctx context.Context, s alerts.Signal, ev screener.Event) {
+	ctx, span := tracing.Start(ctx, "screener.paper_execute",
+		attribute.String("strategy", string(s.Strategy)),
+		attribute.String("rule", s.Rule.ID))
+	defer span.End()
 	if !s.Rule.AutoPaper {
 		return
 	}

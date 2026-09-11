@@ -12,6 +12,10 @@
 package simulation
 
 import (
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/tracing"
+
 	"context"
 	"errors"
 	"fmt"
@@ -184,6 +188,10 @@ func cycleRNG(seed int64, cycleID string, leg int) *rand.Rand {
 // books. It returns an error only for programmer/config faults; market
 // outcomes (failures, partials, timeouts) are results, not errors.
 func (e *Engine) ExecuteCycle(ctx context.Context, plan execution.CyclePlan) (execution.CycleResult, error) {
+	ctx, span := tracing.Start(ctx, "paper.cycle",
+		attribute.String("cycle_id", plan.CycleID),
+		attribute.String("opportunity_id", plan.Opportunity.ID))
+	defer span.End()
 	op := plan.Opportunity
 	res := execution.CycleResult{
 		CycleID:       plan.CycleID,

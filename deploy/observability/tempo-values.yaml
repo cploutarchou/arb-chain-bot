@@ -1,7 +1,8 @@
 # grafana/tempo-distributed helm values. arbd exports OTLP traces
-# (OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo-distributor.monitoring:4317)
-# once the tracing hooks land in internal/metrics; the collector side is
-# ready ahead of it.
+# (set OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo-distributor.monitoring:4317
+# on the arbd deployment — internal/tracing reads it; stage spans:
+# scanner.evaluate_market, paper.cycle, screener.alerts.tick,
+# screener.poll, screener.paper_execute).
 traces:
   otlp:
     grpc: {enabled: true}

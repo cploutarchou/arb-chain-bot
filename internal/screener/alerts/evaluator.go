@@ -1,6 +1,8 @@
 package alerts
 
 import (
+	"github.com/cploutarchou/arb-chain-bot/internal/tracing"
+
 	"context"
 	"crypto/rand"
 	"log/slog"
@@ -277,6 +279,8 @@ func (e *Evaluator) inputs() Inputs {
 
 // Tick implements screener.Ticker: one evaluation pass.
 func (e *Evaluator) Tick(ctx context.Context, now time.Time) {
+	ctx, span := tracing.Start(ctx, "screener.alerts.tick")
+	defer span.End()
 	if e.svc.Rules == nil {
 		return
 	}

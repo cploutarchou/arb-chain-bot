@@ -6,6 +6,10 @@
 package scanner
 
 import (
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/tracing"
+
 	"context"
 	"sync"
 	"sync/atomic"
@@ -286,7 +290,12 @@ func (s *Scanner) Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case id := <-work:
+					// O11: one span per market evaluation — the hot stage's
+					// unit of work. Noop (zero cost) unless tracing.Init ran.
+					_, span := tracing.Start(ctx, "scanner.evaluate_market",
+						attribute.String("market", id.String()))
 					s.EvaluateMarket(id)
+					span.End()
 				}
 			}
 		}()
