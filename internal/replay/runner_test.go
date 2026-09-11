@@ -337,3 +337,45 @@ func TestRunnerConfigVersionResolutionFailureFailsTheRun(t *testing.T) {
 		t.Fatalf("expected a non-empty error for an unresolvable config_version, got %+v", failed)
 	}
 }
+
+// TestRunCountsTracksTerminalStatuses (audit O15): the runner counts
+// done/failed runs for replay_runs_total{status}, matching the campaign
+// runner's counters — orphan reconciliation is not a run and does not
+// count.
+func TestRunCountsTracksTerminalStatuses(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "REC"), 0o750)
+	fail := true
+	r := &Runner{
+		Sources: fakeSources{}, Dir: dir, NewID: func() string { return "C" },
+		Execute: func(context.Context, Sources, ParamsSource, string, Request, func(Progress)) (Result, error) {
+			if fail {
+				return Result{}, errors.New("no segments")
+			}
+			return Result{Evaluations: 4}, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Run(ctx) }()
+
+	if counts := r.RunCounts(); counts[StatusDone] != 0 || counts[StatusFailed] != 0 {
+		t.Fatalf("cold runner counts = %v", counts)
+	}
+	if _, err := r.Start(Request{Recording: "REC"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, r, "C", StatusFailed)
+	if c := r.RunCounts(); c[StatusFailed] != 1 || c[StatusDone] != 0 {
+		t.Fatalf("after failure = %v", c)
+	}
+
+	fail = false
+	if _, err := r.Start(Request{Recording: "REC"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, r, "C", StatusDone)
+	if c := r.RunCounts(); c[StatusFailed] != 1 || c[StatusDone] != 1 {
+		t.Fatalf("after success = %v", c)
+	}
+}

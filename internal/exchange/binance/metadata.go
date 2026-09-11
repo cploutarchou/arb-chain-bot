@@ -44,6 +44,10 @@ type lotSizeFilter struct {
 type notionalFilter struct {
 	MinNotional string `json:"minNotional"`
 	MaxNotional string `json:"maxNotional"`
+	// applyMinToMarket/avgPriceMins (audit T12): MARKET orders are
+	// min-notional-checked on an average-price basis when set.
+	ApplyMinToMarket bool    `json:"applyMinToMarket"`
+	AvgPriceMins     float64 `json:"avgPriceMins"`
 }
 
 // ParseExchangeInfo maps the metadata document to normalized markets.
@@ -163,6 +167,10 @@ func parseFilters(filters []json.RawMessage) (exchange.InstrumentRules, error) {
 					return r, fmt.Errorf("maxNotional: %w", err)
 				}
 				r.MaxNotional = v
+			}
+			r.ApplyMinToMarket = f.ApplyMinToMarket
+			if f.AvgPriceMins > 0 && f.AvgPriceMins <= 2147483647 {
+				r.AvgPriceMins = int32(f.AvgPriceMins)
 			}
 		}
 	}

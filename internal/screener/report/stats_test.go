@@ -272,3 +272,40 @@ func TestSqrtDec(t *testing.T) {
 		}
 	}
 }
+
+// TestComputeOpenPositionExposure (audit X6): the report carries the
+// open side — count, the executor's unrealised exit marks summed,
+// funding accrued, the newest mark's age, and unmarked positions
+// counted as unknown rather than implied zero — while realised PnL
+// stays realised-only.
+func TestComputeOpenPositionExposure(t *testing.T) {
+	mark := d("1.25")
+	older := d("-0.5")
+	ageMark, ageOlder := int64(4200), int64(9100)
+	positions := []paperexec.Position{
+		{ID: "o1", RuleID: "c", Strategy: screener.StrategyCarry, Base: "BTC", Quote: "USDT", Qty: d("0.1"),
+			OpenedAt: t0, Status: paperexec.StatusOpen, FundingQuote: d("0.3"),
+			MarkPnLQuote: &mark, MarkAgeMs: &ageMark, OpenPayload: map[string]any{"spot_open": "50000"}},
+		{ID: "o2", RuleID: "c", Strategy: screener.StrategyCarry, Base: "ETH", Quote: "USDT", Qty: d("1"),
+			OpenedAt: t0, Status: paperexec.StatusOpen, FundingQuote: d("-0.1"),
+			MarkPnLQuote: &older, MarkAgeMs: &ageOlder, OpenPayload: map[string]any{"spot_open": "2500"}},
+		{ID: "o3", RuleID: "c", Strategy: screener.StrategyCarry, Base: "SOL", Quote: "USDT", Qty: d("10"),
+			OpenedAt: t0, Status: paperexec.StatusOpen, OpenPayload: map[string]any{"spot_open": "100"}},
+	}
+	st := Compute(Inputs{Strategy: screener.StrategyCarry, Positions: positions,
+		Window: Window{Label: PeriodCumulative, Start: t0, End: t0.Add(100 * time.Hour)}, Now: t0.Add(100 * time.Hour)})
+	if st.OpenPositions != 3 {
+		t.Fatalf("open_positions = %d", st.OpenPositions)
+	}
+	if st.UnmarkedOpenPositions != 1 {
+		t.Fatalf("unmarked = %d, want 1 (o3 has no live mark)", st.UnmarkedOpenPositions)
+	}
+	eq(t, "unrealised_mark", st.UnrealisedMarkQuote, "0.75")
+	eq(t, "funding_accrued_open", st.FundingAccruedOpen, "0.2")
+	if st.OpenMarkAgeMsMax == nil || *st.OpenMarkAgeMsMax != 9100 {
+		t.Fatalf("mark age max = %v, want 9100", st.OpenMarkAgeMsMax)
+	}
+	if !st.NetPnLQuote.IsZero() {
+		t.Fatalf("realised net = %s with no closed positions", st.NetPnLQuote)
+	}
+}

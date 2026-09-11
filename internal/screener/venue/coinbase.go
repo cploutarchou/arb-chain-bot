@@ -2,6 +2,7 @@ package venue
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"sync"
 	"time"
@@ -58,6 +59,41 @@ type coinbaseCollector struct {
 	mu       sync.Mutex
 	known    map[string]screener.Quote
 	now      func() time.Time
+
+	// Burst adaptation (audit X10): Coinbase shares one IP-wide request
+	// budget, so a 429 halves the per-poll book count and ten clean polls
+	// earn one back, up to the configured BooksPerPoll. burst/cleanPolls
+	// live under mu; maxBurst is immutable after construction.
+	burst      int
+	maxBurst   int
+	cleanPolls int
+}
+
+// currentBurst returns the effective per-poll book count.
+func (c *coinbaseCollector) currentBurst() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.burst
+}
+
+// noteBurst records a poll outcome: a rate-limited poll halves the
+// burst (floor 1) and resets the recovery streak; a clean poll counts
+// toward earning one book back every ten polls.
+func (c *coinbaseCollector) noteBurst(rateLimited bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if rateLimited {
+		c.burst = max(1, c.burst/2)
+		c.cleanPolls = 0
+		return
+	}
+	if c.burst < c.maxBurst {
+		c.cleanPolls++
+		if c.cleanPolls >= 10 {
+			c.cleanPolls = 0
+			c.burst++
+		}
+	}
 }
 
 const (
@@ -67,8 +103,9 @@ const (
 
 func newCoinbase(opts Options) *coinbaseCollector {
 	now := opts.now()
+	maxBurst := opts.booksPerPoll()
 	c := &coinbaseCollector{base: coinbaseBase, exchange: coinbaseExchangeBase, now: now,
-		perPoll: opts.booksPerPoll(), known: map[string]screener.Quote{}}
+		perPoll: maxBurst, maxBurst: maxBurst, burst: maxBurst, known: map[string]screener.Quote{}}
 	c.rr = newFundingRR(c.perPoll)
 	if opts.SpotBase != "" {
 		c.base = opts.SpotBase
@@ -156,10 +193,22 @@ func (c *coinbaseCollector) Spot(ctx context.Context) ([]screener.Quote, error) 
 			symbols = append(symbols, s)
 		}
 	}
-	for _, s := range c.rr.pick(symbols) {
+	rateLimited := false
+	for _, s := range c.rr.pickN(symbols, c.currentBurst()) {
 		var b coinbaseBook
 		q := url.Values{"product_id": {s}, "limit": {"1"}}
 		if err := c.c.getJSON(ctx, 1, c.base, "/api/v3/brokerage/market/product_book", q, &b); err != nil {
+			var he *HTTPError
+			if errors.As(err, &he) && he.RateLimit() {
+				// X10: a 429 mid-poll does not discard the books already
+				// refreshed — they are real observations. Publish the
+				// partial set (a degraded poll: the untouched symbols
+				// keep their previous quote and age out through the
+				// normal data-age gates), halve the burst, and let the
+				// gate's Retry-After backoff pace the next attempt.
+				rateLimited = true
+				break
+			}
 			return nil, err
 		}
 		pb := b.Pricebook
@@ -178,6 +227,7 @@ func (c *coinbaseCollector) Spot(ctx context.Context) ([]screener.Quote, error) 
 		c.known[s] = q2
 		c.mu.Unlock()
 	}
+	c.noteBurst(rateLimited)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]screener.Quote, 0, len(c.known))

@@ -326,6 +326,11 @@ func newFundingRR(n int) *fundingRR { return &fundingRR{n: n, known: map[string]
 
 // pick returns the next ≤ n symbols (sorted order, wrapping around).
 func (r *fundingRR) pick(symbols []string) []string {
+	return r.pickN(symbols, r.n)
+}
+
+// pickN is pick with a per-call bound (Coinbase's adaptive burst, X10).
+func (r *fundingRR) pickN(symbols []string, n int) []string {
 	if len(symbols) == 0 {
 		return nil
 	}
@@ -335,7 +340,6 @@ func (r *fundingRR) pick(symbols []string) []string {
 	if r.pos >= len(symbols) {
 		r.pos = 0
 	}
-	n := r.n
 	if n > len(symbols) {
 		n = len(symbols)
 	}

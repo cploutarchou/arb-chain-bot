@@ -162,11 +162,6 @@ func NetOutput(p Placement, gross, rate decimal.Decimal) (net, fee decimal.Decim
 	return gross.Sub(fee), fee
 }
 
-// Bps converts a fractional rate to basis points (0.001 → 10).
-func Bps(rate decimal.Decimal) decimal.Decimal {
-	return rate.Mul(decimal.NewFromInt(10_000))
-}
-
 // venueDiscounts is the compiled-in per-venue token-discount constant
 // table (docs/research/fees.md): rate, pay asset and API eligibility are
 // never operator input (T-057 design §1.2) — an operator can only toggle

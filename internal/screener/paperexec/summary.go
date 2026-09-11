@@ -65,6 +65,18 @@ func (x *Executor) AutoPaperView(ctx context.Context, now time.Time) (screener.A
 	return view, nil
 }
 
+// MarkOpenPositions marks every open position's unrealised exit value
+// on the caller's copies — the exact marking the live view applies, so
+// the nightly report's open-position rows agree with the console (audit
+// X6).
+func (x *Executor) MarkOpenPositions(ps []screener.PaperPosition, now time.Time) {
+	for i := range ps {
+		if ps[i].Status == StatusOpen {
+			x.markOpen(&ps[i], now)
+		}
+	}
+}
+
 // markOpen fills the unrealised mark of an OPEN perp position: spot
 // leg at bid, perp leg at ask, funding to date; ages from the book.
 func (x *Executor) markOpen(p *screener.PaperPosition, now time.Time) {

@@ -441,3 +441,43 @@ func TestSellLegValidatesSubmittedQuantity(t *testing.T) {
 		t.Fatal("submitted quantity below the minimum accepted")
 	}
 }
+
+// TestExactCostNotionalAndQuantizedExhaustion (audit T12): the notional
+// floor is checked against the walk's EXACT cost — a VWAP×qty
+// reconstruction rounds and can pass a figure the exact cost fails —
+// and DepthExhausted reflects the QUANTIZED order's walk: an exact fit
+// on the final level exhausts, a truncation that lands inside the book
+// does not inherit the budget walk's verdict.
+func TestExactCostNotionalAndQuantizedExhaustion(t *testing.T) {
+	md := mdWith(nil, []orderbook.Level{lv("3", "1"), lv("3.0000000001", "1")}, "1")
+	md.Rules.MinNotional = d("4")
+	// Budget 4 buys 1.333.. → quantized 1 → exact cost 3 < 4 → refused
+	// on the EXACT figure (VWAP×qty = 3 here too, but see below).
+	if _, err := QuoteLeg(mkLeg("XUSDT", "X", "USDT", "USDT", "X", exchange.SideBuy), md, schedReceived(t, "1"), d("4")); err == nil {
+		t.Fatal("cost below min-notional accepted")
+	}
+
+	// A quantized order landing inside the book is not depth-limited
+	// even when the budget walk exhausted the side: budget 25 drains
+	// both levels (raw 7, walk off the end), truncation to step 2 buys
+	// 6 — strictly inside the second level.
+	md2 := mdWith(nil, []orderbook.Level{lv("3", "2"), lv("3.1", "5")}, "2")
+	lq, err := QuoteLeg(mkLeg("XUSDT", "X", "USDT", "USDT", "X", exchange.SideBuy), md2, schedReceived(t, "1"), d("25"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lq.DepthExhausted {
+		t.Fatal("quantized order inside the book reported exhausted")
+	}
+
+	// An exact fit on the FINAL level exhausts: the order consumed
+	// everything visible.
+	md3 := mdWith(nil, []orderbook.Level{lv("3", "1"), lv("4", "1")}, "1")
+	lq, err = QuoteLeg(mkLeg("XUSDT", "X", "USDT", "USDT", "X", exchange.SideBuy), md3, schedReceived(t, "1"), d("10"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lq.DepthExhausted || lq.OrderQty.Cmp(d("2")) != 0 {
+		t.Fatalf("exact final-level fit: qty=%s exhausted=%v", lq.OrderQty, lq.DepthExhausted)
+	}
+}

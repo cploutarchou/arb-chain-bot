@@ -1846,7 +1846,16 @@ export interface ScreenerReportStats {
   n: number;
   wins: number;
   matched_pairs: number;
-  net_pnl_quote: string;
+  // Renamed on the wire (X6): realised-only, open positions carry
+  // exposure it does not include. Rows persisted before the rename
+  // carry the old net_pnl_quote key — read both, never fabricate 0.
+  realised_net_pnl_quote?: string;
+  net_pnl_quote?: string;
+  open_positions?: number;
+  unmarked_open_positions?: number;
+  unrealised_mark_quote?: string;
+  funding_accrued_open?: string;
+  open_mark_age_ms_max?: number;
   fees_quote: string;
   funding_quote: string;
   funding_rows: number;
@@ -1922,7 +1931,10 @@ export interface ScreenerReportSummary {
   strategy: string;
   rule_id: string;
   n: number;
-  net_pnl_quote: string;
+  // Renamed on the wire (X6); rows persisted before the rename carry
+  // the old net_pnl_quote key — read both.
+  realised_net_pnl_quote?: string;
+  net_pnl_quote?: string;
   gate_passed: number;
   gate_total: number;
   created_at: string;
@@ -2182,6 +2194,9 @@ export const api = {
     active: () => get<PaperActiveView>("/api/v1/paper/active"),
     cycles: (limit = 100) =>
       get<{ cycles: CycleRow[] | null }>(`/api/v1/paper/cycles?limit=${limit}`),
+    // F13: one cycle's own row — the detail route's timeline anchor.
+    cycle: (cycleID: string) =>
+      get<CycleRow>(`/api/v1/paper/cycles/${encodeURIComponent(cycleID)}`),
     orders: (cycleID: string) =>
       get<{ orders: OrderRow[] | null }>(
         `/api/v1/paper/cycles/${encodeURIComponent(cycleID)}/orders`,

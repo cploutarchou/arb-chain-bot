@@ -98,7 +98,7 @@ func QuoteLeg(leg graph.Leg, md MarketData, sched *fees.Schedule, input decimal.
 		if len(md.View.Asks) == 0 {
 			return LegQuote{}, fmt.Errorf("%w: %s asks", ErrNoDepth, leg.Market)
 		}
-		rawQty, _, exhausted := walkBuyBudget(md.View.Asks, usable)
+		rawQty, _, _ := walkBuyBudget(md.View.Asks, usable)
 		orderQty, qerr := md.Rules.QuantizeQty(rawQty)
 		if qerr != nil {
 			return LegQuote{}, qerr
@@ -106,17 +106,26 @@ func QuoteLeg(leg graph.Leg, md MarketData, sched *fees.Schedule, input decimal.
 		if !orderQty.IsPositive() {
 			return LegQuote{}, fmt.Errorf("%w: buy on %s", ErrDustInput, leg.Market)
 		}
-		cost, levels, ok := walkBuyQty(md.View.Asks, orderQty)
+		cost, levels, exhausted, ok := walkBuyQty(md.View.Asks, orderQty)
 		if !ok {
 			return LegQuote{}, fmt.Errorf("%w: %s asks for qty %s", ErrNoDepth, leg.Market, orderQty)
 		}
 		vwap := cost.Div(orderQty)
-		if err := md.Rules.ValidateOrder(vwap, orderQty); err != nil {
+		// T12: the qty bounds on the submitted quantity, the notional
+		// bounds on the walk's EXACT cost — a VWAP×qty reconstruction
+		// rounds against the figure the venue evaluates.
+		if err := md.Rules.ValidateQty(orderQty); err != nil {
+			return LegQuote{}, fmt.Errorf("%w: %s: %s", ErrRuleViolation, leg.Market, err)
+		}
+		if err := md.Rules.ValidateNotional(cost); err != nil {
 			return LegQuote{}, fmt.Errorf("%w: %s: %s", ErrRuleViolation, leg.Market, err)
 		}
 		q.OrderQty = orderQty
 		q.AvgPrice = vwap
 		q.LevelsConsumed = levels
+		// T12: exhaustion is a property of the QUANTIZED order's walk —
+		// the pre-quantization budget walk could exhaust on size the
+		// truncation never asked for.
 		q.DepthExhausted = exhausted
 		q.InputConsumed = cost
 		q.Dust = usable.Sub(cost)
@@ -154,8 +163,13 @@ func QuoteLeg(leg graph.Leg, md MarketData, sched *fees.Schedule, input decimal.
 		vwap := proceeds.Div(soldQty)
 		// The venue validates the order as submitted, not as filled: a
 		// depth-limited fill is a partial (DepthExhausted, dust stranded),
-		// never a rule violation (audit T6).
-		if err := md.Rules.ValidateOrder(vwap, orderQty); err != nil {
+		// never a rule violation (audit T6). The notional is checked on
+		// the walk's exact proceeds (T12); the qty bounds on the
+		// submitted quantity.
+		if err := md.Rules.ValidateQty(orderQty); err != nil {
+			return LegQuote{}, fmt.Errorf("%w: %s: %s", ErrRuleViolation, leg.Market, err)
+		}
+		if err := md.Rules.ValidateNotional(proceeds); err != nil {
 			return LegQuote{}, fmt.Errorf("%w: %s: %s", ErrRuleViolation, leg.Market, err)
 		}
 		q.OrderQty = soldQty
@@ -230,8 +244,9 @@ func walkBuyBudget(asks []orderbook.Level, budget decimal.Decimal) (qty, cost de
 }
 
 // walkBuyQty prices buying exactly qty across asks; ok=false when depth is
-// insufficient for the full quantity.
-func walkBuyQty(asks []orderbook.Level, qty decimal.Decimal) (cost decimal.Decimal, levels int, ok bool) {
+// insufficient for the full quantity, exhausted=true when satisfying it
+// consumed the entire visible side (T12).
+func walkBuyQty(asks []orderbook.Level, qty decimal.Decimal) (cost decimal.Decimal, levels int, exhausted, ok bool) {
 	remaining := qty
 	for _, lv := range asks {
 		levels++
@@ -241,9 +256,12 @@ func walkBuyQty(asks []orderbook.Level, qty decimal.Decimal) (cost decimal.Decim
 			continue
 		}
 		cost = cost.Add(lv.Price.Mul(remaining))
-		return cost, levels, true
+		// Exhausted only when the fill consumed the FINAL level's entire
+		// quantity — an exact fit mid-book leaves depth the order never
+		// asked for (T12).
+		return cost, levels, levels == len(asks) && remaining.Equal(lv.Qty), true
 	}
-	return cost, levels, false
+	return cost, levels, true, false
 }
 
 // walkSellQty sells up to qty into bids, returning proceeds and the
@@ -268,7 +286,9 @@ func walkSellQty(bids []orderbook.Level, qty decimal.Decimal) (proceeds, sold de
 // impactBps measures VWAP deterioration vs the best level. Buys worsen
 // upward, sells downward; both yield non-negative bps.
 func impactBps(best, vwap decimal.Decimal, buy bool) decimal.Decimal {
-	if !best.IsPositive() {
+	// T12: a zero VWAP (a degenerate non-Book view at zero size) is no
+	// impact, never a division by zero.
+	if !best.IsPositive() || !vwap.IsPositive() {
 		return decimal.Zero
 	}
 	var rel decimal.Decimal

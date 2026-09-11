@@ -97,7 +97,7 @@ type Summary struct {
 	Strategy    screener.Strategy `json:"strategy"`
 	RuleID      string            `json:"rule_id"`
 	N           int64             `json:"n"`
-	NetPnLQuote decimal.Decimal   `json:"net_pnl_quote"`
+	NetPnLQuote decimal.Decimal   `json:"realised_net_pnl_quote"`
 	GatePassed  int               `json:"gate_passed"`
 	GateTotal   int               `json:"gate_total"`
 	CreatedAt   time.Time         `json:"created_at"`

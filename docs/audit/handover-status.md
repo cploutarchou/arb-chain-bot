@@ -1,10 +1,11 @@
 # Audit remediation — handover status
 
 The remediation programme is complete: PR #20 (the main remediation
-branch) is merged at `b385fd8`, the blocking-items follow-up branch
-(S5/S8/S10/S11, backup option B, fresh campaign evidence) is
-`claude/blocking-hardening-s5-s8-s10-s11-backup`, and the follow-up
-branch `claude/all-pending-hardening` closes the Argon2 clamp with
+branch) is merged at `b385fd8`, the blocking-items follow-up
+(S5/S8/S10/S11, backup option B, fresh campaign evidence) is PR #21,
+and the hardening follow-up (S12–S15, D7–D10, X4/X5/X7/X8, O7/O9/O10,
+T10's arithmetic half, F9/F14/F18) is PR #22 — both merged to master,
+closing the Argon2 clamp with
 rehash-on-login, the HTTP server envelope, the console-query indexes
 (migration 000022), the pool statement_timeout with a warm connection
 floor, the retention-clamped and LIMIT-bounded funding query, and the
@@ -48,9 +49,8 @@ coherent change per commit, tests included.
    production-execution-gate review (legal, compliance, insurance) the
    operator must record in `docs/decisions/`.
 2. Optional P2/P3 hardening — what is LEFT of it after the
-   all-pending pass (branch `claude/all-pending-hardening`, which
-   carries both follow-up passes — S12/S13/D7-D10 and the all-pending
-   run — in one line of history): T10's remainder and F17 (the
+   all-pending pass (PR #22, merged; it carried both follow-up passes —
+   S12/S13/D7-D10 and the all-pending run — in one line of history): T10's remainder and F17 (the
    two-paper-stacks consolidation), X6/X9/X10/X11 scanner items,
    O11 spans (+ the O13-O15 P3 cluster), F10-F13/F15-F17/F19 console
    items, and the T12 precision cluster. Closed by that pass: S14/S15
@@ -64,8 +64,7 @@ coherent change per commit, tests included.
 
 ```bash
 git fetch origin
-git checkout claude/all-pending-hardening                      # newest follow-up
-# or: claude/blocking-hardening-s5-s8-s10-s11-backup / master, post-merge
+git checkout master && git pull   # all merged follow-up work lives here
 git status && git log --oneline -10
 
 gofmt -l internal cmd && go vet ./... && golangci-lint run ./...

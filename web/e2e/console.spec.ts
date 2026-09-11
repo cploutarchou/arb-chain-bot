@@ -177,8 +177,10 @@ test("risk center shows deterministic limits and the persisted event timeline", 
 }) => {
   await login(page);
   await page.goto("/risk");
+  // F11: the limits table reads through the field registry — the
+  // human label with its unit, not the raw key.
   await expect(page.locator("main")).toContainText(
-    /min_net_edge_bps|MinNetEdgeBps/i,
+    /min net edge \(bps\)|min_net_edge_bps/i,
     {
       timeout: 10_000,
     },
@@ -1153,7 +1155,7 @@ test.describe("Scanner Suite", () => {
       "Funding",
       "Calculator",
       "Alert Rules",
-      "Screener Reports",
+      "Evidence — Screener Reports",
       "Auto-Paper",
     ]) {
       await expect(

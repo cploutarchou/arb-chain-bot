@@ -345,7 +345,7 @@ func (m *Metrics) RegisterEngine(src EngineSources) error {
 		rejected   = i64c("opportunities_rejected", "opportunities rejected by the risk engine")
 		skipped    = i64c("scanner_skipped_unhealthy", "evaluations skipped on missing/unhealthy books")
 		dropped    = i64c("scanner_dropped_events", "scanner events dropped by slow consumers")
-		triangles  = i64g("triangles_total", "triangles in the active topology")
+		triangles  = i64g("triangles_tracked", "triangles in the active topology (a gauge: rate() on it would be nonsense; renamed from triangles_total at the pre-production breaking window, audit O13)")
 		frames     = i64c("market_messages", "market data frames received")
 		reconnects = i64c("exchange_reconnects", "feed session reconnects")
 		apiErrors  = i64c("exchange_api_errors", "exchange REST errors")
@@ -701,6 +701,24 @@ func (m *Metrics) RegisterMigrations(pending func() int64) error {
 func (m *Metrics) RegisterCampaign(counts func() map[string]int64) error {
 	c, err := m.meter.Int64ObservableCounter("campaign_runs",
 		api.WithDescription("campaign runs reaching a terminal status (done/failed)"))
+	if err != nil {
+		return err
+	}
+	_, err = m.meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		for status, n := range counts() {
+			o.ObserveInt64(c, n, api.WithAttributes(attribute.String("status", status)))
+		}
+		return nil
+	}, c)
+	return err
+}
+
+// RegisterReplay exposes replay_runs_total{status} from the console
+// replay runner's terminal-state counters (the counterpart
+// campaign_runs_total has always had, audit O15).
+func (m *Metrics) RegisterReplay(counts func() map[string]int64) error {
+	c, err := m.meter.Int64ObservableCounter("replay_runs",
+		api.WithDescription("replay runs reaching a terminal status (done/failed)"))
 	if err != nil {
 		return err
 	}

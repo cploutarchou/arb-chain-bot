@@ -89,7 +89,7 @@ func TestExpositionExposesTheMetricSet(t *testing.T) {
 		"orderbook_state",
 		"orderbook_sequence_errors_total",
 		"orderbook_resync_total",
-		"triangles_total",
+		"triangles_tracked",
 		"triangles_evaluated_total",
 		"triangle_evaluation_duration_bucket",
 		"opportunities_detected_total",
@@ -247,6 +247,9 @@ func TestScreenerAndPlatformSeries(t *testing.T) {
 	if err := m.RegisterCampaign(func() map[string]int64 { return map[string]int64{"done": 3, "failed": 1} }); err != nil {
 		t.Fatal(err)
 	}
+	if err := m.RegisterReplay(func() map[string]int64 { return map[string]int64{"done": 2, "failed": 4} }); err != nil {
+		t.Fatal(err)
+	}
 	page := scrape(t, m)
 	for _, frag := range []string{
 		`exchange_rate_limited_total{venue="binance"} 5`,
@@ -267,6 +270,8 @@ func TestScreenerAndPlatformSeries(t *testing.T) {
 		`db_migrations_pending 1`,
 		`campaign_runs_total{status="done"} 3`,
 		`campaign_runs_total{status="failed"} 1`,
+		`replay_runs_total{status="done"} 2`,
+		`replay_runs_total{status="failed"} 4`,
 	} {
 		if !strings.Contains(page, frag) {
 			t.Errorf("exposition missing series %q", frag)

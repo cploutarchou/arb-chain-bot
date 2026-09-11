@@ -244,7 +244,7 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		if store != nil {
 			reportStore = store.ScreenerReports()
 		}
-		screenerReports = &report.Generator{Svc: screenerSvc, Ledger: ledger, Store: reportStore, Notify: notify.Notify,
+		screenerReports = &report.Generator{Svc: screenerSvc, Ledger: ledger, Store: reportStore, Notify: notify.Notify, MarkOpens: executor.MarkOpenPositions,
 			Dir: cfg.RecordingDir, Log: log, IDGen: newULID, Seed: 1}
 		// The nightly run covers every organisation separately (one
 		// ledger, one rule set, one document each); without a database
@@ -385,6 +385,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 				Dir: cfg.RecordingDir, Log: log, NewID: newULID,
 			}
 			others = append(others, replays)
+			if mtr != nil {
+				if err := mtr.RegisterReplay(replays.RunCounts); err != nil {
+					log.Error("replay metrics registration failed", "error", err)
+				}
+			}
 		}
 
 		// Telegram allowlist: one live set (T-057), fed by the platform

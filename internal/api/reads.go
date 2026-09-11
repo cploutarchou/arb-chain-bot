@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/jackc/pgx/v5"
+
 	"context"
 	"errors"
 	"fmt"
@@ -92,6 +94,14 @@ func (s *Server) readRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/paper/cycles", s.requirePerm(auth.PermViewPortfolio, needStore(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.Store.ListCycles(r.Context(), r.URL.Query().Get("session_id"), limitOf(r))
 		s.writeListResult(w, r, "cycles", rows, err)
+	})))
+	mux.HandleFunc("GET /api/v1/paper/cycles/{id}", s.requirePerm(auth.PermViewPortfolio, needStore(func(w http.ResponseWriter, r *http.Request) {
+		row, err := s.Store.CycleByID(r.Context(), r.PathValue("id"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			WriteError(w, http.StatusNotFound, "not_found", "no such cycle", correlationID(r))
+			return
+		}
+		s.writeListResult(w, r, "cycle", row, err)
 	})))
 	mux.HandleFunc("GET /api/v1/paper/cycles/{id}/orders", s.requirePerm(auth.PermViewPortfolio, needStore(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.Store.ListOrders(r.Context(), r.PathValue("id"))

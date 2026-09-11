@@ -43,6 +43,10 @@ type Generator struct {
 	Now   func() time.Time
 	// Seed for the bootstrap (reproducible; default 1).
 	Seed int64
+	// MarkOpens marks open positions' unrealised exit values from the
+	// live book (audit X6); nil → open positions count as unmarked and
+	// the report says so instead of implying they are worth zero.
+	MarkOpens func([]paperexec.Position, time.Time)
 
 	mu           sync.Mutex
 	lastRun      *RunResult
@@ -196,6 +200,9 @@ func (g *Generator) runOrg(ctx context.Context, org int64, now time.Time, day st
 	positions, err := g.Ledger.ListPositions(ctx, "", "", 0)
 	if err != nil {
 		return res, err
+	}
+	if g.MarkOpens != nil {
+		g.MarkOpens(positions, now)
 	}
 	executions, err := g.Ledger.ListExecutions(ctx, "", 0)
 	if err != nil {

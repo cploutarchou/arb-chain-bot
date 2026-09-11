@@ -33,6 +33,7 @@ func market(ex, symbol, base, quote string, status exchange.MarketStatus) exchan
 		Rules: exchange.InstrumentRules{
 			QtyMode: exchange.PrecisionStep, QtyStep: one,
 			PriceMode: exchange.PrecisionStep, PriceTick: one,
+			MinNotional: one,
 		},
 	}
 }

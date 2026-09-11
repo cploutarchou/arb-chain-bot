@@ -11,7 +11,7 @@ import { usePoll } from "@/lib/usePoll";
 import { signTone, signedText } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
-import { Await, Badge, PageTitle, Section, Stat, fmtTime } from "@/components/ui";
+import { Await, Badge, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
 
 export default function OpportunityDetailPage() {
   const params = useParams<{ id: string }>();
@@ -84,10 +84,8 @@ export default function OpportunityDetailPage() {
               </div>
             </Section>
 
-            <Section title="Legs (raw, as evaluated)">
-              <pre className="max-h-80 overflow-auto rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3 text-[12px]">
-                {JSON.stringify(d.legs, null, 2)}
-              </pre>
+            <Section title="Legs (as evaluated)">
+              <LegsTable legs={d.legs} />
             </Section>
 
             <Section title="Risk decision">
@@ -127,7 +125,7 @@ export default function OpportunityDetailPage() {
                     <Stat
                       label="Cycle"
                       value={
-                        <Link href={`/orders?cycle=${encodeURIComponent(d.simulation.cycle_id)}`} className="text-[var(--accent)] underline">
+                        <Link href={`/cycles/${encodeURIComponent(d.simulation.cycle_id)}`} className="text-[var(--accent)] underline">
                           {d.simulation.cycle_id}
                         </Link>
                       }
@@ -170,5 +168,58 @@ export default function OpportunityDetailPage() {
         )}
       </Await>
     </ConsoleShell>
+  );
+}
+
+// LegsTable renders the evaluated legs as a table (audit ui F10): the
+// backend's leg objects carry market/side/prices/fees per leg, and a
+// JSON dump hides exactly the numbers a review needs to compare. Fields
+// are read defensively (older rows predate some fields) and unknown
+// shapes fall back to the raw JSON rather than an empty table.
+function LegsTable({ legs }: { legs: unknown }) {
+  const rows = Array.isArray(legs)
+    ? legs.map((l) => l as Record<string, { String?: string; [k: string]: unknown } | string | number>)
+    : [];
+  const text = (v: unknown): string =>
+    v === null || v === undefined
+      ? "—"
+      : typeof v === "object" && v !== null && "String" in (v as object)
+        ? String((v as { String?: string }).String)
+        : String(v);
+  if (rows.length === 0) {
+    return (
+      <pre className="max-h-80 overflow-auto rounded border border-[var(--border)] bg-[var(--bg-panel)] p-3 text-[12px]">
+        {JSON.stringify(legs, null, 2)}
+      </pre>
+    );
+  }
+  return (
+    <Table
+      head={["#", "Market", "Side", "From→To", "Input", "Order qty", "VWAP", "Net out", "Fee", "Levels", "Impact bps", "Book v"]}
+      empty="evaluated legs"
+      rows={rows.map((l, i) => {
+        const get = (k: string): unknown =>
+          typeof l === "object" && l !== null ? l[k] : undefined;
+        const market = get("Market");
+        const marketText =
+          typeof market === "object" && market !== null && "String" in (market as object)
+            ? (market as { String?: string }).String ?? "—"
+            : "—";
+        return [
+          i + 1,
+          marketText,
+          text(get("Side")),
+          `${text(get("From"))} → ${text(get("To"))}`,
+          text(get("InputConsumed")),
+          text(get("OrderQty")),
+          text(get("AvgPrice")),
+          text(get("NetOut")),
+          `${text(get("FeeAmount"))} ${text(get("FeeAsset"))}`,
+          text(get("LevelsConsumed")),
+          text(get("PriceImpactBps")),
+          text(get("BookVersion")),
+        ];
+      })}
+    />
   );
 }

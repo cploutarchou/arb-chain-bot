@@ -107,7 +107,7 @@ export default function TriangleDetailPage() {
                 head={["Cycle", "Session", "Opportunity", "Outcome", "P&L", "Slippage bps", "Started", "Settled"]}
                 empty="settled cycles recorded for this triangle"
                 rows={(d.recent_cycles ?? []).map((c) => [
-                  <Link key="c" href={`/orders?cycle=${encodeURIComponent(c.id)}`} className="text-[var(--accent)] underline">
+                  <Link key="c" href={`/cycles/${encodeURIComponent(c.id)}`} className="text-[var(--accent)] underline">
                     {c.id}
                   </Link>,
                   c.session_id,

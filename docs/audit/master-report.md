@@ -313,7 +313,7 @@ real.
 
 ## FINAL PLATFORM REVIEW (remediation branch, 2026-09-10)
 
-Reviewed tree: `claude/triangular-arbitrage-platform-969nkv` at `10e1ec0`
+Reviewed tree: PR #20 head at `10e1ec0`
 (35 commits after the audited `abddb55`), measured on this host with the
 repository's own suites and benchmarks. What follows rates the platform
 AS IT NOW STANDS; the body of this document above remains the audit of
@@ -343,7 +343,7 @@ AS IT NOW STANDS; the body of this document above remains the audit of
 
 | Area | Was | Now | What moved |
 |---|---|---|---|
-| Trading logic & arithmetic | 8 | 9 | T1/T2 (breakpoint-aware, gate-constrained sizer), T4/T5/T6 filter semantics fixed; T12 precision cluster (P3) and T10 screener duplication remain |
+| Trading logic & arithmetic | 8 | 9 | T1/T2 (breakpoint-aware, gate-constrained sizer), T4/T5/T6 filter semantics fixed; T10's quantization half and the T12 precision cluster closed on the tail pass (exact-cost notionals, quantized exhaustion, Usable-requires-NOTIONAL, market-basis fields); the T10/F17 consolidation (second filter parser, quote-only fee model) remains |
 | Profitability honesty | 5 | 8 | P0-1 slippage vs plan, P0-2 realized/mark separation, F13 fee valuation, F3 labelling; O9 realization ratio still absent |
 | Market data | 7 | 9 | M1–M5 fixed (backoff reset, clock manager, replay staleness, crossed-book corruption, session-scoped resyncs); M6/M7 hygiene remain |
 | Execution simulation | 5 | 8 | F4 revalidation, F5 fill-time health, F7 ABORTED + staged shutdown, F10/F11/F12/F14/F16 fixed; no unwind path (documented exposure-mark model), F17 dead code remains |
@@ -352,8 +352,8 @@ AS IT NOW STANDS; the body of this document above remains the audit of
 | Security | 6 | 9 | S1–S4 (+ the CreateUser follow-up), S6, S9 fixed; S5/S8/S10/S11 closed on the remediation tail; S12 (Argon2 clamp + rehash-on-login), S13 (HTTP server envelope) on the first follow-up branch; S14 (SHA-pinned actions, govulncheck pin, npm audit gates, digest-pinned images, injection-safe dispatch input, both images scanned) and S15 (markdown allow-list sanitiser + shipped header set) on the all-pending branch — the S-series is closed |
 | Observability | 5 | 8 | O1/O2/O3/O5/O6/O8 closed — drop/refusal counters, live breaker metric, latency histograms, outcome/reason labels, queue depths; O7 (slippage panel + alert), O9 (realization ratio) and O10 (venue-health panels + alerts) closed on the all-pending branch; O11 (spans) and the P3 cluster remain |
 | Infra & delivery | 5 | 6 | P1-16 compose exposure, P1-17 canary guards, P1-18 worker, P1-19 done; P1-15 backup automation is an open operator decision (framed in `docs/decisions/`), I5–I15 partially |
-| Scanner Suite | 6 | 8 | P1-20/21/22 fixed (perp collision, lane cap, data-age hold with close reasons); X4 (per-venue funding semantics), X5 (restart closes open rows), X7 (book eviction + max_age_ms) and X8 (perp leg depth, two-leg haircut) closed on the all-pending branch; X6/X9-X11 and the P3 cluster remain |
-| Console & UX | 5 | 7 | F1–F8 all done (mode banner, one-click pause, honest labels, outcome vocabulary, five-second overview, live-cycle monitor, error states, exact decimals); F9–F20 (P2/P3) remain |
+| Scanner Suite | 6 | 8 | P1-20/21/22 fixed (perp collision, lane cap, data-age hold with close reasons); X4 (per-venue funding semantics), X5 (restart closes open rows), X7 (book eviction + max_age_ms) and X8 (perp leg depth, two-leg haircut) closed on the all-pending branch; X6 (open-position exposure in reports), X10 (Coinbase partial polls + adaptive burst) and X11 (calculator guard + ages) on the tail pass; X9 and the P3 cluster remain |
+| Console & UX | 5 | 8 | F1–F8 all done (mode banner, one-click pause, honest labels, outcome vocabulary, five-second overview, live-cycle monitor, error states, exact decimals); F9, F10, F11, F12, F13, F14, F15, F17, F18, F19 closed across the follow-up passes (last-good-data banners with live ages, sign-aware tables with exact comparators, units/defaults/consequences on every strategy field, the Risk Center strip, the cycle detail route, aria-pressed chip groups and keyboard access); F16-adjacent polish and the two-paper-stacks consolidation remain |
 | Testing | 6 | 8 | 681 → 841 Go test functions (+160), 47 e2e tests (was 43, two of them failing on the audit host); every fix carries its test; the known gaps (frontend unit layer, down-migration replay, npm audit gate, fuzz) remain |
 
 ### Problems fixed since the audit (headline list)
@@ -494,7 +494,7 @@ lint/typecheck/build green, Playwright 47/47.
 
 ## FOLLOW-UP ADDENDUM: P3 hardening (S12/S13, D7–D10)
 
-Branch `claude/p3-hardening-s12-s13-d7-d10` closes six more findings.
+PR #22 (merged) closes six more findings.
 S12: `VerifyPassword` validates and clamps the Argon2id parameters it
 parses from a stored hash (memory ≤ 256 MiB, iterations ≤ 10,
 parallelism ≤ 8, salt and key length bounded) so a tampered
@@ -538,10 +538,10 @@ compliance, insurance) recorded by the operator. The verdict stays
 
 ## FOLLOW-UP ADDENDUM: the all-pending pass
 
-Branch `claude/all-pending-hardening` (one branch carrying both
-follow-up passes — the S12/S13/D7-D10 cluster earlier in this file and
-this one) works through the remaining P2/P3 hardening list in coherent
-commits, one per finding with its test:
+PR #22 (merged; one branch carried both follow-up passes — the
+S12/S13/D7-D10 cluster earlier in this file and this one) works
+through the remaining P2/P3 hardening list in coherent commits, one
+per finding with its test:
 
 - **S14/S15** close the security series: SHA-pinned actions (tags kept
   in comments), govulncheck v1.8.0, `npm audit --audit-level=high` in
@@ -593,3 +593,27 @@ hardening list: X6, X9, X10, X11, O11 (+O13-O15), F10-F13, F15-F17,
 F19, T12, and the T10/F17 consolidation — plus the two verdict
 conditions that were never engineering gaps. The verdict stays
 **NOT READY FOR LIVE TRADING**.
+
+## FOLLOW-UP ADDENDUM: the pending-tail pass
+
+PR #23 closes what remained of the P2/P3 hardening list in coherent
+commits, one per finding with its test: X6, X10, X11 (scanner), O13,
+O14, O15 (observability), T12 (the trading precision cluster), and
+F10–F13, F15, F17, F19 (console). The repository's branch naming was
+also cleaned — no working branch carries a tool prefix, and the three
+merge commits that did were rewritten (messages only; trees verified
+byte-identical) before the force-push.
+
+Verification for this addendum: gofmt/vet/golangci-lint clean,
+`go test -race ./...` green (43 packages), the storage suite green
+against a disposable PostgreSQL 16 (000001–000023, including the new
+CycleByID round-trip), web lint/typecheck/build green, the site suite
+green. Playwright runs in CI.
+
+Ratings updated: **Trading logic & arithmetic stays 9** (T12 closed,
+the consolidation remainder tracked under F17), **Scanner Suite stays
+8** with X9 and the P3 cluster left, **Console & UX 7 → 8** (F16-era
+polish and the stacks consolidation remain). What is left of the whole
+hardening programme: X9, O11 (+O14's alerts), the T10/F17 two-stacks
+consolidation — and the two verdict conditions that were never
+engineering gaps. The verdict stays **NOT READY FOR LIVE TRADING**.

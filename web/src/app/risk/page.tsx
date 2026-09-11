@@ -10,12 +10,15 @@
 // versioned strategy config.
 
 import { useState } from "react";
-import { api, ApiError, type RiskView } from "@/lib/api/client";
-import { usePoll } from "@/lib/usePoll";
+import Link from "next/link";
+import { api, ApiError, type HealthView, type PortfolioView, type PnLView, type RiskView } from "@/lib/api/client";
+import { reasonText } from "@/lib/reasons";
+import { ALL_FIELDS } from "@/lib/strategyFields";
+import { usePoll, type PollState } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { useToast } from "@/components/Toast";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, Badge, Button, PageTitle, Section, Table, fmtTime } from "@/components/ui";
+import { Await, Badge, Button, PageTitle, Section, Stat, Table, fmtTime, ChipGroup} from "@/components/ui";
 
 const WINDOWS = [24, 72, 168, 720] as const;
 
@@ -153,10 +156,17 @@ export default function RiskPage() {
   const risk = usePoll(() => api.risk(), 5000, [riskRefresh]);
   const [hours, setHours] = useState<number>(24);
   const events = usePoll(() => api.riskEvents.list(hours, 200), 10000, [hours]);
+  // F12: the exposure and budget figures the strip pairs with the
+  // limits — the same endpoints the Portfolio page reads, composed for
+  // display only (nothing here recomputes a limit).
+  const portfolio = usePoll(() => api.portfolio(), 5000);
+  const pnl = usePoll(() => api.pnl(), 5000);
+  const health = usePoll(() => api.system.health(), 5000);
 
   return (
     <ConsoleShell active="Risk Center">
       <PageTitle>Risk Center</PageTitle>
+      <RiskTopStrip risk={risk} portfolio={portfolio} pnl={pnl} health={health} />
       <Await state={risk} what="risk state">
         {(r) => (
           <>
@@ -164,7 +174,7 @@ export default function RiskPage() {
               <Table
                 head={["Limit", "Value"]}
                 empty="limits"
-                rows={Object.entries(r.limits ?? {}).map(([k, v]) => [k, String(v)])}
+                rows={Object.entries(r.limits ?? {}).map(([k, v]) => [limitLabel(k), String(v)])}
               />
             </Section>
             <Section title="Circuit breakers">
@@ -176,7 +186,12 @@ export default function RiskPage() {
                 empty="rejections recorded"
                 rows={Object.entries(r.reject_reason_counts ?? {})
                   .sort((a, b) => b[1] - a[1])
-                  .map(([code, n]) => [code, n])}
+                  .map(([code, n]) => [
+                    <Link key="c" href="/opportunities?status=REJECTED" className="text-[var(--accent)] underline" title={`${code} — filtered opportunities`}>
+                      {reasonText(code)}
+                    </Link>,
+                    n,
+                  ])}
               />
             </Section>
           </>
@@ -184,20 +199,7 @@ export default function RiskPage() {
       </Await>
 
       <Section title="Risk event timeline (persisted — survives a restart, unlike the session counter above)">
-        <div className="mb-3 flex gap-2">
-          {WINDOWS.map((w) => (
-            <button
-              key={w}
-              onClick={() => setHours(w)}
-              aria-pressed={hours === w}
-              className={`rounded border px-2 py-0.5 text-[12px] ${
-                hours === w ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
-              }`}
-            >
-              {w < 168 ? `${w}h` : `${Math.round(w / 24)}d`}
-            </button>
-          ))}
-        </div>
+        <ChipGroup label="Event window" options={WINDOWS} value={hours} onChange={setHours} format={(w) => `${w}h`} />
         <Await state={events} what="risk events">
           {(res) => (
             <>
@@ -235,5 +237,85 @@ export default function RiskPage() {
         </Await>
       </Section>
     </ConsoleShell>
+  );
+}
+
+// limitLabel shares the strategy form's field registry with the Risk
+// Center (F11): a limit reads as "Max slippage (bps)", not
+// max_slippage_bps. Unknown keys pass through unchanged — the backend
+// can grow fields the form has not catalogued yet.
+function limitLabel(key: string): string {
+  const field = ALL_FIELDS.find((f) => f.key === key || f.path.endsWith(`.${key}`));
+  if (!field) return key;
+  const unit = field.unit ?? field.unitAsset;
+  return unit ? `${field.label} (${unit})` : field.label;
+}
+// RiskTopStrip (audit ui F12): the five numbers an operator needs
+// before touching a limit — breakers open, daily loss against its
+// budget per asset, drawdown against its max, exposure that cannot be
+// marked, and books not HEALTHY. Composition is display-only; each
+// figure is the backend's own, paired with its configured bound.
+function RiskTopStrip({
+  risk,
+  portfolio,
+  pnl,
+  health,
+}: {
+  risk: PollState<RiskView>;
+  portfolio: PollState<PortfolioView>;
+  pnl: PollState<PnLView>;
+  health: PollState<HealthView>;
+}) {
+  const r = risk.kind === "ready" || risk.kind === "error" ? risk.data : undefined;
+  const limits = r?.limits ?? {};
+  const maxDailyLoss = String(limits["max_daily_loss"] ?? "");
+  const maxDrawdownPct = limits["max_drawdown"] !== undefined ? `${Number(limits["max_drawdown"]) * 100}%` : "";
+  const open = (r?.breakers ?? []).filter((b) => b.State === "OPEN");
+
+  const p = portfolio.kind === "ready" || portfolio.kind === "error" ? portfolio.data : undefined;
+  const x = pnl.kind === "ready" || pnl.kind === "error" ? pnl.data : undefined;
+  const h = health.kind === "ready" || health.kind === "error" ? health.data : undefined;
+  const staleBooks = (h?.books ?? []).filter((b) => b.state !== "HEALTHY");
+
+  const dailyLoss = (x?.assets ?? [])
+    .filter((a) => a.daily_loss && a.daily_loss !== "0")
+    .map((a) => `${a.daily_loss} ${a.asset}`);
+  const drawdown = (x?.assets ?? [])
+    .filter((a) => a.drawdown && a.drawdown !== "0")
+    .map((a) => `${(Number(a.drawdown) * 100).toFixed(1)}% ${a.asset}`);
+
+  return (
+    <Section title="At a glance">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Stat
+          label="Breakers open"
+          value={open.length > 0 ? open.map((b) => b.Name).join(", ") : "none"}
+          tone={open.length > 0 ? "bad" : "ok"}
+        />
+        <Stat
+          label={maxDailyLoss ? `Daily loss (max ${maxDailyLoss})` : "Daily loss"}
+          value={dailyLoss.length > 0 ? dailyLoss.join(", ") : "none"}
+          tone={dailyLoss.length > 0 ? "warn" : "ok"}
+        />
+        <Stat
+          label={maxDrawdownPct ? `Drawdown (max ${maxDrawdownPct})` : "Drawdown"}
+          value={drawdown.length > 0 ? drawdown.join(", ") : "none"}
+          tone={drawdown.length > 0 ? "warn" : "ok"}
+        />
+        <Stat
+          label="Unmarkable exposure"
+          value={p && p.unmarked.length > 0 ? p.unmarked.join(", ") : "none"}
+          tone={p && p.unmarked.length > 0 ? "warn" : "ok"}
+        />
+        <Stat
+          label="Books not HEALTHY"
+          value={staleBooks.length > 0 ? `${staleBooks.length} (${staleBooks[0]?.market}…)` : "none"}
+          tone={staleBooks.length > 0 ? "warn" : "ok"}
+        />
+      </div>
+      <p className="mt-2 text-[11px] text-[var(--text-dim)]">
+        Rejection reasons below link to the opportunities they filtered.
+      </p>
+    </Section>
   );
 }

@@ -40,6 +40,7 @@ export function Stat({
   value: ReactNode;
   tone?: Tone;
 }) {
+  const statTitle = typeof value === "string" || typeof value === "number" ? String(value) : undefined;
   const color =
     tone === "ok"
       ? "text-[var(--ok)]"
@@ -55,7 +56,7 @@ export function Stat({
       <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">
         {label}
       </div>
-      <div className={`mt-1 truncate text-sm font-medium ${color}`}>
+      <div className={`mt-1 truncate text-sm font-medium ${color}`} title={statTitle}>
         {value}
       </div>
     </div>
@@ -224,6 +225,47 @@ export function Await<T>({
   );
 }
 
+// ChipGroup is the shared filter-chip row (audit ui F15): selection is
+// carried by aria-pressed AND colour, never colour alone, and the group
+// is a labelled toolbar for screen readers.
+export function ChipGroup<T>({
+  label,
+  options,
+  value,
+  onChange,
+  format,
+}: {
+  label: string;
+  options: readonly T[];
+  value: T;
+  onChange: (v: T) => void;
+  /** Chip text (required — "" renders as ALL). */
+  format: (v: T) => string;
+}) {
+  return (
+    <div role="toolbar" aria-label={label} className="flex flex-wrap gap-2">
+      {options.map((s) => {
+        const text = format(s);
+        return (
+          <button
+            key={text}
+            type="button"
+            aria-pressed={value === s}
+            onClick={() => onChange(s)}
+            className={`rounded border px-2 py-0.5 text-[12px] ${
+              value === s
+                ? "border-[var(--accent)] text-[var(--accent)]"
+                : "border-[var(--border)] text-[var(--text-dim)]"
+            }`}
+          >
+            {text === "" ? "ALL" : text}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ColumnAlign: per-column alignment for Table/VirtualTable (design-system.md
 // §1.4 item 5 / §2.2 — numeric columns, and their header, right-aligned).
 // Optional and parallel to `head`/each row's cell array rather than a
@@ -267,10 +309,11 @@ export function Table({
           <tr className="bg-[var(--bg-panel)] text-left">
             {head.map((h, i) => (
               <th
-                key={h}
+                key={i}
+                scope="col"
                 className={`whitespace-nowrap px-3 py-2 font-medium text-[var(--text-dim)] ${alignClass(align?.[i])}`}
               >
-                {h}
+                {h === "" ? <span className="sr-only">Actions</span> : h}
               </th>
             ))}
           </tr>
@@ -357,10 +400,11 @@ export function VirtualTable({
           <tr className="bg-[var(--bg-panel)] text-left">
             {head.map((h, i) => (
               <th
-                key={h}
+                key={i}
+                scope="col"
                 className={`whitespace-nowrap px-3 py-2 font-medium text-[var(--text-dim)] ${alignClass(align?.[i])}`}
               >
-                {h}
+                {h === "" ? <span className="sr-only">Actions</span> : h}
               </th>
             ))}
           </tr>
@@ -494,9 +538,15 @@ export function ConfirmDialog({
 
   // Focus once on mount only — re-running this on every parent re-render
   // (e.g. a page polling while the dialog is open) would steal focus back
-  // from whatever the operator just tabbed to.
+  // from whatever the operator just tabbed to. The element that opened
+  // the dialog gets focus back when it closes (F15): capture it once at
+  // mount, restore on unmount.
   useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ref.current?.focus();
+    return () => {
+      opener?.focus();
+    };
   }, []);
 
   useEffect(() => {

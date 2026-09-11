@@ -5,7 +5,7 @@ import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, Badge, Button, PageTitle, Section, Table, fmtTime, severityTone } from "@/components/ui";
+import { Await, Badge, Button, PageTitle, Section, Table, fmtTime, severityTone, ChipGroup} from "@/components/ui";
 
 const STATES = ["", "active", "acked", "resolved"] as const;
 
@@ -28,19 +28,7 @@ export default function AlertsPage() {
   return (
     <ConsoleShell active="Alerts">
       <PageTitle>Alert Center</PageTitle>
-      <div className="mb-3 flex gap-2">
-        {STATES.map((s) => (
-          <button
-            key={s || "all"}
-            onClick={() => setFilter(s)}
-            className={`rounded border px-2 py-0.5 text-[12px] ${
-              filter === s ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-dim)]"
-            }`}
-          >
-            {s || "all"}
-          </button>
-        ))}
-      </div>
+      <ChipGroup label="Filter alerts by state" options={STATES} value={filter} onChange={setFilter} format={(s) => s} />
       <Section title="Alerts (state shared with Telegram — single backend)">
         <Await state={alerts} what="alerts">
           {(a) => (
@@ -57,7 +45,7 @@ export default function AlertsPage() {
                       {al.state}
                     </Badge>
                     {al.state === "resolved" && (
-                      <span className="text-[10px] text-[var(--text-dim)]">
+                      <span className="text-[11px] text-[var(--text-dim)]">
                         {al.resolved_by ? `by ${al.resolved_by}` : "auto-resolved"}
                       </span>
                     )}

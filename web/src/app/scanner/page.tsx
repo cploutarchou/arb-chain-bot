@@ -184,7 +184,7 @@ export default function ScannerPage() {
       <Section title="Live counters">
         <Await state={status} what="scanner status">
           {(s) => (
-            <div className="grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-6">
+            <div className="grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
               <Stat label="Ready" value={s.ready ? "yes" : "no"} tone={s.ready ? "ok" : "warn"} />
               <Stat label="Triangles" value={s.triangles} />
               <Stat label="Evaluations" value={s.evaluations} />

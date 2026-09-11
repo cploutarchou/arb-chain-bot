@@ -360,7 +360,7 @@ func TestBookMarkerLiquidationValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules := exchange.InstrumentRules{QtyMode: exchange.PrecisionStep, QtyStep: d("0.001"),
-		PriceMode: exchange.PrecisionStep, PriceTick: d("0.01")}
+		PriceMode: exchange.PrecisionStep, PriceTick: d("0.01"), MinNotional: d("5")}
 	markets := []exchange.Market{{ID: id, Base: "ETH", Quote: "USDT", Rules: rules}}
 
 	top := BookMarker{Books: books, Markets: markets}

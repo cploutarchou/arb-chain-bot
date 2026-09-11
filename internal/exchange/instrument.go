@@ -35,6 +35,14 @@ type InstrumentRules struct {
 	MaxQty      decimal.Decimal // maximum base quantity (0 = none)
 	MinNotional decimal.Decimal // minimum order value in quote (0 = none)
 	MaxNotional decimal.Decimal // maximum order value in quote (0 = none)
+	// NotionalMarketBasis: the venue evaluates a MARKET order's
+	// notional against an average price over AvgPriceMins minutes when
+	// ApplyMinToMarket is set (Binance NOTIONAL semantics, audit T12).
+	// The simulator approximates that average with the depth walk's own
+	// VWAP — the exact figure the model can see — rather than ignoring
+	// the market-order basis entirely.
+	ApplyMinToMarket bool
+	AvgPriceMins     int32
 
 	// MARKET orders carry their own quantity filter on Binance
 	// (MARKET_LOT_SIZE, volume-derived and usually far tighter than
@@ -72,13 +80,18 @@ var (
 	ErrNegativeAmount   = errors.New("negative amount")
 )
 
-// Usable reports whether the rules carry enough information to quantize.
+// Usable reports whether the rules carry enough information to quantize
+// AND to verify the notional floor. A market with no NOTIONAL filter
+// publishes no minimum order value: any sized order could be refused by
+// the venue, so the rules are unusable — rejected on uncertainty rather
+// than guessed at (triangular-constraints §"reject on uncertainty",
+// audit T12).
 func (r InstrumentRules) Usable() bool {
 	qtyOK := (r.QtyMode == PrecisionStep && r.QtyStep.IsPositive()) ||
 		(r.QtyMode == PrecisionDecimals && r.QtyDecimals >= 0)
 	priceOK := (r.PriceMode == PrecisionStep && r.PriceTick.IsPositive()) ||
 		(r.PriceMode == PrecisionDecimals && r.PriceDecimals >= 0)
-	return qtyOK && priceOK
+	return qtyOK && priceOK && r.MinNotional.IsPositive()
 }
 
 // QuantizeQty truncates a base quantity DOWN to the instrument's
@@ -142,9 +155,21 @@ func (r InstrumentRules) quantizePrice(p decimal.Decimal, up bool) (decimal.Deci
 
 // ValidateOrder checks an already-quantized (price, qty) pair against min/
 // max quantity and notional constraints. price is the expected average
-// execution price (VWAP for depth-aware sizing).
+// execution price (VWAP for depth-aware sizing); callers holding the
+// walk's EXACT cost or proceeds should prefer ValidateQty + ValidateNotional
+// — VWAP × qty rounds against the exact figure the venue will see (audit
+// T12).
 func (r InstrumentRules) ValidateOrder(price, qty decimal.Decimal) error {
-	if price.IsNegative() || qty.IsNegative() {
+	if err := r.ValidateQty(qty); err != nil {
+		return err
+	}
+	return r.ValidateNotional(price.Mul(qty))
+}
+
+// ValidateQty checks an already-quantized quantity against the min/max
+// quantity constraints alone.
+func (r InstrumentRules) ValidateQty(qty decimal.Decimal) error {
+	if qty.IsNegative() {
 		return ErrNegativeAmount
 	}
 	if r.MinQty.IsPositive() && qty.LessThan(r.MinQty) {
@@ -153,7 +178,18 @@ func (r InstrumentRules) ValidateOrder(price, qty decimal.Decimal) error {
 	if r.MaxQty.IsPositive() && qty.GreaterThan(r.MaxQty) {
 		return fmt.Errorf("%w: %s > %s", ErrQtyAboveMax, qty, r.MaxQty)
 	}
-	notional := price.Mul(qty)
+	return nil
+}
+
+// ValidateNotional checks an exact order value — the depth walk's cost
+// or proceeds — against the notional bounds. The venue evaluates the
+// notional of the value that actually moves; a VWAP×qty reconstruction
+// of it can round below a floor the exact figure clears, or above a
+// cap it does not (audit T12).
+func (r InstrumentRules) ValidateNotional(notional decimal.Decimal) error {
+	if notional.IsNegative() {
+		return ErrNegativeAmount
+	}
 	if r.MinNotional.IsPositive() && notional.LessThan(r.MinNotional) {
 		return fmt.Errorf("%w: %s < %s", ErrNotionalBelowMin, notional, r.MinNotional)
 	}
