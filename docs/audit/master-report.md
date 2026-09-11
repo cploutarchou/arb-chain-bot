@@ -397,9 +397,10 @@ type-to-confirm) and a Risk Center control.
    and need deliberate rotation.
 6. **Operational polish:** the reservation mutex and `AnyOpen`'s
    per-evaluation allocation still sit on the evaluator path
-   (performance plan items 2–3), `internal/api`'s race suite takes
-   ≈7.7 min serially, and the scanner's per-event ledger scans and real
-   sleeps (X9) remain.
+   (performance plan items 2–3) and `internal/api`'s race suite takes
+   ≈7.7 min serially. The scanner's per-event ledger scans and real
+   sleeps are gone (X9 closed: incremental drift, a per-tick view
+   cache, a virtual waiter).
 
 ### Tests added by the branch
 
@@ -617,3 +618,22 @@ polish and the stacks consolidation remain). What is left of the whole
 hardening programme: X9, O11 (+O14's alerts), the T10/F17 two-stacks
 consolidation — and the two verdict conditions that were never
 engineering gaps. The verdict stays **NOT READY FOR LIVE TRADING**.
+
+## FOLLOW-UP ADDENDUM: the hot-path pass
+
+PR #24 closes the last three open engineering items. X9 takes the
+screener's paper hot path off the ledger and the clock: drift seeds
+once per rule and advances incrementally (a differential test pins it
+against the ledger scan), the auto-paper view computes once per poll
+interval with write invalidation, and the default waiter is virtual
+(latency stays a recorded model input; the tick stops sleeping). O11
+lands stage-boundary spans over OTLP — noop without
+OTEL_EXPORTER_OTLP_ENDPOINT, five stages instrumented, the deployed
+Tempo distributor already listening. T10's parser half consolidates the
+Binance filter semantics into one exported parser both stacks use.
+
+Verification: gofmt/vet/golangci-lint clean, `go test -race ./...`
+green (44 packages). What remains of the entire remediation programme:
+the F17/T10 fee-model merge (one deliberate consolidation), alerts for
+the O14 panels, and the two verdict conditions that were never
+engineering. **NOT READY FOR LIVE TRADING** stands.
