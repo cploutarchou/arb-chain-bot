@@ -188,6 +188,7 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 		pos.PnLQuote = exec.PnLQuote
 		pos.OpenPayload = toMap(exec)
 		x.countOutcome(pos)
+		x.invalidateView()
 		if err := x.ledger.InsertPosition(ctx, pos); err != nil {
 			x.log.Error("paperexec: unwind position insert failed", "error", err)
 		}
@@ -226,6 +227,7 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 		Payload: map[string]any{"basis_entry_bps": s.BasisEntryBps.String(), "edge_bps": s.EdgeBps.String(),
 			"predicted_bps": s.PredictedBps.String(), "collateral": collateral.String()}}
 	x.countOutcome(pos)
+	x.invalidateView()
 	if err := x.ledger.InsertPosition(ctx, pos); err != nil {
 		x.log.Error("paperexec: position insert failed", "error", err)
 	}

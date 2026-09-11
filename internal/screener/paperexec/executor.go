@@ -1,6 +1,10 @@
 package paperexec
 
 import (
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cploutarchou/arb-chain-bot/internal/tracing"
+
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -63,6 +67,24 @@ type Executor struct {
 	loaded   bool
 	pending  []pendingSlip
 	lastTick time.Time
+	// drift is the §2.4 (iii) inventory drift, maintained
+	// incrementally (audit X9): seeded once per rule from a single
+	// ledger scan, then advanced by every execution as it is booked —
+	// the old code re-read the rule's whole execution list (up to
+	// 20 000 JSONB rows) on every opened event.
+	drift       map[string]decimal.Decimal // ruleID|base|quote|pair -> signed base qty
+	driftSeeded map[string]bool            // ruleID -> seeded from the ledger
+
+	// viewCache is the auto-paper view, recomputed at most once per
+	// poll interval (audit X9): the old path re-read the whole ledger —
+	// balances, 500 positions, and per-rule positions + every execution —
+	// on every HTTP request. Any executor write marks it dirty for the
+	// next reader. viewMu is separate from x.mu so the view never waits
+	// on (nor holds) the execution lock.
+	viewMu    sync.Mutex
+	viewCache *screener.AutoPaperView
+	viewAt    time.Time
+	viewDirty bool
 }
 
 type pendingSlip struct {
@@ -87,9 +109,17 @@ func New(svc *screener.Service, ledger Ledger, log *slog.Logger, opts Options) *
 	}
 	x := &Executor{svc: svc, ledger: ledger, log: log, waiter: opts.Waiter, latency: DefaultLatency,
 		tolBps: DefaultLimitToleranceBps, seed: opts.Seed, idGen: opts.IDGen, wallets: map[screener.Venue]*reservation.Manager{},
-		entitle: opts.Entitle, outcomes: map[outcomeKey]int64{}}
+		entitle: opts.Entitle, outcomes: map[outcomeKey]int64{},
+		drift: map[string]decimal.Decimal{}, driftSeeded: map[string]bool{}}
 	if x.waiter == nil {
-		x.waiter = simulation.RealWaiter{}
+		// X9: latency is a MODEL INPUT here, not wall-clock. RealWaiter
+		// slept 100–260 ms per leg inside the single automation
+		// goroutine while it held the executor mutex — every paper
+		// execution stalled the whole screener tick. The draws remain
+		// (SubmitMs/FillMs are recorded on every fill from the same
+		// latency model); only the sleep is virtual. Tests that want
+		// real pacing still pass Options.Waiter.
+		x.waiter = VirtualWaiter{}
 	}
 	if opts.Latency != nil {
 		x.latency = *opts.Latency
@@ -154,6 +184,10 @@ func (x *Executor) Outcomes() []OutcomeCount {
 
 // OnOpen is the alerts.OpenHook: called once per opened event.
 func (x *Executor) OnOpen(ctx context.Context, s alerts.Signal, ev screener.Event) {
+	ctx, span := tracing.Start(ctx, "screener.paper_execute",
+		attribute.String("strategy", string(s.Strategy)),
+		attribute.String("rule", s.Rule.ID))
+	defer span.End()
 	if !s.Rule.AutoPaper {
 		return
 	}
@@ -311,6 +345,7 @@ func (x *Executor) skip(ctx context.Context, s alerts.Signal, ev screener.Event,
 	t := now
 	p.ClosedAt = &t
 	x.countOutcome(p)
+	x.invalidateView()
 	if err := x.ledger.InsertPosition(ctx, p); err != nil {
 		x.log.Error("paperexec: skip row insert failed", "error", err)
 	}
@@ -319,6 +354,8 @@ func (x *Executor) skip(ctx context.Context, s alerts.Signal, ev screener.Event,
 }
 
 func (x *Executor) insertExecution(ctx context.Context, e Execution) {
+	x.noteDrift(e)
+	x.invalidateView()
 	if err := x.ledger.InsertExecution(ctx, e); err != nil {
 		x.log.Error("paperexec: execution insert failed", "id", e.ID, "error", err)
 	}

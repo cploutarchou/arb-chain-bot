@@ -41,6 +41,16 @@ func legRNG(seed int64, key string, leg int) *rand.Rand {
 	return rand.New(rand.NewSource(seed ^ int64(h.Sum64()))) //nolint:gosec // simulation jitter, not crypto
 }
 
+// VirtualWaiter elapses no time (audit X9): the screener's automatic
+// PAPER execution runs inside the automation goroutine, where real
+// sleeps stalled the tick; the latency model's per-leg durations stay
+// recorded on the fills, so reports and slip math are unchanged.
+type VirtualWaiter struct{}
+
+func (VirtualWaiter) Wait(ctx context.Context, _ time.Duration) error {
+	return ctx.Err()
+}
+
 func jitter(rng *rand.Rand, base, j time.Duration) time.Duration {
 	if j <= 0 {
 		return base

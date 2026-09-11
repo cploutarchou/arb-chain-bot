@@ -65,7 +65,7 @@ func ParseExchangeInfo(body []byte) ([]exchange.Market, error) {
 			Status:  mapStatus(s.Status),
 			Enabled: true, // platform-level enablement; config narrows later
 		}
-		rules, err := parseFilters(s.Filters)
+		rules, err := ParseFilters(s.Filters)
 		if err != nil {
 			return nil, fmt.Errorf("binance: %s: %w", s.Symbol, err)
 		}
@@ -88,7 +88,11 @@ func mapStatus(s string) exchange.MarketStatus {
 	}
 }
 
-func parseFilters(filters []json.RawMessage) (exchange.InstrumentRules, error) {
+// ParseFilters maps one Binance symbol's raw filters array to
+// InstrumentRules — THE one filter parser for both stacks (audit T10):
+// the Scanner Suite's collectors route through it instead of carrying
+// a second copy of the filter semantics.
+func ParseFilters(filters []json.RawMessage) (exchange.InstrumentRules, error) {
 	var r exchange.InstrumentRules
 	for _, raw := range filters {
 		var h filterHeader
