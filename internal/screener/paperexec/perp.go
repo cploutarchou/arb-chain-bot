@@ -15,23 +15,33 @@ import (
 // perpOpen is the open payload of a carry / funding-harvest position
 // (§3.6 step 6). Decimals travel as strings through JSONB.
 type perpOpen struct {
-	SpotOpen      decimal.Decimal `json:"spot_open"`
-	PerpOpen      decimal.Decimal `json:"perp_open"`
-	FeesOpen      decimal.Decimal `json:"fees_open"`
-	Collateral    decimal.Decimal `json:"collateral"`
-	SpotFeeBps    decimal.Decimal `json:"spot_fee_bps"`
-	PerpFeeBps    decimal.Decimal `json:"perp_fee_bps"`
-	BasisEntryBps decimal.Decimal `json:"basis_entry_bps"`
-	PredictedBps  decimal.Decimal `json:"predicted_bps_at_open"`
-	BreakevenN    int             `json:"breakeven_n,omitempty"`
-	IntervalH     int             `json:"interval_h"`
-	IntervalHOpen int             `json:"interval_h_open"`
-	NextFundingAt time.Time       `json:"next_funding_at"`
-	Settlements   int             `json:"settlements"`
-	FundingMissed int             `json:"funding_missed"`
-	FundingRetry  int             `json:"funding_retry"`
-	ExitCount     int             `json:"exit_count"`
-	OpenExecID    string          `json:"open_execution_id"`
+	SpotOpen decimal.Decimal `json:"spot_open"`
+	PerpOpen decimal.Decimal `json:"perp_open"`
+	FeesOpen decimal.Decimal `json:"fees_open"`
+	// SpotCostQuote is the quote that actually left the wallet on the
+	// entry spot leg (audit T10): the full bought notional plus any
+	// quote-side fee — a received-side entry fee was paid in base, so
+	// the cost basis is the bare notional while the position holds
+	// NetQty. The close measures its spot PnL against this figure.
+	SpotCostQuote decimal.Decimal `json:"spot_cost_quote"`
+	// PerpOpenFeeQuote is the perp leg's actually-charged open fee (the
+	// close's PnL sums it with the close fee instead of approximating —
+	// wallet conservation is exact against it).
+	PerpOpenFeeQuote decimal.Decimal `json:"perp_open_fee_quote"`
+	Collateral       decimal.Decimal `json:"collateral"`
+	SpotFeeBps       decimal.Decimal `json:"spot_fee_bps"`
+	PerpFeeBps       decimal.Decimal `json:"perp_fee_bps"`
+	BasisEntryBps    decimal.Decimal `json:"basis_entry_bps"`
+	PredictedBps     decimal.Decimal `json:"predicted_bps_at_open"`
+	BreakevenN       int             `json:"breakeven_n,omitempty"`
+	IntervalH        int             `json:"interval_h"`
+	IntervalHOpen    int             `json:"interval_h_open"`
+	NextFundingAt    time.Time       `json:"next_funding_at"`
+	Settlements      int             `json:"settlements"`
+	FundingMissed    int             `json:"funding_missed"`
+	FundingRetry     int             `json:"funding_retry"`
+	ExitCount        int             `json:"exit_count"`
+	OpenExecID       string          `json:"open_execution_id"`
 	// MMR as entered by the operator (§3.4); the liquidation estimate
 	// P_liq = P_open × (1 + m)/(1 + MMR), m = 1, is display only.
 	MMR       decimal.Decimal `json:"mmr"`
@@ -137,9 +147,11 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 	}
 	slip := r.SlipBps()
 	execID := "exe-" + x.idGen()
+	spotConv := screener.VenueFeeConvention(venue)
 	spotLeg := x.simulateLeg(ctx, execID, legReq{Leg: 1, Venue: venue, Market: "spot", Side: "BUY",
 		Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: qty, Price: q.Ask, FeeBps: fSpot,
-		Reread: func() (decimal.Decimal, bool) { return x.sidePrice(venue, "spot", "BUY", s.Lane.Base, s.Lane.Quote) }}, slip)
+		Convention: spotConv,
+		Reread:     func() (decimal.Decimal, bool) { return x.sidePrice(venue, "spot", "BUY", s.Lane.Base, s.Lane.Quote) }}, slip)
 	if spotLeg.Status != "FILLED" {
 		_ = w.Release(resS.ID)
 		_ = w.Release(resP.ID)
@@ -147,20 +159,28 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 		return
 	}
 	_ = w.Settle(resS.ID, spotLeg.FillPrice.Mul(qty).Add(spotLeg.FeeQuote))
-	_ = w.Credit(baseAsset, qty)
+	_ = w.Credit(baseAsset, spotLeg.NetQty)
 
+	// The perp leg is quote-side BY CONSTRUCTION (audit T10): linear
+	// USDT-margined perpetuals settle taker fees in the margin asset
+	// regardless of the venue's spot convention. It is sized to the
+	// POST-FEE spot holding — a received-side entry fee leaves less
+	// base than was bought, and a hedged carry hedges what it holds,
+	// so funding, collateral and the close all run on one size.
 	perpLeg := x.simulateLeg(ctx, execID, legReq{Leg: 2, Venue: venue, Market: "perp", Side: "SELL",
-		Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: qty, Price: p.Bid, FeeBps: fPerp,
-		Reread: func() (decimal.Decimal, bool) { return x.sidePrice(venue, "perp", "SELL", s.Lane.Base, s.Lane.Quote) }}, slip)
+		Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: spotLeg.NetQty, Price: p.Bid, FeeBps: fPerp,
+		Convention: exchange.FeeInQuote,
+		Reread:     func() (decimal.Decimal, bool) { return x.sidePrice(venue, "perp", "SELL", s.Lane.Base, s.Lane.Quote) }}, slip)
 	if perpLeg.Status != "FILLED" {
 		// §3.6 step 5: unwind the first leg immediately; the cost is
 		// booked under skipped.UNWIND.
 		_ = w.Release(resP.ID)
 		unwind := x.simulateLeg(ctx, execID+":unwind", legReq{Leg: 3, Venue: venue, Market: "spot", Side: "SELL",
-			Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: qty, Price: q.Bid, FeeBps: fSpot,
-			Reread: func() (decimal.Decimal, bool) { return x.sidePrice(venue, "spot", "SELL", s.Lane.Base, s.Lane.Quote) }}, slip)
+			Base: s.Lane.Base, Quote: s.Lane.Quote, Qty: spotLeg.NetQty, Price: q.Bid, FeeBps: fSpot,
+			Convention: spotConv,
+			Reread:     func() (decimal.Decimal, bool) { return x.sidePrice(venue, "spot", "SELL", s.Lane.Base, s.Lane.Quote) }}, slip)
 		pos := Position{ID: "pos-" + x.idGen(), RuleID: r.ID, EventID: ev.ID, Strategy: s.Strategy,
-			Base: s.Lane.Base, Quote: s.Lane.Quote, VenueA: venue, VenueB: venue, Qty: qty, OpenedAt: now,
+			Base: s.Lane.Base, Quote: s.Lane.Quote, VenueA: venue, VenueB: venue, Qty: spotLeg.NetQty, OpenedAt: now,
 			Status: StatusSkipped, SkippedReason: SkipUnwind}
 		t := now
 		pos.ClosedAt = &t
@@ -168,11 +188,12 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 			Base: s.Lane.Base, Quote: s.Lane.Quote, VenueA: venue, VenueB: venue, Fills: []Fill{spotLeg, perpLeg, unwind},
 			SlipAllowBps: slip, At: now, Payload: map[string]any{"reason": "perp leg rejected: " + perpLeg.Reason}}
 		if unwind.Status == "FILLED" {
-			res, _ := w.Reserve(ev.ID+":unwind", baseAsset, qty, "screener:"+r.ID, nil)
-			_ = w.Settle(res.ID, qty)
-			_ = w.Credit(quoteAsset, unwind.FillPrice.Mul(qty).Sub(unwind.FeeQuote))
-			exec.FeesQuote = spotLeg.FeeQuote.Add(unwind.FeeQuote)
-			exec.PnLQuote = qty.Mul(unwind.FillPrice.Sub(spotLeg.FillPrice)).Sub(exec.FeesQuote)
+			res, _ := w.Reserve(ev.ID+":unwind", baseAsset, spotLeg.NetQty, "screener:"+r.ID, nil)
+			_ = w.Settle(res.ID, unwind.NetQty)
+			_ = w.Credit(quoteAsset, unwind.FillPrice.Mul(unwind.NetQty).Sub(unwind.FeeQuote))
+			exec.FeesQuote = spotLeg.FeeQuote.Add(spotLeg.FeeQuoteEquiv).Add(unwind.FeeQuote).Add(unwind.FeeQuoteEquiv)
+			exec.PnLQuote = unwind.FillPrice.Mul(unwind.NetQty).Sub(unwind.FeeQuote).
+				Sub(spotLeg.FillPrice.Mul(qty).Add(spotLeg.FeeQuote))
 		} else {
 			// Unwind itself rejected: the base stays in the wallet,
 			// marked at the venue mid as open exposure.
@@ -180,8 +201,8 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 			if !ok {
 				mid = spotLeg.FillPrice
 			}
-			exec.FeesQuote = spotLeg.FeeQuote
-			exec.PnLQuote = qty.Mul(mid.Sub(spotLeg.FillPrice)).Sub(exec.FeesQuote)
+			exec.FeesQuote = spotLeg.FeeQuote.Add(spotLeg.FeeQuoteEquiv)
+			exec.PnLQuote = spotLeg.NetQty.Mul(mid.Sub(spotLeg.FillPrice)).Sub(spotLeg.FeeQuote)
 			exec.Payload["unwind_rejected"] = unwind.Reason
 			exec.Payload["mark_mid"] = mid.String()
 		}
@@ -211,7 +232,8 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 	}
 	po := perpOpen{
 		SpotOpen: spotLeg.FillPrice, PerpOpen: perpLeg.FillPrice,
-		FeesOpen: spotLeg.FeeQuote.Add(perpLeg.FeeQuote), Collateral: collateral,
+		FeesOpen:      spotLeg.FeeQuote.Add(spotLeg.FeeQuoteEquiv).Add(perpLeg.FeeQuote).Add(perpLeg.FeeQuoteEquiv),
+		SpotCostQuote: spotLeg.FillPrice.Mul(qty).Add(spotLeg.FeeQuote), PerpOpenFeeQuote: perpLeg.FeeQuote, Collateral: collateral,
 		SpotFeeBps: fSpot, PerpFeeBps: fPerp,
 		BasisEntryBps: s.BasisEntryBps, PredictedBps: s.PredictedBps, BreakevenN: s.BreakevenN,
 		IntervalH: intervalH, IntervalHOpen: intervalH, NextFundingAt: p.NextFundingAt,
@@ -219,7 +241,7 @@ func (x *Executor) openPerp(ctx context.Context, s alerts.Signal, ev screener.Ev
 		LiqEst: perpLeg.FillPrice.Mul(decTwo).Div(decOne.Add(mmr)),
 	}
 	pos := Position{ID: "pos-" + x.idGen(), RuleID: r.ID, EventID: ev.ID, Strategy: s.Strategy,
-		Base: s.Lane.Base, Quote: s.Lane.Quote, VenueA: venue, VenueB: venue, Qty: qty, OpenedAt: now,
+		Base: s.Lane.Base, Quote: s.Lane.Quote, VenueA: venue, VenueB: venue, Qty: spotLeg.NetQty, OpenedAt: now,
 		Status: StatusOpen, OpenPayload: toMap(po)}
 	exec := Execution{ID: execID, PositionID: pos.ID, RuleID: r.ID, EventID: ev.ID, Strategy: s.Strategy, Kind: KindOpen,
 		Base: s.Lane.Base, Quote: s.Lane.Quote, VenueA: venue, VenueB: venue, Fills: []Fill{spotLeg, perpLeg},
@@ -443,34 +465,44 @@ func (x *Executor) closePerp(ctx context.Context, r screener.Rule, pos Position,
 	venue := pos.VenueA
 	slip := r.SlipBps()
 	execID := "exe-" + x.idGen()
+	spotConv := screener.VenueFeeConvention(venue)
 	spotLeg := x.simulateLeg(ctx, execID, legReq{Leg: 1, Venue: venue, Market: "spot", Side: "SELL",
 		Base: pos.Base, Quote: pos.Quote, Qty: pos.Qty, Price: q.Bid, FeeBps: po.SpotFeeBps,
-		Reread: func() (decimal.Decimal, bool) { return x.sidePrice(venue, "spot", "SELL", pos.Base, pos.Quote) }}, slip)
+		Convention: spotConv,
+		Reread:     func() (decimal.Decimal, bool) { return x.sidePrice(venue, "spot", "SELL", pos.Base, pos.Quote) }}, slip)
 	perpLeg := x.simulateLeg(ctx, execID, legReq{Leg: 2, Venue: venue, Market: "perp", Side: "BUY",
 		Base: pos.Base, Quote: pos.Quote, Qty: pos.Qty, Price: p.Ask, FeeBps: po.PerpFeeBps,
-		Reread: func() (decimal.Decimal, bool) { return x.sidePrice(venue, "perp", "BUY", pos.Base, pos.Quote) }}, slip)
+		Convention: exchange.FeeInQuote, // margin-asset settlement by construction
+		Reread:     func() (decimal.Decimal, bool) { return x.sidePrice(venue, "perp", "BUY", pos.Base, pos.Quote) }}, slip)
 	if spotLeg.Status != "FILLED" || perpLeg.Status != "FILLED" {
 		// Close legs are retried next poll (a hedged position stays
 		// hedged); nothing is booked.
 		x.log.Warn("paperexec: close leg rejected, retrying next poll", "position", pos.ID, "spot", spotLeg.Reason, "perp", perpLeg.Reason)
 		return
 	}
-	fS, fP := po.SpotFeeBps.Div(decTenK), po.PerpFeeBps.Div(decTenK)
-	spotPnL := pos.Qty.Mul(spotLeg.FillPrice.Mul(decOne.Sub(fS)).Sub(po.SpotOpen.Mul(decOne.Add(fS))))
+	// Spot leg per placement (audit T10): the close sells NetQty (a
+	// spent-side fee means only that much is sellable) and its fee
+	// comes off the side the venue takes it, measured against the quote
+	// that actually left the wallet at entry (full notional + entry
+	// quote fees — a received-side entry fee was paid in base).
+	spotPnL := spotLeg.FillPrice.Mul(spotLeg.NetQty).Sub(spotLeg.FeeQuote).
+		Sub(po.SpotCostQuote)
 	perpPrice := pos.Qty.Mul(po.PerpOpen.Sub(perpLeg.FillPrice))
-	perpFees := fP.Mul(pos.Qty).Mul(po.PerpOpen.Add(perpLeg.FillPrice))
+	// Actual charged fees, not the (open+close) average approximation:
+	// the wallet debited exactly these, so conservation is exact.
+	perpFees := po.PerpOpenFeeQuote.Add(perpLeg.FeeQuote)
 	perpPnL := perpPrice.Sub(perpFees)
 	total := spotPnL.Add(perpPnL).Add(pos.FundingQuote)
 
 	w := x.wallet(venue)
 	quoteAsset, baseAsset, perpAsset := exchange.Asset(pos.Quote), exchange.Asset(pos.Base), perpWallet(pos.Quote)
 	if res, err := w.Reserve(execID+":base", baseAsset, pos.Qty, "screener:"+pos.RuleID, nil); err == nil {
-		_ = w.Settle(res.ID, pos.Qty)
+		_ = w.Settle(res.ID, spotLeg.NetQty)
 	} else {
 		x.log.Warn("paperexec: base wallet short at close", "position", pos.ID, "error", err)
 		x.debit(w, baseAsset, pos.Qty)
 	}
-	_ = w.Credit(quoteAsset, spotLeg.FillPrice.Mul(pos.Qty).Sub(spotLeg.FeeQuote))
+	_ = w.Credit(quoteAsset, spotLeg.FillPrice.Mul(spotLeg.NetQty).Sub(spotLeg.FeeQuote))
 	// Futures wallet: collateral back, plus the perp leg's price pnl net
 	// of the close fee (the open fee left the wallet at open), plus
 	// settled funding.
@@ -493,7 +525,7 @@ func (x *Executor) closePerp(ctx context.Context, r screener.Rule, pos Position,
 	}
 	exec := Execution{ID: execID, PositionID: pos.ID, RuleID: pos.RuleID, EventID: pos.EventID, Strategy: pos.Strategy, Kind: KindClose,
 		Base: pos.Base, Quote: pos.Quote, VenueA: venue, VenueB: venue, Fills: []Fill{spotLeg, perpLeg},
-		FeesQuote: spotLeg.FeeQuote.Add(perpLeg.FeeQuote), SlipAllowBps: slip, PnLQuote: total, At: now,
+		FeesQuote: spotLeg.FeeQuote.Add(spotLeg.FeeQuoteEquiv).Add(perpLeg.FeeQuote).Add(perpLeg.FeeQuoteEquiv), SlipAllowBps: slip, PnLQuote: total, At: now,
 		Payload: map[string]any{
 			"reason": reason, "spot_leg_pnl": spotPnL.String(), "perp_leg_pnl": perpPnL.String(),
 			"perp_price_pnl": perpPrice.String(), "perp_fees": perpFees.String(),

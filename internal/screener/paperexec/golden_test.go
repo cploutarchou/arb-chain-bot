@@ -156,22 +156,28 @@ func TestGoldenCrossVenueSpot(t *testing.T) {
 	if got := e.Fills[1].FillPrice.String(); got != "50239.95" {
 		t.Errorf("sell fill = %s, want 50239.95", got)
 	}
-	if got := e.PnLQuote.StringFixed(2); got != "12.97" {
-		t.Errorf("pnl_quote = %s (%s), want 12.97", got, e.PnLQuote)
+	// Per-venue fee placement (audit T10): Binance is received-side, so
+	// the buy fee is 0.0001 BTC off the received amount (worth 5.001
+	// USDT at the fill) and only 0.0999 BTC reaches OKX to sell —
+	// pnl = 50239.95×0.0999×(1−0.001) − 50010×0.1 = 12.952033995.
+	if got := e.PnLQuote.StringFixed(2); got != "12.95" {
+		t.Errorf("pnl_quote = %s (%s), want 12.95", got, e.PnLQuote)
 	}
-	if got := e.Payload["pnl_after_rebalance_quote"].(string); d(got).StringFixed(2) != "2.97" {
-		t.Errorf("pnl_after_rebalance = %s, want 2.97", got)
+	if got := e.Payload["pnl_after_rebalance_quote"].(string); d(got).StringFixed(2) != "2.95" {
+		t.Errorf("pnl_after_rebalance = %s, want 2.95", got)
 	}
 	if got := d(e.Payload["pnl_bps"].(string)).StringFixed(1); got != "25.9" {
 		t.Errorf("pnl_bps = %s, want 25.9", got)
 	}
-	// Wallets moved: Binance USDT down by cost, BTC up 0.1; OKX BTC down 0.1, USDT up proceeds.
+	// Wallets moved per placement: Binance USDT down by the bare
+	// notional (its fee left in base), BTC up 0.0999 (net of the fee);
+	// OKX BTC down 0.0999, USDT up the net proceeds.
 	bals, _ := h.ledger.ListBalances(context.Background())
 	want := map[string]string{
-		"binance/USDT": d("100000").Sub(d("50010").Mul(d("0.1")).Mul(d("1.001"))).String(),
-		"binance/BTC":  "0.1",
-		"okx/BTC":      "0.9",
-		"okx/USDT":     d("50239.95").Mul(d("0.1")).Mul(d("0.999")).String(),
+		"binance/USDT": d("100000").Sub(d("50010").Mul(d("0.1"))).String(),
+		"binance/BTC":  "0.0999",
+		"okx/BTC":      "0.9001",
+		"okx/USDT":     d("50239.95").Mul(d("0.0999")).Mul(d("0.999")).String(),
 	}
 	for _, b := range bals {
 		k := string(b.Venue) + "/" + b.Asset
@@ -194,7 +200,7 @@ func TestGoldenCrossVenueSpot(t *testing.T) {
 		t.Fatalf("per_rule = %d", len(view.Summary.PerRule))
 	}
 	rs := view.Summary.PerRule[0]
-	if rs.Executed != 1 || rs.Alerts != 1 || rs.NetPnLQuote.StringFixed(2) != "12.97" || rs.HitRate == nil || !rs.HitRate.Equal(decimal.NewFromInt(1)) {
+	if rs.Executed != 1 || rs.Alerts != 1 || rs.NetPnLQuote.StringFixed(2) != "12.95" || rs.HitRate == nil || !rs.HitRate.Equal(decimal.NewFromInt(1)) {
 		t.Errorf("summary = %+v", rs)
 	}
 	if len(rs.InventoryDrift) != 1 || !rs.InventoryDrift[0].DriftBase.Equal(d("0.1")) || rs.InventoryDrift[0].Unmatched != 1 {
@@ -202,7 +208,7 @@ func TestGoldenCrossVenueSpot(t *testing.T) {
 	}
 	// Conservative figure: 20 bps of the drift notional at the current mid.
 	mid := d("49999").Add(d("50000")).Div(decTwo)
-	wantAfter := d("12.970005").Sub(d("0.1").Mul(mid).Mul(d("0.002")))
+	wantAfter := d("12.952033995").Sub(d("0.1").Mul(mid).Mul(d("0.002")))
 	if !rs.PnLAfterRebalance.Equal(wantAfter) {
 		t.Errorf("pnl_after_rebalance = %s, want %s", rs.PnLAfterRebalance, wantAfter)
 	}
@@ -258,17 +264,23 @@ func TestGoldenCarry(t *testing.T) {
 	if len(execs) != 1 || execs[0].Kind != KindOpen {
 		t.Fatalf("open execution missing: %+v", h.positions(r.ID))
 	}
+	// Per-venue placement (audit T10): Binance is received-side, so the
+	// entry spot fee is 0.0002 BTC off the received 0.2 (quote fee 0,
+	// equivalent 10.002) and the position/perp are sized to the 0.1998
+	// actually held.
 	e := execs[0]
-	if e.Fills[0].FillPrice.String() != "50010" || e.Fills[0].FeeQuote.String() != "10.002" {
-		t.Errorf("spot open fill %s fee %s, want 50010 / 10.002", e.Fills[0].FillPrice, e.Fills[0].FeeQuote)
+	if e.Fills[0].FillPrice.String() != "50010" || !e.Fills[0].FeeQuote.IsZero() || !e.Fills[0].FeeBase.Equal(d("0.0002")) || !e.Fills[0].NetQty.Equal(d("0.1998")) {
+		t.Errorf("spot open fill %s feeQ %s feeB %s net %s, want 50010 / 0 / 0.0002 / 0.1998",
+			e.Fills[0].FillPrice, e.Fills[0].FeeQuote, e.Fills[0].FeeBase, e.Fills[0].NetQty)
 	}
-	if e.Fills[1].FillPrice.String() != "50089.98" || e.Fills[1].FeeQuote.StringFixed(3) != "5.009" {
-		t.Errorf("perp open fill %s fee %s, want 50089.98 / 5.009", e.Fills[1].FillPrice, e.Fills[1].FeeQuote)
+	if e.Fills[1].FillPrice.String() != "50089.98" || e.Fills[1].FeeQuote.StringFixed(4) != "5.0040" || !e.Fills[1].Qty.Equal(d("0.1998")) {
+		t.Errorf("perp open fill %s fee %s qty %s, want 50089.98 / 5.0040 / 0.1998", e.Fills[1].FillPrice, e.Fills[1].FeeQuote, e.Fills[1].Qty)
 	}
 	if got := d(e.Payload["collateral"].(string)).StringFixed(0); got != "10018" {
 		t.Errorf("collateral = %s, want 10018", got)
 	}
-	// 90 settlements at +0.008 % with mark 50 000 → 0.8 each = 72.00.
+	// 90 settlements at +0.008 % with mark 50 000 on the held 0.1998 →
+	// 0.7992 each = 71.928.
 	for i := 0; i < 90; i++ {
 		T := first.Add(time.Duration(i*8) * time.Hour)
 		_ = h.svc.Funding.UpsertFunding(ctx, screener.VenueBinance, "BTC", T, "0.00008")
@@ -280,8 +292,8 @@ func TestGoldenCarry(t *testing.T) {
 	if pos.Status != StatusOpen {
 		t.Fatalf("position closed early: %+v", pos)
 	}
-	if got := pos.FundingQuote.StringFixed(2); got != "72.00" {
-		t.Errorf("funding = %s, want 72.00", got)
+	if got := pos.FundingQuote.StringFixed(3); got != "71.928" {
+		t.Errorf("funding = %s, want 71.928", got)
 	}
 	var po perpOpen
 	_ = fromMap(pos.OpenPayload, &po)
@@ -311,17 +323,17 @@ func TestGoldenCarry(t *testing.T) {
 	spotLeg := d(closeExec.Payload["spot_leg_pnl"].(string))
 	perpPrice := d(closeExec.Payload["perp_price_pnl"].(string))
 	perpFees := d(closeExec.Payload["perp_fees"].(string))
-	if spotLeg.StringFixed(2) != "177.80" || perpPrice.StringFixed(2) != "-184.00" || perpFees.StringFixed(2) != "10.11" {
-		t.Errorf("components spot %s perp %s fees %s, want 177.80 / -184.00 / 10.11", spotLeg, perpPrice, perpFees)
+	if spotLeg.StringFixed(4) != "177.6102" || perpPrice.StringFixed(4) != "-183.8200" || perpFees.StringFixed(4) != "10.0973" {
+		t.Errorf("components spot %s perp %s fees %s, want 177.6102 / -183.8200 / 10.0973", spotLeg, perpPrice, perpFees)
 	}
-	// Exact decimal total is 55.684 (rounds to 55.68); the spec's 55.69
-	// is the sum of its individually rounded components — both stated.
-	if got := pos.PnLQuote.StringFixed(3); got != "55.684" {
-		t.Errorf("total = %s, want 55.684", got)
+	// Exact decimal total under per-venue placement: 55.620863 (rounds
+	// to 55.62); the spec's 55.68/55.69 assumed quote-side fees.
+	if got := pos.PnLQuote.StringFixed(3); got != "55.621" {
+		t.Errorf("total = %s, want 55.621", got)
 	}
 	roundedSum := d(spotLeg.StringFixed(2)).Add(d(perpPrice.StringFixed(2))).Sub(d(perpFees.StringFixed(2))).Add(d(pos.FundingQuote.StringFixed(2)))
-	if got := roundedSum.StringFixed(2); got != "55.69" {
-		t.Errorf("sum of rounded components = %s, want 55.69", got)
+	if got := roundedSum.StringFixed(2); got != "55.62" {
+		t.Errorf("sum of rounded components = %s, want 55.62", got)
 	}
 	// Liquidation estimate ≈ 99 779 (2 × 50 089.98 / 1.004).
 	if got := po.LiqEst.StringFixed(0); got != "99781" && got != "99779" {
@@ -340,10 +352,14 @@ func TestGoldenCarry(t *testing.T) {
 	}
 }
 
+// unused helper guard: keep decTenK referenced if the file changes.
+var _ = decTenK
+
 // §5.3: predicted +0.05 %/8 h, last-6 mean +0.045 %, basis −2 bps,
-// size 10 000 → 0.2 BTC; 12 settlements mean +0.035 % → 42.00; fees
-// 30.00; realised slippage 4.00 (1 bps × 4 legs); basis change −4 bps →
-// net 4.00.
+// size 10 000 → 0.2 BTC (0.1998 held after the received-side entry
+// fee, audit T10); 12 settlements mean +0.035 % → 41.958; fees
+// 29.9775; basis change −4 bps → net 3.9885. The spec's 42.00/30.00/
+// 4.00 assumed quote-side fees on a full 0.2 position.
 func TestGoldenFundingHarvest(t *testing.T) {
 	h := newHarness(t, nil)
 	ctx := context.Background()
@@ -383,18 +399,18 @@ func TestGoldenFundingHarvest(t *testing.T) {
 	if closeExec.Payload["reason"] != "funding_exit" {
 		t.Errorf("reason = %v, want funding_exit", closeExec.Payload["reason"])
 	}
-	if got := pos.FundingQuote.StringFixed(2); got != "42.00" {
-		t.Errorf("funding = %s, want 42.00", got)
+	if got := pos.FundingQuote.StringFixed(3); got != "41.958" {
+		t.Errorf("funding = %s, want 41.958", got)
 	}
-	if got := pos.PnLQuote.StringFixed(2); got != "4.00" {
-		t.Errorf("net = %s (%s), want 4.00", got, pos.PnLQuote)
+	if got := pos.PnLQuote.StringFixed(4); got != "3.9885" {
+		t.Errorf("net = %s (%s), want 3.9885", got, pos.PnLQuote)
 	}
 	view, _ := h.x.AutoPaperView(ctx, t0.Add(100*time.Hour))
 	rs := view.Summary.PerRule[0]
-	if rs.FundingRows != 12 || rs.FundingQuote.StringFixed(2) != "42.00" || rs.Executed != 1 || rs.Samples != 1 {
+	if rs.FundingRows != 12 || rs.FundingQuote.StringFixed(3) != "41.958" || rs.Executed != 1 || rs.Samples != 1 {
 		t.Errorf("summary = %+v", rs)
 	}
-	if rs.FeesQuote.StringFixed(2) != "30.00" {
-		t.Errorf("fees = %s, want 30.00", rs.FeesQuote)
+	if rs.FeesQuote.StringFixed(4) != "29.9775" {
+		t.Errorf("fees = %s, want 29.9775", rs.FeesQuote)
 	}
 }

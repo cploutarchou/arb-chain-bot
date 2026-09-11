@@ -24,8 +24,8 @@ scrape_configs:
 ## Files
 
 - `prometheus-rules.yml` — alert rules grouped by subsystem (market
-  data, scanner, risk/paper, slippage, API). Thresholds assume 15s
-  scrapes.
+  data, scanner, risk/paper, slippage, advisor/channels, API).
+  Thresholds assume 15s scrapes.
 - `platform-rules.yml` — platform/SRE rules: feeds, collectors,
   screener venues (offline/slow, O10), recorder, campaigns, database,
   backups.
