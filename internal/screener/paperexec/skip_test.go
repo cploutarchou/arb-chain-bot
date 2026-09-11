@@ -448,3 +448,83 @@ func TestTruncStepMatchesCanonicalQuantize(t *testing.T) {
 		t.Fatalf("zero step: %s", got)
 	}
 }
+
+// TestDriftIncrementalMatchesLedgerScan (audit X9): the incremental
+// drift map must equal what a fresh executor would compute by scanning
+// the ledger — forward executions add, reverse subtract, and the two
+// directions share one canonical key.
+func TestDriftIncrementalMatchesLedgerScan(t *testing.T) {
+	h := newHarness(t, nil)
+	h.balance(screener.VenueBinance, "USDT", "1000000")
+	h.balance(screener.VenueOKX, "BTC", "10")
+	cap := d("1000000")
+	r := spreadRule("5000")
+	r.Params = &screener.RuleParams{MaxDriftQuote: &cap}
+	r = h.rule(r)
+	rev := spreadRule("5000")
+	rev.ID, rev.BuyVenues, rev.SellVenues = r.ID+"-rev", []screener.Venue{screener.VenueOKX}, []screener.Venue{screener.VenueBinance}
+	rev.Params = &screener.RuleParams{MaxDriftQuote: &cap}
+	rev = h.rule(rev)
+	setSpot(h.svc.Book, screener.VenueBinance, "49999", "1", "50000", "0.35", t0)
+	setSpot(h.svc.Book, screener.VenueOKX, "50250", "0.20", "50255", "1", t0)
+	h.x.loaded = false
+	// Two forward executions, one reverse.
+	h.open(r, t0)
+	h.open(r, t0.Add(5*time.Second))
+	h.open(rev, t0.Add(10*time.Second))
+
+	ctx := context.Background()
+	lane := alerts.Lane{Base: "BTC", Quote: "USDT", VenueA: screener.VenueBinance, VenueB: screener.VenueOKX}
+	h.x.mu.Lock()
+	got, err := h.x.driftFor(ctx, r.ID, lane)
+	h.x.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh executor over the same ledger seeds from the scan alone.
+	fresh := &Executor{svc: h.svc, ledger: h.ledger, drift: map[string]decimal.Decimal{}, driftSeeded: map[string]bool{}}
+	fresh.mu.Lock()
+	want, err := fresh.driftFor(ctx, r.ID, lane)
+	fresh.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("incremental drift %s != scan %s", got, want)
+	}
+	// The reverse lane reads the negation of the forward lane.
+	h.x.mu.Lock()
+	revDrift, _ := h.x.driftFor(ctx, r.ID, alerts.Lane{Base: "BTC", Quote: "USDT", VenueA: screener.VenueOKX, VenueB: screener.VenueBinance})
+	h.x.mu.Unlock()
+	if !revDrift.Equal(got.Neg()) {
+		t.Fatalf("reverse lane drift %s != -%s", revDrift, got)
+	}
+}
+
+// TestAutoPaperViewCachedUntilWrite (audit X9): within one poll
+// interval the view is served from the cache, and an execution landing
+// invalidates it — the next request reflects the write immediately.
+func TestAutoPaperViewCachedUntilWrite(t *testing.T) {
+	h := newHarness(t, nil)
+	h.balance(screener.VenueBinance, "USDT", "1000000")
+	r := h.rule(spreadRule("5000"))
+	setSpot(h.svc.Book, screener.VenueBinance, "49999", "1", "50000", "0.35", t0)
+	setSpot(h.svc.Book, screener.VenueOKX, "50250", "0.20", "50255", "1", t0)
+	ctx := context.Background()
+
+	v1, err := h.x.AutoPaperView(ctx, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v1.Positions) != 0 {
+		t.Fatalf("cold view positions = %d", len(v1.Positions))
+	}
+	h.open(r, t0.Add(time.Second))
+	v2, err := h.x.AutoPaperView(ctx, t0.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v2.Positions) == 0 {
+		t.Fatal("write did not invalidate the cached view")
+	}
+}

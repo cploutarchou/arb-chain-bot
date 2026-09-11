@@ -11,8 +11,44 @@ import (
 )
 
 // AutoPaperView implements screener.AutoPaperSource (design §7 GET
-// /screener/auto-paper; statistics per strategy-models §7).
+// /screener/auto-paper; statistics per strategy-models §7). Cached at
+// most one poll interval and invalidated by every executor write
+// (audit X9); the underlying compute is unchanged.
 func (x *Executor) AutoPaperView(ctx context.Context, now time.Time) (screener.AutoPaperView, error) {
+	ttl := x.pollInterval()
+	if ttl <= 0 {
+		ttl = 5 * time.Second
+	}
+	x.viewMu.Lock()
+	if x.viewCache != nil && !x.viewDirty && now.Sub(x.viewAt) <= ttl {
+		cached := *x.viewCache
+		cached.GeneratedAt = now
+		x.viewMu.Unlock()
+		return cached, nil
+	}
+	x.viewMu.Unlock()
+	view, err := x.computeAutoPaperView(ctx, now)
+	if err != nil {
+		return view, err
+	}
+	x.viewMu.Lock()
+	cp := view
+	x.viewCache, x.viewAt, x.viewDirty = &cp, now, false
+	x.viewMu.Unlock()
+	return view, nil
+}
+
+// invalidateView marks the cached auto-paper view stale. Called on
+// every executor write (a position or execution landed, wallets
+// reloaded) so the console never serves pre-write numbers past the
+// next request.
+func (x *Executor) invalidateView() {
+	x.viewMu.Lock()
+	x.viewDirty = true
+	x.viewMu.Unlock()
+}
+
+func (x *Executor) computeAutoPaperView(ctx context.Context, now time.Time) (screener.AutoPaperView, error) {
 	view := screener.AutoPaperView{
 		GeneratedAt: now,
 		Model:       "paper: simulated top-of-book fills against public quotes, taker fees, slip allowance, limit-IOC tolerance; no real orders",

@@ -183,6 +183,7 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 	}
 	pos.OpenPayload = toMap(exec)
 	x.countOutcome(pos)
+	x.invalidateView()
 	if err := x.ledger.InsertPosition(ctx, pos); err != nil {
 		x.log.Error("paperexec: position insert failed", "error", err)
 	}
@@ -195,34 +196,75 @@ func (x *Executor) executeSpot(ctx context.Context, s alerts.Signal, ev screener
 		"venue_a", s.Lane.VenueA, "venue_b", s.Lane.VenueB, "qty", size.String(), "pnl_quote", exec.PnLQuote.StringFixed(4))
 }
 
-// driftFor returns the signed base drift for a lane direction from the
-// ledger (§2.3: Σ bought on A − Σ sold on B, matched by the reverse
-// direction's executions).
+// driftKey canonicalises a lane into the incremental drift map's key
+// (audit X9): the venue pair is sorted, so a lane and its reverse share
+// one key and the SIGN expresses direction (positive when the lane runs
+// in the key's canonical order).
+func driftKey(ruleID, base, quote string, a, b screener.Venue) (string, screener.Venue) {
+	if string(b) < string(a) {
+		a, b = b, a
+	}
+	return ruleID + "|" + base + "|" + quote + "|" + string(a) + ">" + string(b), a
+}
+
+// execDrift is one spot execution's delta against the canonical
+// direction: the first FILLED fill's quantity, + when the execution ran
+// in canonical order, − when reversed, 0 when nothing filled.
+func execDrift(e Execution, canonicalFirst screener.Venue) decimal.Decimal {
+	qty := decimal.Zero
+	for _, f := range e.Fills {
+		if f.Status == "FILLED" {
+			qty = f.Qty
+			break
+		}
+	}
+	if qty.IsZero() {
+		return decimal.Zero
+	}
+	if e.VenueA != canonicalFirst {
+		return qty.Neg()
+	}
+	return qty
+}
+
+// driftFor returns the signed base drift for a lane direction (§2.3:
+// Σ bought on A − Σ sold on B, matched by the reverse direction's
+// executions). Incremental (audit X9): the FIRST call for a rule seeds
+// every lane of that rule from one ledger scan; subsequent calls and
+// every booked execution read/write the in-memory map, so the hot path
+// stops re-reading the rule's whole execution list (up to 20 000 JSONB
+// rows) per opened event. Requires x.mu.
 func (x *Executor) driftFor(ctx context.Context, ruleID string, lane alerts.Lane) (decimal.Decimal, error) {
-	execs, err := x.ledger.ListExecutions(ctx, ruleID, 0)
-	if err != nil {
-		return decimal.Decimal{}, err
-	}
-	drift := decimal.Zero
-	for _, e := range execs {
-		if e.Base != lane.Base || e.Quote != lane.Quote || e.Kind != KindSpot {
-			continue
+	if !x.driftSeeded[ruleID] {
+		execs, err := x.ledger.ListExecutions(ctx, ruleID, 0)
+		if err != nil {
+			return decimal.Decimal{}, err
 		}
-		qty := decimal.Zero
-		for _, f := range e.Fills {
-			if f.Status == "FILLED" {
-				qty = f.Qty
-				break
+		for _, e := range execs {
+			if e.RuleID != ruleID || e.Kind != KindSpot {
+				continue
 			}
+			k, first := driftKey(e.RuleID, e.Base, e.Quote, e.VenueA, e.VenueB)
+			x.drift[k] = x.drift[k].Add(execDrift(e, first))
 		}
-		switch {
-		case e.VenueA == lane.VenueA && e.VenueB == lane.VenueB:
-			drift = drift.Add(qty)
-		case e.VenueA == lane.VenueB && e.VenueB == lane.VenueA:
-			drift = drift.Sub(qty)
-		}
+		x.driftSeeded[ruleID] = true
 	}
-	return drift, nil
+	k, first := driftKey(ruleID, lane.Base, lane.Quote, lane.VenueA, lane.VenueB)
+	d := x.drift[k]
+	if lane.VenueA != first {
+		return d.Neg(), nil
+	}
+	return d, nil
+}
+
+// noteDrift applies one booked execution's signed drift delta to the
+// incremental map. Requires x.mu.
+func (x *Executor) noteDrift(e Execution) {
+	if e.Kind != KindSpot {
+		return
+	}
+	k, first := driftKey(e.RuleID, e.Base, e.Quote, e.VenueA, e.VenueB)
+	x.drift[k] = x.drift[k].Add(execDrift(e, first))
 }
 
 func (x *Executor) midFor(v screener.Venue, base, quote string) (decimal.Decimal, bool) {
