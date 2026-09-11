@@ -2,9 +2,11 @@ package venue
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"time"
 
+	binance "github.com/cploutarchou/arb-chain-bot/internal/exchange/binance"
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
 )
 
@@ -99,19 +101,19 @@ func (c *binanceCollector) RateLimited() int {
 	return int(c.spotGate.limited.Load() + c.perpGate.limited.Load())
 }
 
+// binanceExchangeInfo carries only the fields the SCREENER needs from
+// the document (symbol identity, status, contract type); the filter
+// array stays raw so the ONE shared parser (exchange/binance
+// ParseFilters, audit T10) owns the semantics — PRICE_FILTER/LOT_SIZE/
+// MARKET_LOT_SIZE/NOTIONAL/MIN_NOTIONAL incl. the market-basis fields.
 type binanceExchangeInfo struct {
 	Symbols []struct {
-		Symbol       string `json:"symbol"`
-		Status       string `json:"status"`
-		BaseAsset    string `json:"baseAsset"`
-		QuoteAsset   string `json:"quoteAsset"`
-		ContractType string `json:"contractType"` // futures only
-		Filters      []struct {
-			FilterType  string `json:"filterType"`
-			TickSize    string `json:"tickSize"`
-			StepSize    string `json:"stepSize"`
-			MinNotional string `json:"minNotional"`
-		} `json:"filters"`
+		Symbol       string            `json:"symbol"`
+		Status       string            `json:"status"`
+		BaseAsset    string            `json:"baseAsset"`
+		QuoteAsset   string            `json:"quoteAsset"`
+		ContractType string            `json:"contractType"` // futures only
+		Filters      []json.RawMessage `json:"filters"`
 	} `json:"symbols"`
 }
 
@@ -124,37 +126,34 @@ func (c *binanceCollector) fetchInstruments(ctx context.Context) ([]Instrument, 
 	if err := c.perp.getJSON(ctx, binanceWeightFutExInfo, c.perpBase, "/fapi/v1/exchangeInfo", nil, &fut); err != nil {
 		return nil, err
 	}
+	parse := func(raw []json.RawMessage) (tick, step, minNotional string, err error) {
+		rules, err := binance.ParseFilters(raw)
+		if err != nil {
+			return "", "", "", err
+		}
+		return rules.PriceTick.String(), rules.QtyStep.String(), rules.MinNotional.String(), nil
+	}
 	out := make([]Instrument, 0, len(spot.Symbols)+len(fut.Symbols))
 	for _, s := range spot.Symbols {
-		in := Instrument{Venue: screener.VenueBinance, Kind: KindSpot, Symbol: s.Symbol, Base: s.BaseAsset, Quote: s.QuoteAsset, Tradable: s.Status == "TRADING"}
-		for _, f := range s.Filters {
-			switch f.FilterType {
-			case "PRICE_FILTER":
-				in.TickSize = f.TickSize
-			case "LOT_SIZE":
-				in.StepSize = f.StepSize
-			case "NOTIONAL":
-				in.MinNotional = f.MinNotional
-			}
+		tick, step, minN, err := parse(s.Filters)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, in)
+		out = append(out, Instrument{Venue: screener.VenueBinance, Kind: KindSpot,
+			Symbol: s.Symbol, Base: s.BaseAsset, Quote: s.QuoteAsset, Tradable: s.Status == "TRADING",
+			TickSize: tick, StepSize: step, MinNotional: minN})
 	}
 	for _, s := range fut.Symbols {
 		if s.ContractType != "PERPETUAL" {
 			continue
 		}
-		in := Instrument{Venue: screener.VenueBinance, Kind: KindPerp, Symbol: s.Symbol, Base: s.BaseAsset, Quote: s.QuoteAsset, Tradable: s.Status == "TRADING"}
-		for _, f := range s.Filters {
-			switch f.FilterType {
-			case "PRICE_FILTER":
-				in.TickSize = f.TickSize
-			case "LOT_SIZE":
-				in.StepSize = f.StepSize
-			case "MIN_NOTIONAL":
-				in.MinNotional = f.MinNotional
-			}
+		tick, step, minN, err := parse(s.Filters)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, in)
+		out = append(out, Instrument{Venue: screener.VenueBinance, Kind: KindPerp,
+			Symbol: s.Symbol, Base: s.BaseAsset, Quote: s.QuoteAsset, Tradable: s.Status == "TRADING",
+			TickSize: tick, StepSize: step, MinNotional: minN})
 	}
 	return out, nil
 }
