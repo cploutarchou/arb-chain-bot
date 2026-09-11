@@ -48,17 +48,33 @@ coherent change per commit, tests included.
    one — the fee wall rejected everything in the latest window), and the
    production-execution-gate review (legal, compliance, insurance) the
    operator must record in `docs/decisions/`.
-2. Optional P2/P3 hardening — what is LEFT of it after the
-   all-pending pass (PR #22, merged; it carried both follow-up passes —
-   S12/S13/D7-D10 and the all-pending run — in one line of history): T10's remainder and F17 (the
-   two-paper-stacks consolidation), X6/X9/X10/X11 scanner items,
-   O11 spans (+ the O13-O15 P3 cluster), F10-F13/F15-F17/F19 console
-   items, and the T12 precision cluster. Closed by that pass: S14/S15
-   (the S-series is done), X4/X5/X7/X8, O7/O9/O10 (+O12's stale
-   header), O9's realization ratio, T10's quantization half, and
-   F9/F14/F18. D11 needed no change — the option-B drill rewrite
-   already removed the `restore_drills` write and the runbook example
-   reads `schema_migrations` live.
+2. Nothing. The hot-path pass (PR #24: X9, O11, T10's parser half)
+   and the placement pass (PR #26: O14's alert rules and the T10/F17
+   fee-model merge) closed the last two entries — every audited finding
+   from P0 through P3 is closed with its test: S1-S15, D7-D11, X4-X11,
+   O1-O3, O5-O15, T2/T4-T8/T10/T11/T12, F1-F19.
+
+## Where engineering resumes next (the audited lists are done)
+
+The programme-level backlog in `docs/PENDING.md` is the queue now.
+Candidates in a sensible order, none blocking another:
+
+- **T-062** — rejection-reason histogram in `backtest.Result` and the
+  §80 report, so a "no qualified opportunities" verdict says why.
+- **T-084** — affiliate payouts report (accrual ledger is done; the
+  payout report and jobs are open).
+- **T-057/059/060/061 console surfaces** — platform settings, operating
+  mode, secrets vault, venue capabilities have backend depth the
+  console never matched.
+- **T-075 remainder** — Upbit, Bithumb, LBank, Phemex collectors, and
+  the HTX request-limit answer the rate gate does not classify.
+- **T-079 remainder** — scheduled migrations and health-check alerting
+  (backups landed with option B).
+- **Performance plan items 2–3** — the reservation mutex and AnyOpen's
+  per-evaluation allocation on the evaluator path; and the ~7.7 min
+  serial `internal/api` race suite.
+- **Testing gaps** the final review named: a frontend unit layer,
+  down-migration replay, fuzzing.
 
 ## How to resume
 

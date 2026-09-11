@@ -387,9 +387,13 @@ type-to-confirm) and a Risk Center control.
 3. **Topology changes still require a restart** — T8 detects them and
    stops execution (the metadata_changed breaker re-arms while the diff
    persists) but nothing rebuilds a running graph.
-4. **Two paper stacks remain** (`internal/simulation` and the
-   screener's `paperexec`, F17/T10): the screener's fill model can drift
-   from the engine's exact one.
+4. **The two paper stacks are consolidated on semantics**
+   (`internal/simulation` and the screener's `paperexec`): sizing
+   quantizes through the same InstrumentRules, the Binance filter
+   semantics are one parser, and fills charge fees by the venue's
+   placement through the same fees functions. What still differs is the
+   fill model itself (top-of-book walk vs the engine's depth walk) — by
+   design, they price different strategies.
 5. **Security remainder:** none of the audited S-series findings remain
    (S14/S15 closed on the all-pending branch: pinned toolchain, audit
    gates, digest-pinned images, sanitised markdown, shipped headers).
