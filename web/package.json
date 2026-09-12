@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint . && node scripts/check-contrast.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/lib/*.test.ts",
     "check:contrast": "node scripts/check-contrast.mjs",
     "test:unit": "playwright test -c playwright.unit.config.ts"
   },

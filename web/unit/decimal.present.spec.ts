@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
   cmpDecimalStr,
-  fmtDecimal,
   isZeroDecimalStr,
   presentBps,
   presentDecimal,
@@ -21,6 +20,13 @@ import {
 
 // The real values captured in the audit screenshots, so a regression that
 // reintroduces twenty-digit cells fails here rather than in review.
+// text() is presentDecimal's display string. These cases test *this*
+// layer's contract (minFrac padding, exponent normalisation, unit
+// labels); master's own `fmtDecimal` has a narrower contract and its own
+// suite in src/lib/decimal.test.ts, run by `npm test`.
+const text = (raw: string | number | null | undefined, opts = {}) =>
+  presentDecimal(raw, opts).text;
+
 const AUDIT_GROSS = "1078.65168539325842696629213";
 const AUDIT_NET = "1063.1123595505617977528089";
 const AUDIT_LIQUIDITY = "656.0384524";
@@ -52,10 +58,10 @@ test.describe("presentDecimal — bounded precision", () => {
   });
 
   test("propagates a rounding carry", () => {
-    expect(fmtDecimal("9.999", { maxFrac: 2 })).toBe("10");
-    expect(fmtDecimal("9.999", { maxFrac: 2, minFrac: 2 })).toBe("10.00");
-    expect(fmtDecimal("0.999", { maxFrac: 2, minFrac: 2 })).toBe("1.00");
-    expect(fmtDecimal("999999.999", { maxFrac: 2 })).toBe("1,000,000");
+    expect(text("9.999", { maxFrac: 2 })).toBe("10");
+    expect(text("9.999", { maxFrac: 2, minFrac: 2 })).toBe("10.00");
+    expect(text("0.999", { maxFrac: 2, minFrac: 2 })).toBe("1.00");
+    expect(text("999999.999", { maxFrac: 2 })).toBe("1,000,000");
   });
 
   test("does not flag an exact value as rounded when the dropped tail is zeros", () => {
@@ -66,15 +72,15 @@ test.describe("presentDecimal — bounded precision", () => {
   });
 
   test("groups thousands and can be asked not to", () => {
-    expect(fmtDecimal("435990", { maxFrac: 0 })).toBe("435,990");
-    expect(fmtDecimal("435990", { maxFrac: 0, group: false })).toBe("435990");
+    expect(text("435990", { maxFrac: 0 })).toBe("435,990");
+    expect(text("435990", { maxFrac: 0, group: false })).toBe("435990");
   });
 });
 
 test.describe("presentDecimal — tiny signed values", () => {
   test("a tiny positive value never reads as zero", () => {
     const d = presentDecimal("0.0000000012", { maxFrac: 2, signed: true });
-    expect(d.text).toBe("+<0.01");
+    expect(d.text).toBe("+< 0.01");
     expect(d.tiny).toBe(true);
     expect(d.zero).toBe(false);
     expect(d.exact).toBe("0.0000000012");
@@ -82,7 +88,7 @@ test.describe("presentDecimal — tiny signed values", () => {
 
   test("a tiny negative value keeps its sign and never reads as zero", () => {
     const d = presentSignedQuote("-0.0000000012", "USDC");
-    expect(d.text).toBe("-<0.01 USDC");
+    expect(d.text).toBe("-< 0.01 USDC");
     expect(d.tiny).toBe(true);
     expect(d.zero).toBe(false);
     expect(d.negative).toBe(true);
@@ -109,13 +115,13 @@ test.describe("presentDecimal — tiny signed values", () => {
     expect(d.zero).toBe(true);
     expect(d.tiny).toBe(false);
     expect(d.rounded).toBe(false);
-    expect(fmtDecimal("0", { maxFrac: 2 })).toBe("0");
+    expect(text("0", { maxFrac: 2 })).toBe("0");
   });
 
   test("the tiny threshold follows the requested precision", () => {
-    expect(fmtDecimal("0.004", { maxFrac: 2 })).toBe("<0.01");
-    expect(fmtDecimal("0.004", { maxFrac: 4 })).toBe("0.004");
-    expect(fmtDecimal("0.4", { maxFrac: 0 })).toBe("<1");
+    expect(text("0.004", { maxFrac: 2 })).toBe("< 0.01");
+    expect(text("0.004", { maxFrac: 4 })).toBe("0.004");
+    expect(text("0.4", { maxFrac: 0 })).toBe("< 1");
   });
 });
 
@@ -226,8 +232,8 @@ test.describe("presentation never becomes the value", () => {
   });
 
   test("exponent-form input is normalised rather than rejected", () => {
-    expect(fmtDecimal("1.5e3", { maxFrac: 2 })).toBe("1,500");
-    expect(fmtDecimal("1.5E-4", { maxFrac: 6 })).toBe("0.00015");
+    expect(text("1.5e3", { maxFrac: 2 })).toBe("1,500");
+    expect(text("1.5E-4", { maxFrac: 6 })).toBe("0.00015");
     expect(presentDecimal("1.5e3", { maxFrac: 2 }).exact).toBe("1.5e3");
   });
 });

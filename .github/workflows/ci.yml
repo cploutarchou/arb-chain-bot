@@ -90,6 +90,8 @@ jobs:
         run: npm audit --audit-level=high
       - name: lint
         run: npm run lint
+      - name: unit tests (lib layer)
+        run: npm test
       - name: typecheck
         run: npm run typecheck
       - name: build

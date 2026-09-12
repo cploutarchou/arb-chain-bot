@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/app"
+	"github.com/cploutarchou/arb-chain-bot/internal/billing/affiliate"
 	"github.com/cploutarchou/arb-chain-bot/internal/config"
 	"github.com/cploutarchou/arb-chain-bot/internal/storage"
 )
@@ -50,6 +51,16 @@ func main() {
 			os.Exit(1)
 		}
 		defer store.Close()
+
+		// T-084: mature affiliate accruals as their 45-day window
+		// elapses, so the payouts report's dates are ledger facts.
+		// Idempotent per pass — DueMaturations never re-proposes a
+		// transaction that already carries a matured row.
+		components = append(components, &affiliate.MaturationJob{
+			Store: store.Affiliate(),
+			Log:   log,
+		})
+		log.Info("worker: affiliate maturation configured", "interval", time.Hour.String())
 
 		job := &storage.RetentionScheduler{
 			Runner: store,

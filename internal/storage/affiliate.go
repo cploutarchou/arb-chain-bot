@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -42,6 +43,51 @@ func (a *Affiliate) ByTransaction(ctx context.Context, txn string) ([]affiliate.
 		return nil, err
 	}
 	return scanEntries(rows)
+}
+
+// DueMaturations returns the accrued entries whose matures_at has
+// passed and whose transaction carries no matured row yet (T-084's
+// maturation job input). The NOT EXISTS is the idempotence rule's one
+// authority: two concurrent maturation passes cannot both see the
+// same accrual as due.
+func (a *Affiliate) DueMaturations(ctx context.Context, now time.Time) ([]affiliate.Entry, error) {
+	rows, err := a.s.Pool.Query(ctx, `
+		SELECT `+ledgerCols+` FROM affiliate_ledger l
+		WHERE l.entry = 'accrued' AND l.matures_at IS NOT NULL AND l.matures_at <= $1
+		  AND NOT EXISTS (SELECT 1 FROM affiliate_ledger m WHERE m.transaction_id = l.transaction_id AND m.entry = 'matured')
+		ORDER BY l.affiliate_id, l.created_at, l.id`, now)
+	if err != nil {
+		return nil, err
+	}
+	return scanEntries(rows)
+}
+
+// AllEntries returns the whole ledger ordered by affiliate then time —
+// the payouts report's input (one fold in Go decimal, no SQL SUM).
+func (a *Affiliate) AllEntries(ctx context.Context) ([]affiliate.Entry, error) {
+	rows, err := a.s.Pool.Query(ctx, `SELECT `+ledgerCols+` FROM affiliate_ledger ORDER BY affiliate_id, created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanEntries(rows)
+}
+
+// Accounts lists every affiliate account for the payouts report.
+func (a *Affiliate) Accounts(ctx context.Context) ([]affiliate.Account, error) {
+	rows, err := a.s.Pool.Query(ctx, `SELECT id, org_id, code, status FROM affiliate_accounts ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []affiliate.Account{}
+	for rows.Next() {
+		var acc affiliate.Account
+		if err := rows.Scan(&acc.ID, &acc.OrgID, &acc.Code, &acc.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, acc)
+	}
+	return out, rows.Err()
 }
 
 func scanEntries(rows pgx.Rows) ([]affiliate.Entry, error) {
