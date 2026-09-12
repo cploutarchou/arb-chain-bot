@@ -519,7 +519,7 @@ export default function ScannerAlertsPage() {
   };
 
   return (
-    <ConsoleShell active="Alert Rules">
+    <ConsoleShell>
       <PageTitle>Alert Rules</PageTitle>
       {msg && (
         <p

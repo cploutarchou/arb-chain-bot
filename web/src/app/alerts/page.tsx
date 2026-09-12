@@ -26,7 +26,7 @@ export default function AlertsPage() {
   };
 
   return (
-    <ConsoleShell active="Alerts">
+    <ConsoleShell>
       <PageTitle>Alert Center</PageTitle>
       <ChipGroup label="Filter alerts by state" options={STATES} value={filter} onChange={setFilter} format={(s) => s} />
       <Section title="Alerts (state shared with Telegram — single backend)">

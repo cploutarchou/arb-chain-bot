@@ -48,7 +48,7 @@ export default function ScreenerReportDetailPage() {
   const detail = usePoll(() => api.screener.reports.get(id), 30000, [id]);
 
   return (
-    <ConsoleShell active="Screener Reports">
+    <ConsoleShell>
       <PageTitle>Screener Report</PageTitle>
       <ScreenerAwait state={detail} what="screener report">
         {({ report: r }) => {

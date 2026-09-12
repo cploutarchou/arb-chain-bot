@@ -323,7 +323,7 @@ export default function ReportsPage() {
   };
 
   return (
-    <ConsoleShell active="Reports">
+    <ConsoleShell>
       <PageTitle>Reports</PageTitle>
       <div className="mb-3 flex items-center gap-2">
         {mayGenerate ? (

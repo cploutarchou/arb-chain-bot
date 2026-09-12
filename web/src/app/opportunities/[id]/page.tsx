@@ -19,7 +19,7 @@ export default function OpportunityDetailPage() {
   const detail = usePoll(() => api.opportunities.get(id), 5000, [id]);
 
   return (
-    <ConsoleShell active="Opportunities">
+    <ConsoleShell>
       <PageTitle>Opportunity {id}</PageTitle>
       <Await state={detail} what="opportunity detail">
         {(d) => (

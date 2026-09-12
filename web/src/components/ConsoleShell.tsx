@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   api,
   ApiError,
@@ -14,7 +15,6 @@ import { connectHub, type HubMessage } from "@/lib/ws";
 import { useAuth, useEntitlement, can } from "@/lib/auth";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { MoonIcon, NavIcon, SunIcon } from "@/components/icons";
-import { IconRail, NavGroupHeader } from "@/components/IconRail";
 import { GatedControl } from "@/components/GatedControl";
 import { PaperControl } from "@/components/PaperControl";
 import {
@@ -22,161 +22,145 @@ import {
   useNotificationItems,
 } from "@/components/NotificationBell";
 
-// Full navigation per SKILL.md §31, grouped per the UX audit's five-group
-// IA (console-ux-audit.md §2). Sections without a page yet render as
-// disabled entries — the console never pretends a page exists.
-interface NavItem {
+// Task-based navigation (client-area audit 2026-09-12 + refine command
+// §3/§4A): six primary destinations replace the former 29-link group
+// wall, with a destination's own routes shown as contextual secondary
+// links only while it is active. Selection is ROUTE-based (pathname
+// prefixes against stable ids), never label-based — renaming a label
+// can no longer break active-state or e2e selection. Every previously
+// reachable route stays reachable: it is either a destination landing,
+// a secondary link, an Administration link, or a detail route reached
+// through its parent page.
+interface NavLink {
   label: string;
-  href?: string;
-  note?: string; // shown as the disabled entry's title/tooltip
+  href: string;
 }
-interface NavGroup {
-  title: string;
-  items: NavItem[];
+interface NavDestination {
+  id: string; // stable selection/DOM id — never rename casually
+  label: string;
+  href: string; // the destination's landing route
+  secondary: NavLink[]; // shown under the destination while active
+  // Extra route prefixes (detail pages) that activate the destination
+  // beyond href and the secondary hrefs.
+  match: string[];
 }
 
-const GROUPS: NavGroup[] = [
+const DESTINATIONS: NavDestination[] = [
   {
-    title: "Operate",
-    items: [
-      { label: "Overview", href: "/overview" },
-      { label: "Scanner", href: "/scanner" },
-      { label: "Triangles", href: "/triangles" },
-      { label: "Opportunities", href: "/opportunities" },
-      { label: "Paper Trading", href: "/paper" },
-    ],
+    id: "overview",
+    label: "Overview",
+    href: "/overview",
+    secondary: [],
+    match: ["/overview"],
   },
   {
-    title: "Portfolio",
-    items: [
+    // Cross-exchange screening leads; the triangular engine is a
+    // distinctly-named sibling (audit §2C: users must not have to
+    // guess "Scanner" vs "Screener").
+    id: "discover",
+    label: "Discover",
+    href: "/screener",
+    secondary: [
+      { label: "Screener (cross-exchange)", href: "/screener" },
+      { label: "Scanner (triangular)", href: "/scanner" },
+      { label: "Perpetuals", href: "/perpetuals" },
+      { label: "Funding", href: "/funding" },
+      { label: "Calculator", href: "/calculator" },
+      { label: "Triangles", href: "/triangles" },
+      { label: "Opportunities", href: "/opportunities" },
+    ],
+    match: ["/triangles", "/opportunities"],
+  },
+  {
+    // Both simulation families in one navigation home (audit §2E),
+    // their APIs/ledgers/controls still distinct.
+    id: "paper",
+    label: "Paper Trading",
+    href: "/paper",
+    secondary: [
+      { label: "Triangular simulations", href: "/paper" },
+      { label: "Auto-Paper rules", href: "/auto-paper" },
       { label: "Portfolio & Balances", href: "/portfolio" },
-      { label: "PnL & Analytics", href: "/pnl" },
       { label: "Orders", href: "/orders" },
       { label: "Fills", href: "/fills" },
     ],
+    match: ["/cycles"],
   },
   {
-    title: "Research",
-    items: [
+    id: "research",
+    label: "Research & Results",
+    href: "/pnl",
+    secondary: [
+      { label: "PnL & Analytics", href: "/pnl" },
+      { label: "Engine Reports", href: "/reports" },
+      { label: "Evidence — Screener Reports", href: "/screener-reports" },
       { label: "Campaigns", href: "/campaigns" },
       { label: "Replay & Backtesting", href: "/replay" },
       { label: "AI Advisor", href: "/ai" },
     ],
+    match: ["/pnl"],
   },
   {
-    title: "Control",
-    items: [
+    // Incident alerts stay distinct from rule configuration (refine
+    // command §3): separate secondary links, never one merged label.
+    id: "alerts",
+    label: "Alerts & Rules",
+    href: "/alerts",
+    secondary: [
+      { label: "Incident Alerts", href: "/alerts" },
+      { label: "Screener Alert Rules", href: "/scanner-alerts" },
       { label: "Strategies", href: "/strategies" },
-      { label: "Risk Center", href: "/risk" },
-      { label: "Alerts", href: "/alerts" },
-      { label: "Reports", href: "/reports" },
     ],
+    match: ["/alerts", "/scanner-alerts", "/strategies"],
   },
   {
-    title: "System",
-    items: [
-      { label: "Exchanges", href: "/exchanges" },
-      { label: "Markets", href: "/settings#markets" },
-      { label: "System Health", href: "/system" },
-      { label: "Audit Log", href: "/audit" },
+    // Own-context settings; platform administration is NOT here — it
+    // lives in the role-gated Administration section below.
+    id: "settings",
+    label: "Settings",
+    href: "/settings",
+    secondary: [
+      { label: "Account & Preferences", href: "/settings" },
+      { label: "Organisation", href: "/org" },
+      { label: "Billing", href: "/billing" },
       { label: "Telegram", href: "/telegram" },
-      { label: "Users & Security", href: "/settings#users" },
     ],
-  },
-  // Scanner Suite (T-065..T-072, docs/design/scanner-suite.md §5): cross-
-  // venue spot screener, perpetuals/funding monitor, spreads calculator,
-  // alert rules, automatic PAPER execution — public market data only.
-  {
-    title: "Scanner Suite",
-    items: [
-      { label: "Screener", href: "/screener" },
-      { label: "Perpetuals", href: "/perpetuals" },
-      { label: "Funding", href: "/funding" },
-      { label: "Calculator", href: "/calculator" },
-      { label: "Alert Rules", href: "/scanner-alerts" },
-      // Distinct label from the Control group's existing "Reports" item
-      // (engine daily/weekly ops reports, a different system per
-      // docs/user-guide/reports.md's "two report systems ... do not
-      // confuse them") — both GLYPHS and NavContent's activeGroupTitle
-      // lookup key off this exact string, so it must not collide.
-      // F17: console-v2 §2.2 lists an Evidence entry under Scanner
-      // Suite — the §7/§8 screener paper evidence IS this page, so the
-      // label says evidence rather than adding a dead second entry.
-      { label: "Evidence — Screener Reports", href: "/screener-reports" },
-      { label: "Auto-Paper", href: "/auto-paper" },
-    ],
+    match: ["/settings", "/org", "/billing", "/telegram", "/onboarding"],
   },
 ];
 
-// GROUP_STORAGE_KEY persists which nav groups are collapsed, per
-// operator browser (arbitragescanner-style icon sidebar, design §0 item
-// 6 / §5). Reading/writing localStorage is wrapped in try/catch — a
-// private-mode or quota failure degrades to "always expanded", never a
-// crash.
-const GROUP_STORAGE_KEY = "arb.nav.collapsed-groups";
+// ADMIN_LINKS: explicitly-labelled operator administration (refine
+// command §3: organisation administration is not platform
+// administration). Rendered only for OPERATOR/ADMIN — and hidden while
+// auth is still loading, so privileged navigation never flashes.
+const ADMIN_LINKS: NavLink[] = [
+  { label: "Risk Center", href: "/risk" },
+  { label: "Exchanges", href: "/exchanges" },
+  { label: "Markets", href: "/settings#markets" },
+  { label: "System Health", href: "/system" },
+  { label: "Audit Log", href: "/audit" },
+];
 
-function loadCollapsedGroups(): Set<string> {
-  try {
-    const raw = localStorage.getItem(GROUP_STORAGE_KEY);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw) as unknown;
-    return Array.isArray(arr)
-      ? new Set(arr.filter((v): v is string => typeof v === "string"))
-      : new Set();
-  } catch {
-    return new Set();
+// destinationFor: the destination a pathname belongs to — landing
+// href first, then secondary hrefs, then the `match` prefixes (detail
+// routes like /cycles/{id} activate their parent destination). Each
+// route maps to exactly one destination by construction; usePathname
+// never carries a hash, so /settings#markets matches "/settings".
+function destinationFor(pathname: string): NavDestination | undefined {
+  for (const d of DESTINATIONS) {
+    if (d.href === pathname) return d;
   }
-}
-
-function saveCollapsedGroups(groups: Set<string>) {
-  try {
-    localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify([...groups]));
-  } catch {
-    // Private mode / quota exceeded — the toggle still works for this
-    // page load, it just won't persist across a reload.
+  for (const d of DESTINATIONS) {
+    if (
+      d.secondary.some((l) => (l.href.split("#")[0] ?? l.href) === pathname)
+    )
+      return d;
   }
-}
-
-// useCollapsedGroups: state loads from localStorage in an effect (never
-// during render — that would be a hydration mismatch between server and
-// client markup), defaults to fully expanded, and never actually
-// collapses the group containing the current page so the active link is
-// always reachable without an extra click.
-function useCollapsedGroups(activeGroupTitle: string | undefined) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    setCollapsed(loadCollapsedGroups());
-  }, []);
-  const toggle = (title: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(title)) next.delete(title);
-      else next.add(title);
-      saveCollapsedGroups(next);
-      return next;
-    });
-  };
-  // expand: used by the icon rail (UX §2.1 — a rail click expands/scrolls
-  // to its group, it does not collapse the others; there is no forced
-  // one-group-open accordion here, since that would hide every other
-  // group's links on first load, which e2e/console.spec.ts's "nav group
-  // renders and every Scanner Suite page loads" relies on staying true).
-  const expand = (title: string) => {
-    setCollapsed((prev) => {
-      if (!prev.has(title)) return prev;
-      const next = new Set(prev);
-      next.delete(title);
-      saveCollapsedGroups(next);
-      return next;
-    });
-  };
-  const isCollapsed = (title: string) =>
-    collapsed.has(title) && title !== activeGroupTitle;
-  return { isCollapsed, toggle, expand };
-}
-
-function groupDomId(title: string): string {
-  return `nav-group-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  for (const d of DESTINATIONS) {
+    if (d.match.some((m) => pathname === m || pathname.startsWith(m + "/")))
+      return d;
+  }
+  return undefined;
 }
 
 // useThemeToggle: light/dark persisted in localStorage as data-theme on
@@ -570,31 +554,20 @@ function RestartBanner() {
 // visible desktop sidebar and the mobile overlay (§4.7/BL-24: below md
 // the sidebar collapses to a top bar with a hamburger revealing this
 // same nav as a full-height overlay, closing on nav or outside-tap).
-// `rail`: desktop-only (UX §8 — below md the overlay always shows full
-// labels, never icon-only) — renders the IconRail (design-system.md
-// §4.1) beside the label column, sharing one collapsed-groups state.
-// Groups stay default-expanded (no forced one-open accordion — UX §2.1's
-// "an operator can pin more than one open" reads as *not* mandating a
-// single-group accordion by default, and a default accordion would hide
-// every Scanner Suite link e2e/console.spec.ts expects visible from a
-// fresh session); a rail click expands/scrolls to its group without
-// collapsing the others.
+// The former icon rail is gone (client-area audit §1: a group icon rail
+// beside an independently scrolling label column was redundant chrome);
+// the six destinations plus the active destination's contextual
+// secondary links are the whole primary navigation.
 function NavContent({
-  active,
+  pathname,
   role,
   onNavigate,
-  rail,
 }: {
-  active: string;
+  pathname: string;
   role?: string;
   onNavigate?: () => void;
-  rail?: boolean;
 }) {
-  const activeGroupTitle = GROUPS.find((g) =>
-    g.items.some((i) => i.label === active),
-  )?.title;
-  const { isCollapsed, toggle, expand } = useCollapsedGroups(activeGroupTitle);
-  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const activeDest = destinationFor(pathname);
   // Auto-Paper is the UX spec's own package-gating example (console-v2.md
   // §2.1: "Auto-Paper 🔒Pro") — Watch's auto_paper.strategies is empty
   // (packages.md §2 "none (manual paper only)"), so an organisation on
@@ -603,161 +576,104 @@ function NavContent({
   const autoPaperStrategies = useEntitlement("auto_paper.strategies");
   const autoPaperGated =
     autoPaperStrategies !== undefined && autoPaperStrategies.length === 0;
+  // Administration is operator territory; a missing role (auth still
+  // loading or anonymous) hides it rather than flashing it.
+  const showAdmin = role === "OPERATOR" || role === "ADMIN";
 
-  const labelColumn = (
-    <>
-      <nav
-        className="flex-1 space-y-3 overflow-y-auto text-[13px]"
-        aria-label="Primary"
+  const secondaryLink = (item: NavLink, depthKey: string) => {
+    const itemPath = item.href.split("#")[0] ?? item.href;
+    const isActive = pathname === itemPath;
+    if (item.label === "Auto-Paper rules" && autoPaperGated) {
+      return (
+        <GatedControl
+          key={depthKey}
+          as="nav"
+          state="package"
+          reason=""
+          icon={<NavIcon label={item.label} />}
+          upgradeHref="/billing"
+          packageName="Signal"
+        >
+          {item.label}
+        </GatedControl>
+      );
+    }
+    return (
+      <Link
+        key={depthKey}
+        href={item.href}
+        onClick={onNavigate}
+        aria-current={isActive ? "page" : undefined}
+        className={`flex items-center gap-2 rounded px-2 py-1 ${
+          isActive
+            ? "bg-[var(--bg-raised)] font-medium text-[var(--text)]"
+            : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
+        }`}
       >
-        {GROUPS.map((group) => {
-          const collapsedNow = isCollapsed(group.title);
-          const domId = groupDomId(group.title);
+        <NavIcon label={item.label} />
+        {item.label}
+      </Link>
+    );
+  };
+
+  return (
+    <nav
+      className="flex-1 overflow-y-auto text-[13px]"
+      aria-label="Primary"
+    >
+      <div className="space-y-0.5">
+        {DESTINATIONS.map((d) => {
+          const isActive = activeDest?.id === d.id;
           return (
-            <div
-              key={group.title}
-              ref={(el) => {
-                groupRefs.current[group.title] = el;
-              }}
-            >
-              <NavGroupHeader
-                title={group.title}
-                collapsed={collapsedNow}
-                onToggle={() => toggle(group.title)}
-                controlsId={domId}
-              />
-              {!collapsedNow && (
-                <div id={domId} className="space-y-0.5">
-                  {group.items.map((item) => {
-                    // Audit Log is visible to OPERATOR/ADMIN only (backend
-                    // PermViewAudit); annotate rather than silently 403 a
-                    // VIEWER who clicks through.
-                    const restrictedForViewer =
-                      item.label === "Audit Log" && role === "VIEWER";
-                    const packageGated =
-                      item.label === "Auto-Paper" && autoPaperGated;
-                    if (item.href && !restrictedForViewer && !packageGated) {
-                      return (
-                        <Link
-                          key={item.label}
-                          href={item.href}
-                          onClick={onNavigate}
-                          className={`flex items-center gap-2 rounded px-2 py-1 ${
-                            active === item.label
-                              ? "bg-[var(--bg-raised)] text-[var(--text)]"
-                              : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-                          }`}
-                        >
-                          <NavIcon label={item.label} />
-                          {item.label}
-                        </Link>
-                      );
-                    }
-                    if (packageGated) {
-                      return (
-                        <GatedControl
-                          key={item.label}
-                          as="nav"
-                          state="package"
-                          reason=""
-                          icon={<NavIcon label={item.label} />}
-                          upgradeHref="/billing"
-                          packageName="Signal"
-                        >
-                          {item.label}
-                        </GatedControl>
-                      );
-                    }
-                    return (
-                      <GatedControl
-                        key={item.label}
-                        as="nav"
-                        state={restrictedForViewer ? "role" : "unbuilt"}
-                        reason={
-                          restrictedForViewer
-                            ? "Requires OPERATOR or ADMIN"
-                            : (item.note ?? "Not implemented yet")
-                        }
-                        icon={<NavIcon label={item.label} />}
-                      >
-                        {item.label}
-                      </GatedControl>
-                    );
-                  })}
+            <div key={d.id} data-nav-id={d.id}>
+              <Link
+                href={d.href}
+                onClick={onNavigate}
+                aria-current={isActive ? "page" : undefined}
+                className={`flex items-center gap-2 rounded px-2 py-1.5 ${
+                  isActive
+                    ? "bg-[var(--bg-raised)] font-semibold text-[var(--text)]"
+                    : "font-medium text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
+                }`}
+              >
+                <NavIcon label={d.label} />
+                {d.label}
+              </Link>
+              {isActive && d.secondary.length > 0 && (
+                <div className="mt-0.5 mb-2 ml-4 space-y-0.5 border-l border-[var(--border)] pl-2">
+                  {d.secondary.map((item) =>
+                    secondaryLink(item, `${d.id}:${item.href}`),
+                  )}
                 </div>
               )}
             </div>
           );
         })}
-      </nav>
-      {/* Organisation and Billing (T-081/T-083): pinned like Settings, not
-          inside a Scanner Suite/Operate group — this is the tenancy/
-          account surface, reachable regardless of which product group is
-          collapsed. Always shown to any authenticated account: /org is
-          member-readable, /billing subscription is member-readable, and
-          both routes' own pages gate mutation controls on OWNER/ADMIN. */}
-      {["Organisation", "Billing"].map((label) => {
-        const href = label === "Organisation" ? "/org" : "/billing";
-        return (
-          <Link
-            key={label}
-            href={href}
-            onClick={onNavigate}
-            className={`mt-1 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
-              active === label
-                ? "bg-[var(--bg-raised)] text-[var(--text)]"
-                : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-            }`}
-          >
-            <NavIcon label={label} />
-            {label}
-          </Link>
-        );
-      })}
-      <Link
-        href="/settings"
-        onClick={onNavigate}
-        className={`mt-1 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
-          active === "Settings"
-            ? "bg-[var(--bg-raised)] text-[var(--text)]"
-            : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-        }`}
-      >
-        <NavIcon label="Settings" />
-        Settings
-      </Link>
-    </>
-  );
-
-  if (!rail) return labelColumn;
-
-  return (
-    <div className="flex min-h-0 flex-1 gap-2">
-      <IconRail
-        groups={GROUPS.map((g) => g.title)}
-        activeGroupTitle={activeGroupTitle}
-        onSelect={(title) => {
-          expand(title);
-          groupRefs.current[title]?.scrollIntoView({
-            behavior: "smooth",
-            block: "nearest",
-          });
-        }}
-      />
-      <div className="flex min-w-0 flex-1 flex-col">{labelColumn}</div>
-    </div>
+      </div>
+      {showAdmin && (
+        <div className="mt-4 border-t border-[var(--border)] pt-3">
+          <div className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+            Administration
+          </div>
+          <div className="space-y-0.5">
+            {ADMIN_LINKS.map((item) =>
+              secondaryLink(item, `admin:${item.href}`),
+            )}
+          </div>
+        </div>
+      )}
+    </nav>
   );
 }
 
-export function ConsoleShell({
-  children,
-  active,
-}: {
-  children: ReactNode;
-  active: string;
-}) {
+export function ConsoleShell({ children }: { children: ReactNode }) {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
+  // Route-based active state (client-area audit §4A): the current page
+  // selects its destination from the pathname — pages no longer pass a
+  // display-label `active` prop, so a renamed label can never break
+  // selection.
+  const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   // F15: Escape closes the mobile nav overlay, and focus returns to the
   // hamburger that opened it — the overlay was closable only by tapping
@@ -836,7 +752,7 @@ export function ConsoleShell({
               <PaperControl status={paperStatus} role={role} />
             </div>
             <NavContent
-              active={active}
+              pathname={pathname}
               role={role}
               onNavigate={() => setMobileOpen(false)}
             />
@@ -861,7 +777,7 @@ export function ConsoleShell({
           />
           <PaperControl status={paperStatus} role={role} />
         </div>
-        <NavContent active={active} role={role} rail />
+        <NavContent pathname={pathname} role={role} />
       </aside>
       <main className="min-w-0 flex-1 p-4 md:p-6">
         <RestartBanner />

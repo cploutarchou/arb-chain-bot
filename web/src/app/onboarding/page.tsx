@@ -303,7 +303,7 @@ export default function OnboardingPage() {
 
   if (loadErr) {
     return (
-      <ConsoleShell active="Onboarding">
+      <ConsoleShell>
         <PageTitle>Set up your organisation</PageTitle>
         <p className="text-[13px] text-[var(--text-dim)]">{loadErr}</p>
       </ConsoleShell>
@@ -311,7 +311,7 @@ export default function OnboardingPage() {
   }
 
   return (
-    <ConsoleShell active="Onboarding">
+    <ConsoleShell>
       <PageTitle>Set up your organisation</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         Three short steps. You can change everything later from Settings. Public

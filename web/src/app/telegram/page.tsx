@@ -14,7 +14,7 @@ export default function TelegramPage() {
   const status = usePoll(() => api.telegram.status(), 10000);
 
   return (
-    <ConsoleShell active="Telegram">
+    <ConsoleShell>
       <PageTitle>Telegram</PageTitle>
       <Await state={status} what="telegram status">
         {(s) => (

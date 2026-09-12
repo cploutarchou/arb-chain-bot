@@ -28,7 +28,7 @@ export default function AutoPaperPage() {
   const autoPaper = usePoll(() => api.screener.autoPaper(), pollMs, [pollMs]);
 
   return (
-    <ConsoleShell active="Auto-Paper">
+    <ConsoleShell>
       <PageTitle>Auto-Paper</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         Automatic execution is PAPER only, through the existing paper ledger —
