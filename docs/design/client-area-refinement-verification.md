@@ -21,11 +21,33 @@ produce a different "before", not a better one.
 | Go tests for changed packages | — | **not run: no Go package changed.** `git status` shows zero `.go` files modified; the change is confined to `web/` and `docs/`. The three checks above were still run to prove it rather than assert it. |
 | Console lint | `cd web && npm run lint` | pass (ESLint clean + 54/54 contrast assertions) |
 | Console typecheck | `cd web && npm run typecheck` | pass |
-| Console build | `cd web && npm run build` | pass |
+| Console build | `cd web && npm run build` | *to be re-run — see note below* |
 | Console unit suite | `cd web && npm run test:unit` | pass |
 | `golangci-lint run ./...` | — | *pending* |
 | Playwright e2e | `scripts/e2e.sh` | *pending* |
 | GitHub Actions CI | — | **unverified, environment blocked.** `docs/PENDING.md` §0 records repo-wide Actions failure since 2026-08-31 with no runner assigned and no logs, on every branch including `master`. "CI-equivalent" here means the local suite above. |
+
+**On the build row.** `npm run build` passed after the shell and
+navigation work, and then a further nine files changed. Lint and
+`tsc --noEmit` have been green throughout, but they do not catch what
+`next build` catches — notably the framework's own export-shape check on
+page files, which this change tripped once already (a helper exported
+from `overview/page.tsx`). The row above stays marked pending until the
+build is re-run against the final tree, rather than carrying forward a
+result that was true earlier.
+
+### What the unit suite does and does not cover
+
+54 tests pass, and it is worth being exact about what that means: they
+cover **pure logic** — `lib/decimal.ts`'s presentation rules,
+`lib/nav.ts`'s route resolution and access metadata, and the Settings
+page's anchor set read out of its source. **Nothing renders a
+component.** `ConsoleNav`, `StatusStrip`, `SettingsCategories` and the
+rewritten pages have no unit coverage; the navigation *data* is proven,
+the navigation *component* is not. The e2e suite is what exercises the
+shell in a browser, and the responsive, keyboard and focus checks below
+are what exercise the rest. "54 passed" should not be read as component
+coverage.
 
 ### Unit suite added by this change
 
@@ -99,6 +121,21 @@ also asserting the exact backend string survives untouched.
 | No re-encoding | `"0.010000"` displays as `0.01 USDC` with `exact` still `"0.010000"` |
 | Zero is not a gain | `signTone` returns `dim` for every zero spelling — this returned `ok` before, so a flat session rendered green |
 
+### Settings anchors: the page is checked, not just the metadata
+
+`web/unit/settings-anchors.spec.ts` reads `app/settings/page.tsx` and
+asserts its rendered `<SettingsAnchor anchor="…">` set matches
+`SETTINGS_SECTIONS` in **both** directions — nothing declared but
+unrendered, nothing rendered but undeclared (an undeclared anchor cannot
+map to a category, so a deep link to it would land on the default tab).
+It also asserts all nine pre-existing anchors are present, that the four
+linked from inside the console are present, and that no section anchor
+is a bare `<div id>` — the wrapper is what carries `tabIndex={-1}`, and
+without it a deep link would scroll without moving focus.
+
+This closes a real gap: the earlier test proved only that the metadata
+table *claimed* nine anchors, which the page could have contradicted.
+
 ## 4. Defects found by review and fixed
 
 | Defect | Location | Evidence it is fixed |
@@ -120,7 +157,43 @@ for the file:line evidence.
 | Stated scope | none | visible text: rule-based automatic paper execution keeps running and has no pause control |
 | Dialog | in-flight cycles settle | in-flight cycles settle **+** triangular engine only **+** shared across the deployment, not per organisation |
 
-## 6. Outstanding
+## 6. Pages converted to bounded presentation
+
+Every money, bps, price and quantity cell on these routes now goes
+through `DecimalValue` with a named preset, keeping the exact string
+reachable. Long identifiers (ULIDs) are rendered as identifiers — first
+segment plus the full value on hover — rather than competing with the
+economics beside them.
+
+| Route | What changed |
+| --- | --- |
+| `/overview` | per-asset results (realized / marked / net / drawdown / fees), simulated balances |
+| `/paper` | realized and marked PnL, per-asset fees, slippage bps, order quantities, prices and fees |
+| `/auto-paper` | position net result, rule names joined from `/screener/rules` |
+| `/portfolio` | available, reserved, marked equity, intermediate exposure, per-asset results |
+| `/pnl` | breakdown net result and average latency |
+| `/orders` | requested/filled quantity, average price, fee, latency |
+| `/fills` | price, quantity, fee |
+| `/screener`, `/calculator` | in progress |
+
+Tables on these routes also gained `rowKeys` (stable row identity under
+a poll) and a `label` on the scroll region (keyboard reachability).
+
+## 7. Risk discoverability
+
+The brief requires risk status and the risk destination to stay
+immediately discoverable from Overview **and** Paper Trading.
+
+| Surface | How |
+| --- | --- |
+| Overview | open breakers appear as an attention item with the backend's own reason text and a link to the risk centre; the pipeline explainer's "rejected at the risk gate" stage links there unconditionally |
+| Paper Trading | a risk-status strip directly above the live monitor: open-breaker count, the backend's verbatim reasons, and a link to the risk centre — present whether or not a breaker is open |
+| Navigation | `/risk` keeps a standing entry, under Operations › Safety |
+
+A failed risk poll says it could not be read, which is explicitly not
+the same as nothing being wrong.
+
+## 8. Outstanding
 
 | Item | State |
 | --- | --- |

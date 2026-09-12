@@ -11,7 +11,18 @@ import { useSearchParams } from "next/navigation";
 import { orderFillStatusTone } from "@/lib/tones";
 import { api, ApiError, type FillListRow, type ListFilter } from "@/lib/api/client";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Badge, Button, ErrorBox, Loading, PageTitle, Section, VirtualTable, fmtTime } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  DecimalValue,
+  ErrorBox,
+  Loading,
+  PageTitle,
+  Section,
+  VirtualTable,
+  fmtTime,
+} from "@/components/ui";
+import { presentDecimal, presentQty } from "@/lib/decimal";
 
 type ListState =
   | { kind: "loading" }
@@ -181,6 +192,9 @@ function FillsPageInner() {
           <>
             <VirtualTable
               head={["Time", "Symbol", "Leg", "Side", "Order status", "Price", "Qty", "Fee", "Book v.", "Order", "Cycle", "Triangle", "Opportunity"]}
+              align={["text", "text", "num", "text", "text", "num", "num", "num", "num", "text", "text", "text", "text"]}
+              label="Simulated fills"
+              rowKeys={state.rows.map((f, i) => `${f.order_id}-${f.leg_no}-${i}`)}
               empty="fills for this filter"
               rows={state.rows.map((f) => [
                 fmtTime(f.ts),
@@ -190,15 +204,31 @@ function FillsPageInner() {
                 <Badge key="s" tone={orderFillStatusTone(f.order_status)}>
                   {f.order_status}
                 </Badge>,
-                f.price,
-                f.qty,
-                f.fee_amount ? `${f.fee_amount} ${f.fee_asset ?? ""}` : "—",
+                <DecimalValue key="p" d={presentQty(f.price)} />,
+                <DecimalValue key="q" d={presentQty(f.qty)} />,
+                <DecimalValue
+                  key="fee"
+                  d={presentDecimal(f.fee_amount, {
+                    maxFrac: 2,
+                    minFrac: 2,
+                    unit: f.fee_asset ?? undefined,
+                  })}
+                />,
                 f.book_version ?? "—",
-                <span key="ord" className="text-[var(--text-dim)]">
-                  {f.order_id}
+                <span
+                  key="ord"
+                  className="font-mono text-[11px] text-[var(--text-dim)]"
+                  title={f.order_id}
+                >
+                  {f.order_id.length > 12 ? `${f.order_id.slice(0, 12)}…` : f.order_id}
                 </span>,
-                <Link key="c" href={`/cycles/${encodeURIComponent(f.cycle_id)}`} className="text-[var(--accent)] underline">
-                  {f.cycle_id}
+                <Link
+                  key="c"
+                  href={`/cycles/${encodeURIComponent(f.cycle_id)}`}
+                  className="font-mono text-[11px] text-[var(--accent)] underline"
+                  title={f.cycle_id}
+                >
+                  {f.cycle_id.length > 12 ? `${f.cycle_id.slice(0, 12)}…` : f.cycle_id}
                 </Link>,
                 f.triangle_id ? (
                   <Link key="t" href={`/triangles/${encodeURIComponent(f.triangle_id)}`} className="text-[var(--accent)] underline">

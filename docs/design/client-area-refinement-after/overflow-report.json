@@ -1,0 +1,816 @@
+{
+  "generatedAt": "2026-09-12T14:29:40.366Z",
+  "base": "http://127.0.0.1:3100",
+  "results": [
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "dark",
+      "viewport": "1440x900",
+      "file": "01-overview--dark--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "dark",
+      "viewport": "1440x900",
+      "file": "02-screener--dark--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "dark",
+      "viewport": "1440x900",
+      "file": "03-screener-detail--dark--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "dark",
+      "viewport": "1440x900",
+      "file": "04-calculator--dark--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "dark",
+      "viewport": "1440x900",
+      "file": "05-paper--dark--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "dark",
+      "viewport": "1440x900",
+      "file": "06-auto-paper--dark--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "dark",
+      "viewport": "1440x900",
+      "file": "07-settings--dark--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "dark",
+      "viewport": "1024x768",
+      "file": "01-overview--dark--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "dark",
+      "viewport": "1024x768",
+      "file": "02-screener--dark--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 168
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "dark",
+      "viewport": "1024x768",
+      "file": "03-screener-detail--dark--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 147
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "dark",
+      "viewport": "1024x768",
+      "file": "04-calculator--dark--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "dark",
+      "viewport": "1024x768",
+      "file": "05-paper--dark--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "dark",
+      "viewport": "1024x768",
+      "file": "06-auto-paper--dark--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "dark",
+      "viewport": "1024x768",
+      "file": "07-settings--dark--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "dark",
+      "viewport": "768x1024",
+      "file": "01-overview--dark--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "dark",
+      "viewport": "768x1024",
+      "file": "02-screener--dark--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 416
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "dark",
+      "viewport": "768x1024",
+      "file": "03-screener-detail--dark--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 416
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "dark",
+      "viewport": "768x1024",
+      "file": "04-calculator--dark--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "dark",
+      "viewport": "768x1024",
+      "file": "05-paper--dark--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "dark",
+      "viewport": "768x1024",
+      "file": "06-auto-paper--dark--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "dark",
+      "viewport": "768x1024",
+      "file": "07-settings--dark--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "dark",
+      "viewport": "390x844",
+      "file": "01-overview--dark--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "dark",
+      "viewport": "390x844",
+      "file": "02-screener--dark--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 548
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "dark",
+      "viewport": "390x844",
+      "file": "03-screener-detail--dark--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 548
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "dark",
+      "viewport": "390x844",
+      "file": "04-calculator--dark--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "dark",
+      "viewport": "390x844",
+      "file": "05-paper--dark--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "dark",
+      "viewport": "390x844",
+      "file": "06-auto-paper--dark--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "dark",
+      "viewport": "390x844",
+      "file": "07-settings--dark--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "light",
+      "viewport": "1440x900",
+      "file": "01-overview--light--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "light",
+      "viewport": "1440x900",
+      "file": "02-screener--light--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "light",
+      "viewport": "1440x900",
+      "file": "03-screener-detail--light--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "light",
+      "viewport": "1440x900",
+      "file": "04-calculator--light--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "light",
+      "viewport": "1440x900",
+      "file": "05-paper--light--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "light",
+      "viewport": "1440x900",
+      "file": "06-auto-paper--light--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "light",
+      "viewport": "1440x900",
+      "file": "07-settings--light--1440x900.png",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "light",
+      "viewport": "1024x768",
+      "file": "01-overview--light--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "light",
+      "viewport": "1024x768",
+      "file": "02-screener--light--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 160
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "light",
+      "viewport": "1024x768",
+      "file": "03-screener-detail--light--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 167
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "light",
+      "viewport": "1024x768",
+      "file": "04-calculator--light--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "light",
+      "viewport": "1024x768",
+      "file": "05-paper--light--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "light",
+      "viewport": "1024x768",
+      "file": "06-auto-paper--light--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "light",
+      "viewport": "1024x768",
+      "file": "07-settings--light--1024x768.png",
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "light",
+      "viewport": "768x1024",
+      "file": "01-overview--light--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "light",
+      "viewport": "768x1024",
+      "file": "02-screener--light--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 407
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "light",
+      "viewport": "768x1024",
+      "file": "03-screener-detail--light--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 410
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "light",
+      "viewport": "768x1024",
+      "file": "04-calculator--light--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "light",
+      "viewport": "768x1024",
+      "file": "05-paper--light--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "light",
+      "viewport": "768x1024",
+      "file": "06-auto-paper--light--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "light",
+      "viewport": "768x1024",
+      "file": "07-settings--light--768x1024.png",
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "light",
+      "viewport": "390x844",
+      "file": "01-overview--light--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "light",
+      "viewport": "390x844",
+      "file": "02-screener--light--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 546
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "light",
+      "viewport": "390x844",
+      "file": "03-screener-detail--light--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 537
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "light",
+      "viewport": "390x844",
+      "file": "04-calculator--light--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "light",
+      "viewport": "390x844",
+      "file": "05-paper--light--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "light",
+      "viewport": "390x844",
+      "file": "06-auto-paper--light--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "light",
+      "viewport": "390x844",
+      "file": "07-settings--light--390x844.png",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "dark",
+      "viewport": "1440x900 @ 200% zoom",
+      "file": "01-overview--dark--zoom200.png",
+      "scrollWidth": 720,
+      "clientWidth": 720,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "dark",
+      "viewport": "1440x900 @ 200% zoom",
+      "file": "02-screener--dark--zoom200.png",
+      "scrollWidth": 720,
+      "clientWidth": 720,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": null,
+          "focusable": true,
+          "overflow": 229
+        }
+      ]
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "dark",
+      "viewport": "1440x900 @ 200% zoom",
+      "file": "05-paper--dark--zoom200.png",
+      "scrollWidth": 720,
+      "clientWidth": 720,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "dark",
+      "viewport": "1440x900 @ 200% zoom",
+      "file": "06-auto-paper--dark--zoom200.png",
+      "scrollWidth": 720,
+      "clientWidth": 720,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "dark",
+      "viewport": "1440x900 @ 200% zoom",
+      "file": "07-settings--dark--zoom200.png",
+      "scrollWidth": 720,
+      "clientWidth": 720,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    }
+  ]
+}

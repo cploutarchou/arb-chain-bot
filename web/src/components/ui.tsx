@@ -165,7 +165,20 @@ export function DecimalValue({
   const title = d.rounded && d.exact ? `Exactly ${d.exact}` : undefined;
   return (
     <span
-      className={`${block ? "block" : "inline-block"} [font-variant-numeric:tabular-nums_slashed-zero] ${color}`}
+      // `relative` is load-bearing, not cosmetic. Tailwind's `sr-only`
+      // is `position:absolute`, so without a positioned ancestor the
+      // hidden span resolves against the initial containing block — the
+      // viewport — at its static position. Inside a horizontally
+      // scrolled table that position is far to the right of the
+      // viewport, and because its containing block is *not* the scroll
+      // container, it is not clipped by it: it extends
+      // documentElement's scrollable overflow and the whole page gains
+      // a horizontal scrollbar. Measured at 390px and 768px on
+      // /screener (docs/design/client-area-refinement-after/
+      // overflow-report.json): html scrollWidth 677 against a body and
+      // viewport of 390. Making this span the containing block keeps
+      // the hidden text inside the scroller where it belongs.
+      className={`${block ? "block" : "inline-block"} relative [font-variant-numeric:tabular-nums_slashed-zero] ${color}`}
       title={title}
       data-exact={d.exact ?? undefined}
       data-rounded={d.rounded ? "true" : undefined}

@@ -12,7 +12,17 @@ import Link from "next/link";
 import { api, type PnLBreakdownBy } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, HistogramChart, PageTitle, PnLSeriesChart, Section, Table, ChipGroup} from "@/components/ui";
+import {
+  Await,
+  ChipGroup,
+  DecimalValue,
+  HistogramChart,
+  PageTitle,
+  PnLSeriesChart,
+  Section,
+  Table,
+} from "@/components/ui";
+import { presentDecimal } from "@/lib/decimal";
 
 const WINDOWS = [24, 72, 168, 720] as const;
 const BY_OPTIONS: { value: PnLBreakdownBy; label: string }[] = [
@@ -41,8 +51,8 @@ export default function PnLAnalyticsPage() {
   const distributions = usePoll(() => api.analytics.distributions(distHours), 15000, [distHours]);
 
   return (
-    <ConsoleShell active="PnL & Analytics">
-      <PageTitle>PnL &amp; Analytics</PageTitle>
+    <ConsoleShell>
+      <PageTitle>Results &amp; analytics</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         Every number below is computed server-side from settled paper cycles — the console renders it,
         it never recomputes P&amp;L, drawdown, or a percentile. Sample sizes (n) are always shown.
@@ -82,12 +92,32 @@ export default function PnLAnalyticsPage() {
             return (
               <>
                 <Table
-                  head={isMarket ? ["Key", "N", "Avg latency (ms)"] : ["Key", "N", "Net P&L"]}
+                  head={isMarket ? ["Key", "N", "Avg latency (ms)"] : ["Key", "N", "Net result"]}
+                  align={["text", "num", "num"]}
+                  label={`Breakdown by ${res.by}`}
+                  rowKeys={rows.map((r) => r.key)}
                   empty="breakdown rows"
                   rows={rows.map((r) => [
                     r.key,
                     r.n,
-                    isMarket ? (r.avg_latency_ms ?? "—") : (r.net_pnl ?? "—"),
+                    isMarket ? (
+                      // Latency is a plain number from the backend, not
+                      // an exact decimal — presented, not re-derived.
+                      <DecimalValue
+                        key="lat"
+                        d={presentDecimal(r.avg_latency_ms, { maxFrac: 0, unit: "ms" })}
+                      />
+                    ) : (
+                      // The quote asset is not carried per breakdown row,
+                      // so no asset label is fabricated here; the
+                      // per-asset view on Balances is where results are
+                      // labelled by asset.
+                      <DecimalValue
+                        key="net"
+                        d={presentDecimal(r.net_pnl, { maxFrac: 2, minFrac: 2, signed: true })}
+                        tone="sign"
+                      />
+                    ),
                   ])}
                 />
                 <p className="mt-2 text-[11px] text-[var(--text-dim)]">

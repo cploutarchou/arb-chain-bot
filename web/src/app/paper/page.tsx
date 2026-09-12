@@ -81,6 +81,8 @@ export default function PaperPage() {
   // representable in this boolean, so the failing request reports itself
   // through its own error state rather than this sentence.
   const recordings = usePoll(() => api.recordings.list(), 30000);
+  // Risk status, for the summary above the live monitor.
+  const risk = usePoll(() => api.risk(), 8000);
   // ordersCycle/ordersState split the same way usePoll does (loading/
   // error/ready) so a failed fetch renders ErrorBox instead of the empty
   // state a swallowed exception used to produce (audit F7) — a settled
@@ -182,6 +184,58 @@ export default function PaperPage() {
           }
         </Await>
       </Section>
+      {/* Risk status stays one glance away from the simulations it gates:
+          the deterministic risk engine is what decides whether a
+          qualified opportunity becomes a cycle at all, so an open
+          breaker explains an idle engine. Every figure is the backend's
+          own (GET /api/v1/risk); nothing here is a second risk
+          calculation. */}
+      <Section title="Risk status">
+        {risk.kind === "ready" ? (
+          (() => {
+            const breakers = risk.data.breakers ?? [];
+            const open = breakers.filter((b) => b.State === "OPEN");
+            return (
+              <div className="flex max-w-4xl flex-wrap items-start gap-x-4 gap-y-2 rounded border border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 text-[13px]">
+                <span
+                  className="font-semibold"
+                  style={{
+                    color: open.length > 0 ? "var(--critical)" : "var(--ok)",
+                  }}
+                >
+                  {open.length > 0
+                    ? `${open.length} breaker${open.length === 1 ? "" : "s"} open`
+                    : "No breaker open"}
+                </span>
+                <span className="min-w-0 flex-1 break-words text-[var(--text-dim)]">
+                  {open.length > 0
+                    ? // The backend's own reason text, verbatim.
+                      open
+                        .map((b) => `${b.Name} (${b.Scope || "global"}): ${b.Reason}`)
+                        .join("; ")
+                    : "Qualification is not gated by a breaker right now."}
+                </span>
+                <Link
+                  href="/risk"
+                  className="shrink-0 font-medium text-[var(--accent)] underline"
+                >
+                  Open risk centre →
+                </Link>
+              </div>
+            );
+          })()
+        ) : (
+          <p className="text-[13px] text-[var(--text-dim)]">
+            {risk.kind === "error"
+              ? "Risk status is unavailable right now — it could not be read, which is not the same as nothing being wrong."
+              : "Loading risk status…"}{" "}
+            <Link href="/risk" className="text-[var(--accent)] underline">
+              Open risk centre →
+            </Link>
+          </p>
+        )}
+      </Section>
+
       <Section title="Running now">
         <ActiveCycles running={paperRunning} />
       </Section>

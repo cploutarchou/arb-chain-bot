@@ -25,6 +25,7 @@
 // gate (AGENTS.md: "RBAC is enforced in the backend, never by hiding
 // buttons"), and every endpoint behind these entries re-checks.
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV, resolveNav, type NavDestination, type NavLeaf } from "@/lib/nav";
@@ -100,6 +101,31 @@ function useNavVisibility() {
   return { destinations, leafState };
 }
 
+// stripHash: a fragment is a sub-view, not a route. Several Settings
+// entries share the path `/settings` and differ only by fragment, so
+// anywhere two hrefs are compared as *routes* the fragment must come off
+// first — otherwise `/settings#account` never looks like the Settings
+// destination's own `/settings` and the breadcrumb reads
+// "Settings / Account" for a page that is simply Settings.
+function stripHash(href: string): string {
+  return href.split("#")[0] ?? href;
+}
+
+// useHash tracks the current fragment. `usePathname` deliberately
+// excludes it, and it is the only thing that distinguishes one Settings
+// entry from another, so the highlight needs it. Read in an effect, so
+// server and client markup agree on the first paint.
+function useHash(): string {
+  const [hash, setHash] = useState("");
+  useEffect(() => {
+    const read = () => setHash(window.location.hash.replace(/^#/, ""));
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
+  return hash;
+}
+
 // useCurrentNav resolves the current route for the shell.
 export function useCurrentNav() {
   const pathname = usePathname() ?? "/";
@@ -123,7 +149,8 @@ export function PrimaryNav({ onNavigate }: { onNavigate?: () => void }) {
     // A destination that *contains* the current page is "location"; the
     // page itself is "page". That is the correct ARIA distinction, and
     // it is why the state is not carried by colour alone.
-    const isLanding = active && current?.leaf.href === d.href;
+    const isLanding =
+      active && stripHash(current?.leaf.href ?? "") === stripHash(d.href);
     return (
       <li key={d.id}>
         <Link
@@ -172,8 +199,19 @@ export function PrimaryNav({ onNavigate }: { onNavigate?: () => void }) {
 export function SecondaryNav({ onNavigate }: { onNavigate?: () => void }) {
   const { leafState } = useNavVisibility();
   const current = useCurrentNav();
+  const hash = useHash();
   if (!current) return null;
   const destination = current.destination;
+  // Entries in this destination that share the current path and differ
+  // only by fragment. When there are any, the fragment picks the current
+  // one; with no fragment the first such entry is the landing view.
+  const samePathLeaves = destination.groups
+    .flatMap((g) => g.items)
+    .filter((l) => stripHash(l.href) === stripHash(current.leaf.href));
+  const fragmented = samePathLeaves.filter((l) => l.href.includes("#"));
+  const currentByHash = hash
+    ? fragmented.find((l) => l.href.endsWith(`#${hash}`))
+    : undefined;
 
   const rendered = destination.groups
     .map((group) => ({
@@ -227,7 +265,13 @@ export function SecondaryNav({ onNavigate }: { onNavigate?: () => void }) {
                     </li>
                   );
                 }
-                const active = current.leaf.id === leaf.id;
+                const active = currentByHash
+                  ? currentByHash.id === leaf.id
+                  : // No fragment in the URL: fall back to route
+                    // matching, except that a fragmented sibling must
+                    // not claim the plain path — on bare /settings the
+                    // first Settings entry is the one shown.
+                    current.leaf.id === leaf.id;
                 return (
                   <li key={leaf.id}>
                     <Link
@@ -273,7 +317,8 @@ export function Breadcrumbs({ fallbackLabel }: { fallbackLabel?: string }) {
     ) : null;
   }
   const { destination, leaf } = current;
-  const sameAsDestination = leaf.href === destination.href;
+  const sameAsDestination =
+    stripHash(leaf.href) === stripHash(destination.href);
   return (
     <nav aria-label="Breadcrumb" className="mb-3">
       <ol className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--text-dim)]">

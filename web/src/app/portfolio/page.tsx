@@ -3,27 +3,50 @@
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Await, PageTitle, Section, Stat, Table } from "@/components/ui";
+import {
+  Await,
+  DecimalValue,
+  PageTitle,
+  Section,
+  Stat,
+  Table,
+} from "@/components/ui";
+import { presentDecimal, presentQty, presentSignedQuote } from "@/lib/decimal";
 
 export default function PortfolioPage() {
   const portfolio = usePoll(() => api.portfolio(), 5000);
   const pnl = usePoll(() => api.pnl(), 5000);
 
   return (
-    <ConsoleShell active="Portfolio & Balances">
-      <PageTitle>Portfolio &amp; Balances</PageTitle>
-      <Section title="Virtual balances">
+    <ConsoleShell>
+      <PageTitle>Balances</PageTitle>
+      <Section title="Simulated balances">
         <Await state={portfolio} what="portfolio">
           {(p) => (
             <>
               <Table
                 head={["Asset", "Available", "Reserved", "Equity (marked)"]}
+                align={["text", "num", "num", "num"]}
+                label="Simulated balances by asset"
+                rowKeys={Object.keys(p.balances)}
                 empty="balances"
                 rows={Object.entries(p.balances).map(([asset, b]) => [
                   asset,
-                  b.available,
-                  b.reserved,
-                  p.equity[asset] ?? "—",
+                  // Each figure is labelled with its own asset and never
+                  // combined with another: one row per asset is the whole
+                  // point, and a column total would add different monies.
+                  <DecimalValue
+                    key="a"
+                    d={presentDecimal(b.available, { maxFrac: 2, minFrac: 2, unit: asset })}
+                  />,
+                  <DecimalValue
+                    key="r"
+                    d={presentDecimal(b.reserved, { maxFrac: 2, minFrac: 2, unit: asset })}
+                  />,
+                  <DecimalValue
+                    key="e"
+                    d={presentDecimal(p.equity[asset], { maxFrac: 2, minFrac: 2, unit: asset })}
+                  />,
                 ])}
               />
               {Object.keys(p.exposure).length > 0 && (
@@ -33,8 +56,14 @@ export default function PortfolioPage() {
                   </h3>
                   <Table
                     head={["Asset", "Quantity"]}
+                    align={["text", "num"]}
+                    label="Intermediate exposure by asset"
+                    rowKeys={Object.keys(p.exposure)}
                     empty="exposure"
-                    rows={Object.entries(p.exposure).map(([asset, qty]) => [asset, qty])}
+                    rows={Object.entries(p.exposure).map(([asset, qty]) => [
+                      asset,
+                      <DecimalValue key="q" d={presentQty(qty, asset)} />,
+                    ])}
                   />
                 </div>
               )}
@@ -57,8 +86,17 @@ export default function PortfolioPage() {
           {(x) => (
             <Table
               head={["Asset", "Realized", "Fees", "Daily loss", "Drawdown"]}
-              empty="pnl rows"
-              rows={x.assets.map((a) => [a.asset, a.realized, a.fees, a.daily_loss, a.drawdown])}
+              align={["text", "num", "num", "num", "num"]}
+              label="Simulated results by start asset"
+              rowKeys={x.assets.map((a) => a.asset)}
+              empty="results yet — settled cycles appear here as the engine completes them"
+              rows={x.assets.map((a) => [
+                a.asset,
+                <DecimalValue key="r" d={presentSignedQuote(a.realized, a.asset)} tone="sign" />,
+                <DecimalValue key="f" d={presentSignedQuote(a.fees, a.asset)} />,
+                <DecimalValue key="d" d={presentSignedQuote(a.daily_loss, a.asset)} />,
+                <DecimalValue key="dd" d={presentSignedQuote(a.drawdown, a.asset)} />,
+              ])}
             />
           )}
         </Await>

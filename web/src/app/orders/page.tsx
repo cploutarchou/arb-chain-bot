@@ -12,7 +12,18 @@ import { useSearchParams } from "next/navigation";
 import { orderFillStatusTone } from "@/lib/tones";
 import { api, ApiError, type ListFilter, type OrderListRow } from "@/lib/api/client";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { Badge, Button, ErrorBox, Loading, PageTitle, Section, VirtualTable, fmtTime } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  DecimalValue,
+  ErrorBox,
+  Loading,
+  PageTitle,
+  Section,
+  VirtualTable,
+  fmtTime,
+} from "@/components/ui";
+import { presentDecimal, presentQty } from "@/lib/decimal";
 
 type ListState =
   | { kind: "loading" }
@@ -182,6 +193,9 @@ function OrdersPageInner() {
           <>
             <VirtualTable
               head={["Created", "Symbol", "Leg", "Side", "Status", "Qty", "Filled", "Avg price", "Fee", "Latency", "Cycle", "Triangle", "Opportunity"]}
+              align={["text", "text", "num", "text", "text", "num", "num", "num", "num", "num", "text", "text", "text"]}
+              label="Simulated orders"
+              rowKeys={state.rows.map((o) => o.id)}
               empty="orders for this filter"
               rows={state.rows.map((o) => [
                 fmtTime(o.created_at),
@@ -191,13 +205,28 @@ function OrdersPageInner() {
                 <Badge key="s" tone={orderFillStatusTone(o.status)}>
                   {o.status}
                 </Badge>,
-                o.qty_requested,
-                o.qty_filled,
-                o.avg_price ?? "—",
-                o.fee_amount ? `${o.fee_amount} ${o.fee_asset ?? ""}` : "—",
-                o.latency_ms ?? "—",
-                <Link key="c" href={`/fills?cycle=${encodeURIComponent(o.cycle_id)}`} className="text-[var(--accent)] underline">
-                  {o.cycle_id}
+                <DecimalValue key="qr" d={presentQty(o.qty_requested)} />,
+                <DecimalValue key="qf" d={presentQty(o.qty_filled)} />,
+                <DecimalValue key="ap" d={presentQty(o.avg_price)} />,
+                <DecimalValue
+                  key="fee"
+                  d={presentDecimal(o.fee_amount, {
+                    maxFrac: 2,
+                    minFrac: 2,
+                    unit: o.fee_asset ?? undefined,
+                  })}
+                />,
+                <DecimalValue
+                  key="lat"
+                  d={presentDecimal(o.latency_ms, { maxFrac: 0, unit: "ms" })}
+                />,
+                <Link
+                  key="c"
+                  href={`/fills?cycle=${encodeURIComponent(o.cycle_id)}`}
+                  className="font-mono text-[11px] text-[var(--accent)] underline"
+                  title={o.cycle_id}
+                >
+                  {o.cycle_id.length > 12 ? `${o.cycle_id.slice(0, 12)}…` : o.cycle_id}
                 </Link>,
                 o.triangle_id ? (
                   <Link key="t" href={`/triangles/${encodeURIComponent(o.triangle_id)}`} className="text-[var(--accent)] underline">

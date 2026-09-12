@@ -203,7 +203,7 @@ export function NotificationBell({
           role="region"
           aria-live="polite"
           aria-label="Notifications"
-          className="absolute right-0 top-full z-50 mt-1 w-[360px] max-w-[90vw] rounded border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-[0_0_0_1px_var(--border),-8px_0_24px_rgba(0,0,0,.25)]"
+          className="absolute right-0 top-full z-50 mt-1 w-[360px] max-w-[90vw] rounded border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-[0_0_0_1px_var(--border),-8px_0_24px_var(--shadow-color)]"
         >
           <div className="flex h-9 items-center justify-between border-b border-[var(--border)] px-3">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">

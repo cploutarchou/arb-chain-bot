@@ -1,13 +1,43 @@
 "use client";
 
-// Cross-venue spot screener (design §5/§7 GET /screener/spreads): stats
-// strip, filter card with saved templates, a dense auto-refreshing
-// table, and a row-expand detail drawer (never an inline table row —
+// Cross-venue spot screener (design §5/§7 GET /screener/spreads): a
+// compact status strip, a common/Advanced filter card with applied-
+// filter chips, a dense auto-refreshing table at bounded decimal
+// precision, and a row-expand detail drawer (never an inline table row —
 // that would break VirtualTable's fixed-row-height windowing above 500
 // rows; design-system.md §4.3 / UX §4).
+//
+// T-087 redesign (docs/design/client-area-audit-2026-09-12 §2/§3), what
+// changed and why:
+//   §A1 seven large Stat cards -> one MetricStrip row, same numbers.
+//   §A2/§A3 fully-expanded filter form -> common fields (base/pair, buy
+//     venues, sell venues, quote, min net spread) always visible; base
+//     deny-list, min liquidity, min lifetime, the two safe-default
+//     opt-ins and the saved-template row behind an Advanced disclosure
+//     (collapsed by default, remembered per browser); applied filters
+//     render as removable chips plus one Clear-filters action.
+//   §A4 ten columns with 20+ digit bps cells -> seven decision-relevant
+//     columns at bounded precision (pair, buy venue/ask, sell venue/bid,
+//     net spread, liquidity, freshness/limitations, detail); gross bps
+//     and lifetime move behind an optional-column toggle; the two raw
+//     network chips fold into the freshness/limitations cell.
+//   §A5 caveats (liquidity_unknown, suspect + suspect_reason, stale book
+//     age via lib/format's bookAgeText/bookAgeStaleMs, unknown network
+//     status) render inline next to the value they qualify, not as a
+//     footnote list under the table.
+//   §A6 the selected row survives a background refresh: while its key is
+//     still present in the polled rows the drawer shows the freshest
+//     copy; once it drops out, the drawer keeps the last known values
+//     and says so, rather than closing or silently swapping in another
+//     row (RowDrawer's own focus-return-on-unmount effect must only fire
+//     when the operator actually closes it).
+//   §C6 the Calculator hand-off is two-way: this page seeds its base/
+//     quote/buy-venue/sell-venue from the query string a "Back to
+//     Screener" link can carry, in addition to the existing Detail ->
+//     Calculator hand-off.
 
-import { useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   api,
   ApiError,
@@ -16,31 +46,33 @@ import {
 } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
+import { bookAgeStaleMs, bookAgeText } from "@/lib/format";
+import { presentBps, presentPrice, presentQty, presentQuote } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
   NO_TRANSFER_NOTE,
   NetworkBadge,
   ScreenerAwait,
+  MetricStrip,
   VenueChips,
-  ageCellText,
-  ageTone,
   fmtAge,
-  isStaleAge,
   parseCsv,
   pollIntervalSFromStatus,
   pollMsFromStatus,
-  signTone,
-  signedText,
   staleCellClass,
   useScreenerStatus,
+  type MetricStripItem,
 } from "@/components/screener/ScreenerShared";
 import {
+  Badge,
   Button,
+  DecimalValue,
+  Loading,
   PageTitle,
   Section,
-  Stat,
   VirtualTable,
   fmtTime,
+  type ColumnAlign,
 } from "@/components/ui";
 import {
   FilterCard,
@@ -48,6 +80,7 @@ import {
   NumericFilterField,
   SelectFilterField,
   TextFilterField,
+  type FilterChip,
 } from "@/components/FilterCard";
 import { RowDrawer } from "@/components/RowDrawer";
 import { ExternalIcon } from "@/components/icons";
@@ -62,30 +95,51 @@ function toggleIn(list: string[], v: string): string[] {
   return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 }
 
-export default function ScreenerPage() {
+function ScreenerPageInner() {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const mayConfig = can(role, "screener:config");
   const router = useRouter();
+  const params = useSearchParams();
 
   const status = useScreenerStatus();
   const pollMs = pollMsFromStatus(status);
   const pollIntervalS = pollIntervalSFromStatus(status);
 
-  const [buyVenues, setBuyVenues] = useState<string[]>([]);
-  const [sellVenues, setSellVenues] = useState<string[]>([]);
-  const [quote, setQuote] = useState("");
+  // Seeded once from a Calculator "Back to Screener" hand-off (§C6) —
+  // read at mount only; the operator's own edits afterwards are the
+  // source of truth.
+  const [buyVenues, setBuyVenues] = useState<string[]>(() => {
+    const v = params.get("buy_venue")?.toLowerCase();
+    return v ? [v] : [];
+  });
+  const [sellVenues, setSellVenues] = useState<string[]>(() => {
+    const v = params.get("sell_venue")?.toLowerCase();
+    return v ? [v] : [];
+  });
+  const [quote, setQuote] = useState(
+    () => params.get("quote")?.toUpperCase() ?? "",
+  );
   const [minSpreadBps, setMinSpreadBps] = useState("");
   const [minLiquidity, setMinLiquidity] = useState("");
   const [minLifetimeS, setMinLifetimeS] = useState("");
-  const [basesAllowText, setBasesAllowText] = useState("");
+  const [basesAllowText, setBasesAllowText] = useState(
+    () => params.get("base")?.toUpperCase() ?? "",
+  );
   const [basesDenyText, setBasesDenyText] = useState("");
   // Both OFF by default, matching the backend's own safe default
   // (handleScreenerSpreads excludes suspect/unknown-liquidity lanes
-  // unless explicitly opted in).
+  // unless explicitly opted in) — never change this default.
   const [includeSuspect, setIncludeSuspect] = useState(false);
   const [includeUnknownLiquidity, setIncludeUnknownLiquidity] = useState(false);
+  // Optional columns (§A4) — off by default, the table stays at the
+  // seven decision-relevant columns until an operator asks for more.
+  const [showGrossColumn, setShowGrossColumn] = useState(false);
+  const [showLifetimeColumn, setShowLifetimeColumn] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [lastKnownRow, setLastKnownRow] = useState<ScreenerSpreadRow | null>(
+    null,
+  );
   const expandTriggerRef = useRef<HTMLElement | null>(null);
 
   const basesAllow = useMemo(() => parseCsv(basesAllowText), [basesAllowText]);
@@ -172,6 +226,22 @@ export default function ScreenerPage() {
     setBasesDenyText((f.bases_deny ?? []).join(", "));
   };
 
+  // Clear filters (§A3) — resets every field this page owns, including
+  // the two opt-ins back to their safe-default OFF state (never leaves
+  // them on after a clear).
+  const clearAllFilters = () => {
+    setBuyVenues([]);
+    setSellVenues([]);
+    setQuote("");
+    setMinSpreadBps("");
+    setMinLiquidity("");
+    setMinLifetimeS("");
+    setBasesAllowText("");
+    setBasesDenyText("");
+    setIncludeSuspect(false);
+    setIncludeUnknownLiquidity(false);
+  };
+
   const saveTemplate = async () => {
     setTemplateMsg(null);
     if (!templateName.trim()) {
@@ -212,7 +282,27 @@ export default function ScreenerPage() {
   const rows = basesDeny.length
     ? allRows.filter((r) => !basesDeny.includes(r.base.toUpperCase()))
     : allRows;
-  const expandedRow = rows.find((r) => rowKey(r) === expanded);
+
+  // The selected row survives a background refresh (§A6): while its key
+  // is still present in the freshly polled rows, keep the freshest copy;
+  // once it drops out (filtered out, expired, evicted), freeze the last
+  // known copy instead of unmounting the drawer or silently showing a
+  // different row. RowDrawer's own unmount effect returns focus to
+  // `expandTriggerRef` — that must only fire when the operator actually
+  // closes the drawer, never mid-poll, which is exactly what keeping
+  // `expanded` (the key) truthy across a poll guarantees.
+  const liveExpandedRow = expanded
+    ? rows.find((r) => rowKey(r) === expanded)
+    : undefined;
+  useEffect(() => {
+    if (liveExpandedRow) setLastKnownRow(liveExpandedRow);
+  }, [liveExpandedRow]);
+  const expandedRow =
+    liveExpandedRow ??
+    (expanded && lastKnownRow && rowKey(lastKnownRow) === expanded
+      ? lastKnownRow
+      : undefined);
+  const expandedRowPresent = !!liveExpandedRow;
 
   const openCalculator = (r: ScreenerSpreadRow) => {
     const p = new URLSearchParams({
@@ -224,51 +314,295 @@ export default function ScreenerPage() {
     router.push(`/calculator?${p.toString()}`);
   };
 
+  // ---- Status strip (§A1): every number the seven former Stat cards
+  // carried, in one row. Each item degrades to "…"/"—" on its own
+  // (loading vs never-loaded) rather than blocking the whole strip on
+  // two independent polls (status, spreads).
+  const statusItems: MetricStripItem[] = [];
+  if (status.kind === "ready") {
+    const s = status.data;
+    const online = (s.venues ?? []).filter((v) => v.online).length;
+    const total = (s.venues ?? []).length;
+    const ageMs = Math.max(0, Date.now() - new Date(s.updated_at).getTime());
+    statusItems.push(
+      {
+        label: "Venues online",
+        value: `${online} / ${total}`,
+        tone: online === total && total > 0 ? "ok" : "warn",
+      },
+      { label: "Pairs tracked", value: s.pairs_tracked },
+      { label: "Spreads / sec", value: s.spreads_per_sec },
+      { label: "Data age", value: fmtAge(ageMs) },
+    );
+  } else {
+    const placeholder = status.kind === "loading" ? "…" : "—";
+    statusItems.push(
+      { label: "Venues online", value: placeholder },
+      { label: "Pairs tracked", value: placeholder },
+      { label: "Spreads / sec", value: placeholder },
+      { label: "Data age", value: placeholder },
+    );
+  }
+  statusItems.push({ label: "Poll interval", value: `${pollIntervalS}s` });
+  if (spreads.kind === "ready" && spreads.data.excluded) {
+    const { suspect, liquidity_unknown } = spreads.data.excluded;
+    statusItems.push(
+      {
+        label: "Excluded: suspect",
+        value: suspect,
+        tone: suspect > 0 ? "warn" : "dim",
+        hint: 'Lanes hidden by the asset-identity guard. Open "Advanced filters" and check "Include suspect lanes" to show them.',
+      },
+      {
+        label: "Excluded: unknown liquidity",
+        value: liquidity_unknown,
+        tone: liquidity_unknown > 0 ? "warn" : "dim",
+        hint: 'Lanes hidden because top-of-book size is unknown. Open "Advanced filters" and check "Include unknown-liquidity lanes" to show them.',
+      },
+    );
+  } else {
+    const placeholder = spreads.kind === "loading" ? "…" : "—";
+    statusItems.push(
+      { label: "Excluded: suspect", value: placeholder },
+      { label: "Excluded: unknown liquidity", value: placeholder },
+    );
+  }
+
+  // ---- Applied-filter chips (§A3) ------------------------------------
+  const chips: FilterChip[] = [];
+  if (basesAllowText.trim())
+    chips.push({
+      key: "base",
+      label: `Base: ${basesAllowText.trim()}`,
+      onRemove: () => setBasesAllowText(""),
+    });
+  if (buyVenues.length)
+    chips.push({
+      key: "buy",
+      label: `Buy: ${buyVenues.join(", ")}`,
+      onRemove: () => setBuyVenues([]),
+    });
+  if (sellVenues.length)
+    chips.push({
+      key: "sell",
+      label: `Sell: ${sellVenues.join(", ")}`,
+      onRemove: () => setSellVenues([]),
+    });
+  if (quote)
+    chips.push({
+      key: "quote",
+      label: `Quote: ${quote}`,
+      onRemove: () => setQuote(""),
+    });
+  if (minSpreadBps.trim())
+    chips.push({
+      key: "minspread",
+      label: `Min net spread: ${minSpreadBps.trim()} bps`,
+      onRemove: () => setMinSpreadBps(""),
+    });
+  if (minLiquidity.trim())
+    chips.push({
+      key: "minliq",
+      label: `Min liquidity: ${minLiquidity.trim()}`,
+      onRemove: () => setMinLiquidity(""),
+    });
+  if (minLifetimeS.trim())
+    chips.push({
+      key: "minlife",
+      label: `Min lifetime: ${minLifetimeS.trim()}s`,
+      onRemove: () => setMinLifetimeS(""),
+    });
+  if (basesDenyText.trim())
+    chips.push({
+      key: "deny",
+      label: `Excluding: ${basesDenyText.trim()}`,
+      onRemove: () => setBasesDenyText(""),
+    });
+  if (includeSuspect)
+    chips.push({
+      key: "suspect",
+      label: "Include suspect lanes",
+      onRemove: () => setIncludeSuspect(false),
+    });
+  if (includeUnknownLiquidity)
+    chips.push({
+      key: "unknownliq",
+      label: "Include unknown-liquidity lanes",
+      onRemove: () => setIncludeUnknownLiquidity(false),
+    });
+
+  // ---- Table columns (§A4): seven decision-relevant columns by
+  // default; gross bps and lifetime are opt-in extra columns.
+  const head: string[] = [
+    "Pair",
+    "Buy venue / ask",
+    "Sell venue / bid",
+    "Net spread",
+    "Liquidity",
+  ];
+  const align: ColumnAlign[] = ["text", "text", "text", "num", "num"];
+  if (showGrossColumn) {
+    head.push("Gross bps");
+    align.push("num");
+  }
+  if (showLifetimeColumn) {
+    head.push("Lifetime (s)");
+    align.push("num");
+  }
+  head.push("Freshness / limitations", "");
+  align.push("text", "text");
+
   return (
     <ConsoleShell active="Screener">
       <PageTitle>Screener</PageTitle>
 
-      <ScreenerAwait state={status} what="screener status">
-        {(s) => {
-          const online = (s.venues ?? []).filter((v) => v.online).length;
-          const total = (s.venues ?? []).length;
-          const ageMs = Date.now() - new Date(s.updated_at).getTime();
-          return (
-            <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
-              <Stat
-                label="Venues online"
-                value={`${online} / ${total}`}
-                tone={online === total && total > 0 ? "ok" : "warn"}
-              />
-              <Stat label="Pairs tracked" value={s.pairs_tracked} />
-              <Stat label="Spreads / sec" value={s.spreads_per_sec} />
-              <Stat label="Data age" value={fmtAge(Math.max(0, ageMs))} />
-              <Stat label="Poll interval" value={`${pollIntervalS}s`} />
-            </div>
-          );
-        }}
-      </ScreenerAwait>
+      <MetricStrip items={statusItems} />
 
-      {/* Excluded counts come from the spreads response, not the status
-          poll above — always reported by handleScreenerSpreads regardless
-          of whether either toggle is on, so the operator can see how many
-          lanes the safe defaults hid even before opting in. */}
-      {spreads.kind === "ready" && spreads.data.excluded && (
-        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <Stat
-            label="Excluded: suspect"
-            value={spreads.data.excluded.suspect}
-            tone={spreads.data.excluded.suspect > 0 ? "warn" : "dim"}
-          />
-          <Stat
-            label="Excluded: unknown liquidity"
-            value={spreads.data.excluded.liquidity_unknown}
-            tone={spreads.data.excluded.liquidity_unknown > 0 ? "warn" : "dim"}
+      <FilterCard
+        activeCount={activeFilterCount}
+        chips={chips}
+        onClearAll={chips.length > 0 ? clearAllFilters : undefined}
+        advancedStorageKey="arb-console.screener-filters.advanced-open"
+        advanced={
+          <>
+            <div className="flex flex-wrap items-end gap-3">
+              <TextFilterField
+                label="Base deny-list (comma-separated)"
+                value={basesDenyText}
+                onChange={setBasesDenyText}
+                placeholder="SHIB, PEPE"
+                width="flex-1 min-w-[220px]"
+                hint="Applied to the fetched rows in this browser only — /screener/spreads has no deny parameter."
+              />
+              <NumericFilterField
+                label="Min liquidity"
+                value={minLiquidity}
+                onChange={setMinLiquidity}
+                unit="quote"
+                width="w-32"
+              />
+              <NumericFilterField
+                label="Min lifetime"
+                value={minLifetimeS}
+                onChange={setMinLifetimeS}
+                unit="s"
+                width="w-24"
+                inputMode="numeric"
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-[12px]">
+                <input
+                  type="checkbox"
+                  checked={includeSuspect}
+                  onChange={(e) => setIncludeSuspect(e.target.checked)}
+                />
+                Include suspect lanes (asset-identity guard)
+              </label>
+              <label className="flex items-center gap-2 text-[12px]">
+                <input
+                  type="checkbox"
+                  checked={includeUnknownLiquidity}
+                  onChange={(e) =>
+                    setIncludeUnknownLiquidity(e.target.checked)
+                  }
+                />
+                Include unknown-liquidity lanes
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 border-t border-[var(--border)] pt-3">
+              <label className="flex items-center gap-2 text-[12px]">
+                <input
+                  type="checkbox"
+                  checked={showGrossColumn}
+                  onChange={(e) => setShowGrossColumn(e.target.checked)}
+                />
+                Show gross bps column
+              </label>
+              <label className="flex items-center gap-2 text-[12px]">
+                <input
+                  type="checkbox"
+                  checked={showLifetimeColumn}
+                  onChange={(e) => setShowLifetimeColumn(e.target.checked)}
+                />
+                Show lifetime column
+              </label>
+            </div>
+
+            {/* Templates are a per-user read (§7: "GET /screener/templates
+                ... (per user)") — VIEWER/OPERATOR can load their own saved
+                filters same as ADMIN; only saving a new one and deleting
+                are mutations gated behind screener:config. */}
+            <div className="flex flex-wrap items-end gap-3 border-t border-[var(--border)] pt-3">
+              {mayConfig && (
+                <>
+                  <TextFilterField
+                    label="Save current filters as"
+                    value={templateName}
+                    onChange={setTemplateName}
+                    placeholder="template name"
+                    width="w-56"
+                  />
+                  <Button onClick={saveTemplate}>Save template</Button>
+                </>
+              )}
+              <ScreenerAwait state={templates} what="templates">
+                {(list) =>
+                  list.length === 0 ? (
+                    <span className="text-[12px] text-[var(--text-dim)]">
+                      No saved templates yet.
+                    </span>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {list.map((t) => (
+                        <span
+                          key={t.id}
+                          className="flex items-center gap-1 rounded border border-[var(--border-strong)] px-2 py-1"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => loadTemplate(t.filters)}
+                            className="text-[12px] text-[var(--accent)] underline"
+                          >
+                            {t.name}
+                          </button>
+                          {mayConfig && (
+                            <button
+                              type="button"
+                              onClick={() => deleteTemplate(t.id)}
+                              aria-label={`Delete template ${t.name}`}
+                              className="text-[12px] text-[var(--critical)]"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )
+                }
+              </ScreenerAwait>
+              {templateMsg && (
+                <p
+                  className={`text-[12px] ${templateMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}
+                >
+                  {templateMsg.text}
+                </p>
+              )}
+            </div>
+          </>
+        }
+      >
+        <div className="flex flex-wrap items-end gap-3">
+          <TextFilterField
+            label="Base asset/pair"
+            value={basesAllowText}
+            onChange={setBasesAllowText}
+            placeholder="BTC"
+            width="w-64"
+            hint="One base symbol, or several comma-separated (BTC, ETH, SOL)."
           />
         </div>
-      )}
-
-      <FilterCard activeCount={activeFilterCount}>
         <div className="flex flex-wrap items-start gap-6">
           <FilterRow label="Buy on">
             <VenueChips
@@ -284,28 +618,6 @@ export default function ScreenerPage() {
           </FilterRow>
         </div>
         <div className="flex flex-wrap items-end gap-3">
-          <NumericFilterField
-            label="Min spread"
-            value={minSpreadBps}
-            onChange={setMinSpreadBps}
-            unit="bps"
-            width="w-28"
-          />
-          <NumericFilterField
-            label="Min liquidity"
-            value={minLiquidity}
-            onChange={setMinLiquidity}
-            unit="quote"
-            width="w-32"
-          />
-          <NumericFilterField
-            label="Min lifetime"
-            value={minLifetimeS}
-            onChange={setMinLifetimeS}
-            unit="s"
-            width="w-24"
-            inputMode="numeric"
-          />
           <SelectFilterField
             label="Quote asset"
             value={quote}
@@ -315,102 +627,14 @@ export default function ScreenerPage() {
               label: q || "any",
             }))}
           />
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <TextFilterField
-            label="Base allow-list (comma-separated)"
-            value={basesAllowText}
-            onChange={setBasesAllowText}
-            placeholder="BTC, ETH, SOL"
-            width="flex-1 min-w-[220px]"
+          <NumericFilterField
+            label="Min net spread"
+            value={minSpreadBps}
+            onChange={setMinSpreadBps}
+            unit="bps"
+            width="w-28"
+            hint="Filters on spread_bps_net (min_spread_bps), i.e. after taker fees."
           />
-          <TextFilterField
-            label="Base deny-list (comma-separated)"
-            value={basesDenyText}
-            onChange={setBasesDenyText}
-            placeholder="SHIB, PEPE"
-            width="flex-1 min-w-[220px]"
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <label className="flex items-center gap-2 text-[12px]">
-            <input
-              type="checkbox"
-              checked={includeSuspect}
-              onChange={(e) => setIncludeSuspect(e.target.checked)}
-            />
-            Include suspect lanes (asset-identity guard)
-          </label>
-          <label className="flex items-center gap-2 text-[12px]">
-            <input
-              type="checkbox"
-              checked={includeUnknownLiquidity}
-              onChange={(e) => setIncludeUnknownLiquidity(e.target.checked)}
-            />
-            Include unknown-liquidity lanes
-          </label>
-        </div>
-
-        {/* Templates are a per-user read (§7: "GET /screener/templates
-            ... (per user)") — VIEWER/OPERATOR can load their own saved
-            filters same as ADMIN; only saving a new one and deleting
-            are mutations gated behind screener:config. */}
-        <div className="flex flex-wrap items-end gap-3 border-t border-[var(--border)] pt-3">
-          {mayConfig && (
-            <>
-              <TextFilterField
-                label="Save current filters as"
-                value={templateName}
-                onChange={setTemplateName}
-                placeholder="template name"
-                width="w-56"
-              />
-              <Button onClick={saveTemplate}>Save template</Button>
-            </>
-          )}
-          <ScreenerAwait state={templates} what="templates">
-            {(list) =>
-              list.length === 0 ? (
-                <span className="text-[12px] text-[var(--text-dim)]">
-                  No saved templates yet.
-                </span>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {list.map((t) => (
-                    <span
-                      key={t.id}
-                      className="flex items-center gap-1 rounded border border-[var(--border-strong)] px-2 py-1"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => loadTemplate(t.filters)}
-                        className="text-[12px] text-[var(--accent)] underline"
-                      >
-                        {t.name}
-                      </button>
-                      {mayConfig && (
-                        <button
-                          type="button"
-                          onClick={() => deleteTemplate(t.id)}
-                          aria-label={`Delete template ${t.name}`}
-                          className="text-[12px] text-[var(--critical)]"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              )
-            }
-          </ScreenerAwait>
-          {templateMsg && (
-            <p
-              className={`text-[12px] ${templateMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}
-            >
-              {templateMsg.text}
-            </p>
-          )}
         </div>
       </FilterCard>
 
@@ -418,98 +642,120 @@ export default function ScreenerPage() {
         <ScreenerAwait state={spreads} what="spreads">
           {() => (
             <VirtualTable
-              head={[
-                "Pair",
-                "Buy venue / ask",
-                "Sell venue / bid",
-                "Gross bps",
-                "Net bps",
-                "Liquidity (quote)",
-                "Lifetime (s)",
-                "Networks",
-                "Buy age",
-                "Sell age",
-                "",
-              ]}
-              align={[
-                "text",
-                "text",
-                "text",
-                "num",
-                "num",
-                "num",
-                "num",
-                "text",
-                "text",
-                "text",
-                "text",
-              ]}
+              head={head}
+              align={align}
+              // label names the horizontal scroll region so it is an
+              // *accessible* region, not just a focusable div: at 1024px
+              // and below the seven columns need internal scrolling, and
+              // a region with no name tells a screen-reader user nothing
+              // about what they have just tabbed into.
+              label="Cross-exchange spreads"
+              // rowKeys gives each row a stable identity across the 5s
+              // poll. Without it React keys by array index, so a refresh
+              // that reorders rows reuses a DOM row for a different
+              // pair — moving focus and the open drawer's anchor onto a
+              // candidate the user never selected.
+              rowKeys={rows.map((r) => rowKey(r))}
               empty={`spreads matching these filters — 0 of ${allRows.length} pairs qualify`}
               rows={rows.map((r) => {
                 const key = rowKey(r);
-                const stale =
-                  isStaleAge(r.buy_age_ms, pollIntervalS) ||
-                  isStaleAge(r.sell_age_ms, pollIntervalS);
+                const worstAgeMs = Math.max(r.buy_age_ms, r.sell_age_ms);
+                // Stale book age uses the app-wide fixed 30s design
+                // threshold (lib/format's bookAgeStaleMs — the same line
+                // the FeedStale alert uses), not a poll-interval-relative
+                // one, so "STALE" means the same thing everywhere it
+                // appears (§A5).
+                const stale = worstAgeMs > bookAgeStaleMs;
                 const dim = staleCellClass(stale);
-                const netTone = signTone(r.spread_bps_net);
-                return [
-                  <span key="p" className={dim}>
+                const netClosed =
+                  r.networks.buy_withdraw === "closed" ||
+                  r.networks.sell_deposit === "closed";
+                const netUnknown =
+                  r.networks.buy_withdraw === "unknown" ||
+                  r.networks.sell_deposit === "unknown";
+
+                const cells: ReactNode[] = [
+                  <span
+                    key="p"
+                    className={`inline-flex items-center gap-1.5 ${dim}`}
+                  >
                     {r.base}/{r.quote}
+                    {r.suspect && (
+                      <span
+                        title={
+                          r.suspect_reason ??
+                          "Same ticker, different asset (asset-identity guard)."
+                        }
+                      >
+                        <Badge tone="warn">suspect</Badge>
+                      </span>
+                    )}
                   </span>,
                   <span key="b" className={dim}>
-                    {r.buy_venue} @ {r.buy_ask}
+                    {r.buy_venue} @ <DecimalValue d={presentPrice(r.buy_ask)} />
                   </span>,
                   <span key="s" className={dim}>
-                    {r.sell_venue} @ {r.sell_bid}
+                    {r.sell_venue} @{" "}
+                    <DecimalValue d={presentPrice(r.sell_bid)} />
                   </span>,
-                  <span key="g" className={dim}>
-                    {r.spread_bps_gross}
-                  </span>,
-                  <span
-                    key="n"
-                    className={`font-semibold ${dim} ${netTone === "ok" ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}
-                  >
-                    {signedText(r.spread_bps_net)}
+                  <span key="n" className={`font-semibold ${dim}`}>
+                    <DecimalValue
+                      d={presentBps(r.spread_bps_net)}
+                      tone="sign"
+                    />
                   </span>,
                   <span key="l" className={dim}>
-                    {r.liquidity_quote ?? "unknown"}
+                    {r.liquidity_unknown ? (
+                      <Badge tone="dim">unknown</Badge>
+                    ) : (
+                      <DecimalValue
+                        d={presentQuote(r.liquidity_quote, r.quote)}
+                      />
+                    )}
                   </span>,
-                  <span key="lt" className={dim}>
-                    {r.lifetime_s}
-                  </span>,
-                  <span key="net" className={`flex gap-1 ${dim}`}>
-                    <NetworkBadge
-                      state={r.networks.buy_withdraw}
-                      reason={r.networks.reason}
-                    />
-                    <NetworkBadge
-                      state={r.networks.sell_deposit}
-                      reason={r.networks.reason}
-                    />
-                  </span>,
-                  <span
-                    key="ba"
-                    className={
-                      ageTone(r.buy_age_ms, pollIntervalS) === "bad"
-                        ? "text-[var(--critical)]"
-                        : ageTone(r.buy_age_ms, pollIntervalS) === "warn"
-                          ? "text-[var(--warn)]"
+                ];
+                if (showGrossColumn) {
+                  cells.push(
+                    <span key="g" className={dim}>
+                      <DecimalValue
+                        d={presentBps(r.spread_bps_gross)}
+                        tone="sign"
+                      />
+                    </span>,
+                  );
+                }
+                if (showLifetimeColumn) {
+                  cells.push(
+                    <span key="lt" className={dim}>
+                      {r.lifetime_s}
+                    </span>,
+                  );
+                }
+                cells.push(
+                  <span key="fr" className="flex items-center gap-1.5">
+                    <span
+                      className={
+                        stale
+                          ? "font-medium text-[var(--critical)]"
                           : "text-[var(--text-dim)]"
-                    }
-                  >
-                    {ageCellText(r.buy_age_ms, pollIntervalS)}
-                  </span>,
-                  <span
-                    key="sa"
-                    className={
-                      ageTone(r.sell_age_ms, pollIntervalS) === "bad"
-                        ? "text-[var(--critical)]"
-                        : ageTone(r.sell_age_ms, pollIntervalS) === "warn"
-                          ? "text-[var(--warn)]"
-                          : "text-[var(--text-dim)]"
-                    }
-                  >
-                    {ageCellText(r.sell_age_ms, pollIntervalS)}
+                      }
+                    >
+                      {r.buy_age_ms >= r.sell_age_ms ? "buy " : "sell "}
+                      {bookAgeText(worstAgeMs)}
+                    </span>
+                    {/* One badge, worst status wins (closed over unknown
+                        over open) — both sides' exact network state is
+                        always in the drawer's Feasibility & limitations
+                        section. */}
+                    {netClosed && (
+                      <NetworkBadge state="closed" reason={r.networks.reason} />
+                    )}
+                    {!netClosed && netUnknown && (
+                      <NetworkBadge
+                        state="unknown"
+                        reason={r.networks.reason}
+                      />
+                    )}
                   </span>,
                   <button
                     key="x"
@@ -522,7 +768,8 @@ export default function ScreenerPage() {
                   >
                     Detail
                   </button>,
-                ];
+                );
+                return cells;
               })}
             />
           )}
@@ -538,20 +785,19 @@ export default function ScreenerPage() {
           onClose={() => setExpanded(null)}
           returnFocusRef={expandTriggerRef}
           ageBadge={{
-            label: ageCellText(
+            label: bookAgeText(
               Math.max(
                 expandedRow.buy_age_ms ?? 0,
                 expandedRow.sell_age_ms ?? 0,
               ),
-              pollIntervalS,
             ),
-            tone: ageTone(
+            tone:
               Math.max(
                 expandedRow.buy_age_ms ?? 0,
                 expandedRow.sell_age_ms ?? 0,
-              ),
-              pollIntervalS,
-            ),
+              ) > bookAgeStaleMs
+                ? "bad"
+                : "dim",
           }}
           footer={
             <>
@@ -566,57 +812,154 @@ export default function ScreenerPage() {
             </>
           }
         >
+          {!expandedRowPresent && (
+            <div
+              role="status"
+              className="mb-4 rounded border border-[var(--warn)] bg-[var(--bg-panel)] p-3 text-[13px] text-[var(--warn)]"
+            >
+              No longer in the refreshed results — showing the last known
+              values.
+            </div>
+          )}
+
           <Section title="Buy side">
-            <dl className="grid grid-cols-2 gap-y-2 text-[13px]">
+            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-[13px]">
               <dt className="text-[var(--text-dim)]">Venue</dt>
-              <dd className="text-right">{expandedRow.buy_venue}</dd>
-              <dt className="text-[var(--text-dim)]">Ask × qty</dt>
-              <dd className="text-right">
-                {expandedRow.buy_ask} × {expandedRow.buy_ask_qty}
+              <dd className="min-w-0 break-words text-right">
+                {expandedRow.buy_venue}
+              </dd>
+              <dt className="text-[var(--text-dim)]">Ask</dt>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue d={presentPrice(expandedRow.buy_ask)} />{" "}
+                {expandedRow.quote}/{expandedRow.base}
+              </dd>
+              <dt className="text-[var(--text-dim)]">Ask qty</dt>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue
+                  d={presentQty(expandedRow.buy_ask_qty, expandedRow.base)}
+                />
               </dd>
               <dt className="text-[var(--text-dim)]">Taker fee</dt>
-              <dd className="text-right">{expandedRow.buy_fee_bps} bps</dd>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue d={presentBps(expandedRow.buy_fee_bps)} />
+              </dd>
               <dt className="text-[var(--text-dim)]">Age</dt>
-              <dd className="text-right">
-                {ageCellText(expandedRow.buy_age_ms, pollIntervalS)}
+              <dd className="min-w-0 break-words text-right">
+                {bookAgeText(expandedRow.buy_age_ms)}
               </dd>
             </dl>
           </Section>
           <Section title="Sell side">
-            <dl className="grid grid-cols-2 gap-y-2 text-[13px]">
+            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-[13px]">
               <dt className="text-[var(--text-dim)]">Venue</dt>
-              <dd className="text-right">{expandedRow.sell_venue}</dd>
-              <dt className="text-[var(--text-dim)]">Bid × qty</dt>
-              <dd className="text-right">
-                {expandedRow.sell_bid} × {expandedRow.sell_bid_qty}
+              <dd className="min-w-0 break-words text-right">
+                {expandedRow.sell_venue}
+              </dd>
+              <dt className="text-[var(--text-dim)]">Bid</dt>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue d={presentPrice(expandedRow.sell_bid)} />{" "}
+                {expandedRow.quote}/{expandedRow.base}
+              </dd>
+              <dt className="text-[var(--text-dim)]">Bid qty</dt>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue
+                  d={presentQty(expandedRow.sell_bid_qty, expandedRow.base)}
+                />
               </dd>
               <dt className="text-[var(--text-dim)]">Taker fee</dt>
-              <dd className="text-right">{expandedRow.sell_fee_bps} bps</dd>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue d={presentBps(expandedRow.sell_fee_bps)} />
+              </dd>
               <dt className="text-[var(--text-dim)]">Age</dt>
-              <dd className="text-right">
-                {ageCellText(expandedRow.sell_age_ms, pollIntervalS)}
+              <dd className="min-w-0 break-words text-right">
+                {bookAgeText(expandedRow.sell_age_ms)}
               </dd>
             </dl>
           </Section>
-          <Section title="Calculator">
-            <dl className="grid grid-cols-2 gap-y-2 text-[13px]">
-              <dt className="text-[var(--text-dim)]">Liquidity (quote)</dt>
-              <dd className="text-right">{expandedRow.liquidity_quote}</dd>
-              <dt className="text-[var(--text-dim)]">Gross / Net (bps)</dt>
-              <dd className="text-right">
-                {expandedRow.spread_bps_gross} /{" "}
-                {signedText(expandedRow.spread_bps_net)}
+          <Section title="Costs">
+            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-[13px]">
+              <dt className="text-[var(--text-dim)]">Gross bps</dt>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue
+                  d={presentBps(expandedRow.spread_bps_gross)}
+                  tone="sign"
+                />
               </dd>
+              <dt className="text-[var(--text-dim)]">Net bps</dt>
+              <dd className="min-w-0 break-words text-right">
+                <DecimalValue
+                  d={presentBps(expandedRow.spread_bps_net)}
+                  tone="sign"
+                />
+              </dd>
+            </dl>
+            <p className="mt-2 text-[12px] text-[var(--text-dim)]">
+              {NO_TRANSFER_NOTE}
+            </p>
+          </Section>
+          <Section title="Feasibility & limitations">
+            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-[13px]">
+              <dt className="text-[var(--text-dim)]">Liquidity</dt>
+              <dd className="min-w-0 break-words text-right">
+                {expandedRow.liquidity_unknown ? (
+                  <Badge tone="dim">unknown</Badge>
+                ) : (
+                  <DecimalValue
+                    d={presentQuote(
+                      expandedRow.liquidity_quote,
+                      expandedRow.quote,
+                    )}
+                  />
+                )}
+              </dd>
+              <dt className="text-[var(--text-dim)]">Asset identity</dt>
+              <dd className="min-w-0 break-words text-right">
+                {expandedRow.suspect ? (
+                  <span title={expandedRow.suspect_reason}>
+                    <Badge tone="warn">suspect</Badge>
+                  </span>
+                ) : (
+                  <Badge tone="dim">not flagged</Badge>
+                )}
+              </dd>
+              <dt className="text-[var(--text-dim)]">Buy-side network</dt>
+              <dd className="min-w-0 break-words text-right">
+                <NetworkBadge
+                  state={expandedRow.networks.buy_withdraw}
+                  reason={expandedRow.networks.reason}
+                />
+              </dd>
+              <dt className="text-[var(--text-dim)]">Sell-side network</dt>
+              <dd className="min-w-0 break-words text-right">
+                <NetworkBadge
+                  state={expandedRow.networks.sell_deposit}
+                  reason={expandedRow.networks.reason}
+                />
+              </dd>
+            </dl>
+          </Section>
+          <Section title="Identity & age">
+            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-[13px]">
               <dt className="text-[var(--text-dim)]">First seen</dt>
-              <dd className="text-right">
+              <dd className="min-w-0 break-words text-right">
                 {fmtTime(expandedRow.first_seen_at)}
               </dd>
               <dt className="text-[var(--text-dim)]">Lifetime</dt>
-              <dd className="text-right">{expandedRow.lifetime_s}s</dd>
+              <dd className="min-w-0 break-words text-right">
+                {expandedRow.lifetime_s}s
+              </dd>
             </dl>
           </Section>
         </RowDrawer>
       )}
     </ConsoleShell>
+  );
+}
+
+export default function ScreenerPage() {
+  return (
+    <Suspense fallback={<Loading what="screener" />}>
+      <ScreenerPageInner />
+    </Suspense>
   );
 }

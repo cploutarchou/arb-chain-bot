@@ -174,6 +174,72 @@ export function NetworkBadge({
   );
 }
 
+// MetricStrip: a single compact row of label/value pairs, replacing a
+// wall of large Stat cards (T-087 §A1 — the audit found seven counter
+// cards consuming the whole first viewport on Screener). Every item still
+// carries its own label and value text — nothing here drops a number,
+// it only stops rendering each one in its own bordered box. Colour is a
+// hint only: an item's own text (a count, a ratio) is what a screen
+// reader or a colourblind operator reads, matching design-system.md
+// §1.8's "sign/state is on the text, never colour alone."
+// Named MetricStrip, not StatusStrip, on purpose: this renders a row of
+// *figures* (counts, ratios, ages), whereas components/StatusStrip.tsx
+// renders a row of *states* (CONNECTED / DEGRADED / PAUSED) with a
+// roll-up summary and a distinct treatment for "unknown". Two components
+// called StatusStrip with different props is how the wrong one gets
+// imported.
+export interface MetricStripItem {
+  label: string;
+  value: ReactNode;
+  tone?: Tone;
+  // hint: optional tooltip (e.g. explaining what a count excludes and
+  // where to re-admit it) — supplementary, never the only place the
+  // information lives.
+  hint?: string;
+}
+
+function statusToneClass(tone?: Tone): string {
+  switch (tone) {
+    case "ok":
+      return "text-[var(--ok)]";
+    case "warn":
+      return "text-[var(--warn)]";
+    case "high":
+      return "text-[var(--high)]";
+    case "bad":
+      return "text-[var(--critical)]";
+    default:
+      return "text-[var(--text)]";
+  }
+}
+
+export function MetricStrip({ items }: { items: MetricStripItem[] }) {
+  return (
+    <div
+      role="group"
+      aria-label="Status"
+      className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1.5 rounded border border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2"
+    >
+      {items.map((it, i) => (
+        <span
+          key={i}
+          title={it.hint}
+          className="flex items-baseline gap-1.5 whitespace-nowrap text-[12px]"
+        >
+          <span className="uppercase tracking-wider text-[var(--text-dim)]">
+            {it.label}
+          </span>
+          <span
+            className={`font-semibold [font-variant-numeric:tabular-nums] ${statusToneClass(it.tone)}`}
+          >
+            {it.value}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // VENUE_OPTIONS: the six target venues from the design (§0/§2); pages
 // use this only to render filter chips — the backend's own
 // GET /screener/status venues[] is the source of truth for what is
