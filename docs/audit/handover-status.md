@@ -66,7 +66,7 @@ the operator's payouts report with the fraud-rule-3 refund rate and
 clawback exposure over the affiliate ledger, audited payout recording
 validated against the matured balance, platform-admin API + Billing
 page section; Paddle refund events still owed with T-083's sandbox
-run), and the T-057/059/060/061 console row (closed 2026-09-13 as
+run), the T-057/059/060/061 console row (closed 2026-09-13 as
 stale, not as new work — the console surfaces landed on 2026-08-27 with
 `a7d2c29`, the platform-settings editors with preview/apply/rollback
 and the supervised restart flow, and `6741c44`, the operating-mode,
@@ -75,14 +75,15 @@ availability and reasons from `GET /api/v1/platform/capabilities`
 rather than hardcoding them, plus the write-only vault UI; the T-087
 refinement pass then carried them into the Settings Administration
 category with deep links, and every CI run exercises them through the
-e2e suite). Remaining candidates in a sensible order, none blocking
+e2e suite), and T-075 (closed 2026-09-13 — research for the last four
+venues in `docs/research/venues/`, the Bithumb/Phemex/Upbit/LBank
+collectors as Tier-4 with recorded fixtures and conformance, then a
+clean 30-min nineteen-venue soak with perps exercised: zero
+429/418/403, zero in-band, zero failed polls — all enabled by
+default; 19 venues total. LBank perps deferred, recorded in its
+research §3). Remaining candidates in a sensible order, none blocking
 another:
 
-- **T-075 remainder** — the four collectors. Endpoint research landed
-  2026-09-13 under `docs/research/venues/` (upbit, bithumb, lbank,
-  phemex — every fact live-verified or marked UNVERIFIED); the HTX
-  classification and Coinbase burst soak regressions were already
-  fixed (`768eda1`, `137698d`).
 - **T-079 remainder** — scheduled migrations and health-check alerting
   (backups landed with option B).
 - **Performance plan items 2–3** — the reservation mutex and AnyOpen's

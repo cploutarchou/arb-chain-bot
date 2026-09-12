@@ -79,7 +79,13 @@ func TestSoakLive(t *testing.T) {
 	}
 	settings := screener.Defaults()
 	for id, vs := range settings.Venues {
+		// The soak is the gate for enabling a venue by default, so it
+		// force-enables EVERYTHING — perps too: a venue that ships perps
+		// (Tier-4 Phemex) must have those polls soaked, and a venue with
+		// no perps at all (Coinbase, Bithumb, Upbit, LBank) simply
+		// answers an empty Perps() every poll.
 		vs.Enabled = true
+		vs.PerpsEnabled = true
 		settings.Venues[id] = vs
 	}
 	book := screener.NewBook()

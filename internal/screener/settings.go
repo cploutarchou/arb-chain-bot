@@ -295,6 +295,18 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 // returns (it lists only pairs with 24 h volume > 0); cryptocom's perps
 // count is the round-robin mark fill saturating, not a dip.
 
+// Tier-4 venues (T-075 remainder: Bithumb, Phemex, Upbit, LBank) were
+// opt-in until their 30-min live soak of 2026-09-13 (TestSoakLive, poll
+// 5 s, all nineteen venues in one process, perps force-enabled so
+// Phemex's USDT-M polls were exercised): bithumb 305 polls 495 spot
+// 614-905-2500 ms; phemex 324 polls 255 spot + 106 perps 106-560-1847
+// ms; upbit 155 polls 848 spot 6601-6640-8075 ms (self-paces above the
+// 5 s interval, like cryptocom); lbank 106 polls, spot 39..1028 (the
+// round-robin carry filling the full book and holding it), 11487-11990-
+// 15551 ms — 0 × HTTP 429/418/403, 0 in-band rate limits and 0 failed
+// polls each, and zero for every other venue in the same run
+// (SKILL.md step 5). They now start enabled like every soaked tier.
+
 // Tier-2 venues (T-075: KuCoin, HTX, Kraken, Coinbase) were opt-in until
 // a 30-min live soak showed zero 429/418/403/510 and zero errors. Soak of
 // 2026-08-27 (TestSoakLive, poll 5 s, all ten venues): kucoin 295 polls
@@ -306,8 +318,8 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 
 // Defaults returns the first-boot document: every known venue enabled
 // (Tier-1; Tier-2 since the 2026-08-27 soak; Tier-3 since the 2026-08-28
-// soak, see the Tier-3 note above) with regular-tier taker fees
-// (spot/perp) "to be confirmed by T-065"
+// soak; Tier-4 since the 2026-09-13 soak, see the notes above) with
+// regular-tier taker fees (spot/perp) "to be confirmed by T-065"
 // (docs/research/screener-endpoints.md verifies each against the venue's
 // current official fee schedule).
 func Defaults() Settings {
@@ -324,14 +336,13 @@ func Defaults() Settings {
 			// operator can still enable it per deployment; re-enabling it
 			// by default needs a clean soak after the gate is retuned.
 			//
-			// Tier-4 venues (Bithumb, Phemex — T-075 remainder, 2026-09-13)
-			// ship OFF for the same reason every tier did before its first
-			// soak: nothing is enabled by default until a live soak shows
-			// zero 429/418/403 and zero failed polls (SKILL.md step 5).
-			// Bithumb has no perps on api.bithumb.com, so PerpsEnabled
-			// stays false regardless of the soak.
-			Enabled:      id != VenueCoinbase && VenueTiers[id] != Tier4,
-			PerpsEnabled: id != VenueCoinbase && id != VenueBithumb && VenueTiers[id] != Tier4,
+			// Tier-4 (Bithumb, Phemex, Upbit, LBank — T-075 remainder)
+			// shipped 2026-09-13 opt-in and is enabled by default since
+			// its 30-min live soak (see the Tier-4 note above Defaults).
+			// Bithumb, Upbit and LBank list no perps on their public
+			// market data, so PerpsEnabled stays false for them.
+			Enabled:      id != VenueCoinbase,
+			PerpsEnabled: id != VenueCoinbase && id != VenueBithumb && id != VenueUpbit && id != VenueLBank,
 			SpotTakerBps: decimal.RequireFromString(f.spotBps),
 			PerpTakerBps: decimal.RequireFromString(f.perpBps),
 		}
