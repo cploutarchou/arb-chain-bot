@@ -57,10 +57,12 @@ coherent change per commit, tests included.
 ## Where engineering resumes next (the audited lists are done)
 
 The programme-level backlog in `docs/PENDING.md` is the queue now.
-Candidates in a sensible order, none blocking another:
+Closed from it: T-062 (PR #28, 2026-09-12 — `backtest.Result`
+rejection-reason histogram with the two pre-gate buckets, the §80
+Rejection-reasons table and a NO-CYCLES verdict that names its top
+reasons; the dust-floor exit is counted at last). Remaining
+candidates in a sensible order, none blocking another:
 
-- **T-062** — rejection-reason histogram in `backtest.Result` and the
-  §80 report, so a "no qualified opportunities" verdict says why.
 - **T-084** — affiliate payouts report (accrual ledger is done; the
   payout report and jobs are open).
 - **T-057/059/060/061 console surfaces** — platform settings, operating

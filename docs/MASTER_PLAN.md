@@ -426,7 +426,8 @@ data-flow,security,risk}.md`.
   (3) the campaign output records rejection counts but not reasons —
   a per-reason histogram in `backtest.Result` is needed before a
   no-qualification verdict can be explained (why: min edge, book age,
-  depth, quality) — tracked as T-062.
+  depth, quality) — landed as T-062 (2026-09-12, `rejection_reasons`
+  + the §80 histogram).
 - next: sessions of ≥ 6 h across regimes on the fixed build (console
   Start, no compose rebuilds during a session), then campaigns per
   session; compare regimes before any claim.
@@ -506,11 +507,17 @@ data-flow,security,risk}.md`.
   wanted).
 
 ### T-062 Campaign rejection-reason histogram
-- status: TODO. `backtest.Result` and the §80 report should carry a
-  per-reason rejection histogram (the scanner already classifies
-  rejections) so a "no qualified opportunities" verdict says why —
-  minimum net edge, book age, depth exhaustion, data quality — and
-  the stress grid can show which reason dominates under each axis.
+- status: DONE (2026-09-12). `backtest.Result` now carries
+  `rejection_reasons`: risk-gate reason codes counted from rejected
+  events in the run loop, plus the two pre-gate exits that emit no
+  event, synthesised from new scanner counters — `SKIPPED_UNHEALTHY_BOOK`
+  and `NO_VIABLE_SIZE` (the dust/min-notional-floor exit was previously
+  invisible; it now also surfaces in the status API and the console's
+  scanner page). The §80 report renders a per-scenario "Rejection
+  reasons" table merged across seeds, and the NO CYCLES EXECUTED verdict
+  names the top three reasons instead of guessing. Invariant, tested:
+  histogram buckets + qualified = evaluations, so every evaluation is
+  accounted for and a no-qualification verdict says why.
 
 ### T-063 Binance REST weight gate
 - status: DONE (2026-08-27). Widening the Binance universe from 6 to 46
