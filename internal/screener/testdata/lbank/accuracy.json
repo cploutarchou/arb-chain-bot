@@ -1,0 +1,204 @@
+{
+ "msg": "Success",
+ "result": "true",
+ "data": [
+  {
+   "symbol": "ava_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "4"
+  },
+  {
+   "symbol": "bigtime_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "5"
+  },
+  {
+   "symbol": "blend_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "5"
+  },
+  {
+   "symbol": "bnb_usdt",
+   "quantityAccuracy": "3",
+   "minOrderAmount": "1",
+   "minTranQua": "0.001",
+   "priceAccuracy": "2"
+  },
+  {
+   "symbol": "btc_usdc",
+   "quantityAccuracy": "5",
+   "minOrderAmount": "1",
+   "minTranQua": "0.00001",
+   "priceAccuracy": "2"
+  },
+  {
+   "symbol": "btc_usdt",
+   "quantityAccuracy": "5",
+   "minOrderAmount": "1",
+   "minTranQua": "0.00001",
+   "priceAccuracy": "2"
+  },
+  {
+   "symbol": "c98_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "5"
+  },
+  {
+   "symbol": "data_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "4"
+  },
+  {
+   "symbol": "eth_usdc",
+   "quantityAccuracy": "4",
+   "minOrderAmount": "1",
+   "minTranQua": "0.0001",
+   "priceAccuracy": "2"
+  },
+  {
+   "symbol": "eth_usdt",
+   "quantityAccuracy": "4",
+   "minOrderAmount": "1",
+   "minTranQua": "0.0001",
+   "priceAccuracy": "2"
+  },
+  {
+   "symbol": "kava_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "5"
+  },
+  {
+   "symbol": "layer_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "5"
+  },
+  {
+   "symbol": "near_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "3"
+  },
+  {
+   "symbol": "niulai_usdt",
+   "quantityAccuracy": "0",
+   "minOrderAmount": "1",
+   "minTranQua": "1",
+   "priceAccuracy": "6"
+  },
+  {
+   "symbol": "pbu_usdt",
+   "quantityAccuracy": "5",
+   "minOrderAmount": "1",
+   "minTranQua": "0.00001",
+   "priceAccuracy": "8"
+  },
+  {
+   "symbol": "rez_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "6"
+  },
+  {
+   "symbol": "rif_usdt",
+   "quantityAccuracy": "0",
+   "minOrderAmount": "1",
+   "minTranQua": "1",
+   "priceAccuracy": "6"
+  },
+  {
+   "symbol": "rpl_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "3"
+  },
+  {
+   "symbol": "skr_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "6"
+  },
+  {
+   "symbol": "sol_usdt",
+   "quantityAccuracy": "4",
+   "minOrderAmount": "1",
+   "minTranQua": "0.0001",
+   "priceAccuracy": "2"
+  },
+  {
+   "symbol": "stg_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "4"
+  },
+  {
+   "symbol": "the_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "4"
+  },
+  {
+   "symbol": "trx_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "4"
+  },
+  {
+   "symbol": "uni_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "3"
+  },
+  {
+   "symbol": "unifi_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "4"
+  },
+  {
+   "symbol": "usdc_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "5"
+  },
+  {
+   "symbol": "xrp_usdt",
+   "quantityAccuracy": "2",
+   "minOrderAmount": "1",
+   "minTranQua": "0.01",
+   "priceAccuracy": "4"
+  },
+  {
+   "symbol": "zora_usdt",
+   "quantityAccuracy": "1",
+   "minOrderAmount": "1",
+   "minTranQua": "0.1",
+   "priceAccuracy": "6"
+  }
+ ],
+ "error_code": 0,
+ "ts": 1789250425174
+}

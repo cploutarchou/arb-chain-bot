@@ -2,6 +2,7 @@ package venue
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cploutarchou/arb-chain-bot/internal/screener"
@@ -180,5 +181,122 @@ func TestPhemexFundingIntervalEvidence(t *testing.T) {
 	}
 	if btc != 8 {
 		t.Fatalf("BTCUSDT funding interval = %dh, want 8 (recorded history intervalSeconds 28800)", btc)
+	}
+}
+
+func TestUpbitFixtures(t *testing.T) {
+	c, fs := fixtureCollector(t, screener.VenueUpbit)
+	ctx := context.Background()
+	inst, err := c.Instruments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes := map[string]int{}
+	for _, in := range inst {
+		if in.Kind != KindSpot {
+			t.Fatalf("upbit lists a non-spot instrument: %+v", in)
+		}
+		lanes[in.Quote]++
+		if in.Symbol != in.Quote+"-"+in.Base {
+			t.Fatalf("upbit symbol is not <quote>-<base>: %+v", in)
+		}
+	}
+	if lanes["KRW"] == 0 || lanes["USDT"] == 0 || lanes["BTC"] == 0 {
+		t.Fatalf("upbit lanes: %+v", lanes)
+	}
+
+	quotes, err := c.Spot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, q := range quotes {
+		if q.LiquidityUnknown {
+			t.Fatalf("upbit books carry sizes — quote must not be liquidity-unknown: %+v", q)
+		}
+		if !q.BidQty.IsPositive() || !q.AskQty.IsPositive() {
+			t.Fatalf("upbit top-of-book size missing: %+v", q)
+		}
+		seen[q.Quote+"-"+q.Base] = true
+	}
+	if !seen["KRW-BTC"] || !seen["KRW-USDT"] {
+		t.Fatalf("fixture must exercise a market and the FX pair: %+v", seen)
+	}
+	// 33 kept markets / 40 per batch = exactly one orderbook request.
+	if n := fs.hits["/v1/orderbook"]; n != 1 {
+		t.Fatalf("upbit orderbook requests = %d, want 1 (batch sweep)", n)
+	}
+	if perps, _ := c.Perps(ctx); len(perps) != 0 {
+		t.Fatalf("upbit has no perps, got %d", len(perps))
+	}
+	nets, err := c.Networks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for asset, st := range nets {
+		if st.Status != screener.NetworkUnknown || st.Reason != KeyGatedReason {
+			t.Fatalf("upbit is key-gated for networks: %s %+v", asset, st)
+		}
+	}
+}
+
+func TestLBankFixtures(t *testing.T) {
+	c, fs := fixtureCollector(t, screener.VenueLBank) // BooksPerPoll: 40 > 28 pairs
+	ctx := context.Background()
+	inst, err := c.Instruments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var btc Instrument
+	for _, in := range inst {
+		if in.Kind != KindSpot {
+			t.Fatalf("lbank lists a non-spot instrument: %+v", in)
+		}
+		if in.Symbol != strings.ToLower(in.Base+"_"+in.Quote) {
+			t.Fatalf("lbank symbol is not <base>_<quote> lowercased: %+v", in)
+		}
+		if in.Symbol == "btc_usdt" {
+			btc = in
+		}
+	}
+	// Recorded accuracy row: quantityAccuracy 5, priceAccuracy 2,
+	// minOrderAmount 1.
+	if btc.StepSize != "0.00001" || btc.TickSize != "0.01" || btc.MinNotional != "1" {
+		t.Fatalf("lbank btc_usdt constraints misdecoded: %+v", btc)
+	}
+
+	quotes, err := c.Spot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range quotes {
+		if q.LiquidityUnknown {
+			t.Fatalf("lbank depth carries sizes — quote must not be liquidity-unknown: %+v", q)
+		}
+		if !q.BidQty.IsPositive() || !q.AskQty.IsPositive() {
+			t.Fatalf("lbank top-of-book size missing: %+v", q)
+		}
+	}
+	if len(quotes) != len(inst) {
+		t.Fatalf("one full sweep (BooksPerPoll ≥ pairs) must quote every pair: %d quotes / %d instruments", len(quotes), len(inst))
+	}
+	// A second Spot() serves from the carried known map without any new
+	// depth request? No — the round-robin re-picks every pair each poll
+	// (n ≥ len), so depth hits grow; what must NOT happen is a quote
+	// for a pair whose book was never fetched.
+	if fs.hits["/v2/depth.do?symbol="] < len(inst) {
+		t.Fatalf("lbank depth call budget: %+v", fs.hits)
+	}
+	if perps, _ := c.Perps(ctx); len(perps) != 0 {
+		t.Fatalf("lbank perps are deferred, got %d", len(perps))
+	}
+	nets, err := c.Networks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for asset, st := range nets {
+		if st.Status != screener.NetworkUnknown || st.Reason != KeyGatedReason {
+			t.Fatalf("lbank is key-gated for networks: %s %+v", asset, st)
+		}
 	}
 }

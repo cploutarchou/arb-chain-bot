@@ -24,7 +24,7 @@ var (
 		screener.VenueGate: true, screener.VenueKuCoin: true, screener.VenueHTX: true, screener.VenueCoinbase: true,
 		screener.VenueBitfinex: true, screener.VenueWhiteBIT: true, screener.VenueBitMart: true, screener.VenueBithumb: true,
 	}
-	noPerps    = map[screener.Venue]bool{screener.VenueCoinbase: true, screener.VenueBithumb: true}
+	noPerps    = map[screener.Venue]bool{screener.VenueCoinbase: true, screener.VenueBithumb: true, screener.VenueUpbit: true, screener.VenueLBank: true}
 	noBulkMark = map[screener.Venue]bool{screener.VenueHTX: true, screener.VenueWhiteBIT: true, screener.VenueBitMart: true}
 	noBookSize = map[screener.Venue]bool{screener.VenueGate: true, screener.VenueCryptoCom: true, screener.VenueWhiteBIT: true, screener.VenuePhemex: true}
 )
@@ -144,8 +144,8 @@ func TestConformance(t *testing.T) {
 	}
 }
 
-// TestRegistry pins the registry to the seventeen venues (six Tier-1 +
-// four Tier-2, T-075; five Tier-3, T-078; two Tier-4, T-075 remainder)
+// TestRegistry pins the registry to the nineteen venues (six Tier-1 +
+// four Tier-2, T-075; five Tier-3, T-078; four Tier-4, T-075 remainder)
 // and their verification flags.
 func TestRegistry(t *testing.T) {
 	reg := Registry()

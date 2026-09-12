@@ -273,6 +273,12 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 	// keeps its flag false.
 	VenueBithumb: {spotBps: "25", perpBps: "25"},
 	VenuePhemex:  {spotBps: "10", perpBps: "6"},
+	// Upbit's third-party-corroborated fees differ per lane (KRW 0.05 %,
+	// BTC/USDT 0.25 %) with no official page reachable — the
+	// conservative 0.25 % covers every lane (research §6). LBank's fee
+	// page answers 403; 0.10 % is the common base-tier placeholder.
+	VenueUpbit: {spotBps: "25", perpBps: "25"},
+	VenueLBank: {spotBps: "10", perpBps: "10"},
 }
 
 // Tier-3 venues (T-078: Crypto.com Exchange, Bitfinex, BingX, WhiteBIT,

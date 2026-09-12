@@ -113,10 +113,10 @@ type phemexProducts struct {
 }
 
 // pow10 returns 10^exp for a venue scale exponent, refusing anything
-// outside 0..18 (decimal.New's int32 exponent bound, and sanity: no
+// outside -18..18 (decimal.New's int32 exponent bound, and sanity: no
 // recorded venue scale exceeds single digits).
 func pow10(exp int64) (decimal.Decimal, bool) {
-	if exp < 0 || exp > 18 {
+	if exp < -18 || exp > 18 {
 		return decimal.Decimal{}, false
 	}
 	return decimal.New(1, int32(exp)), true
