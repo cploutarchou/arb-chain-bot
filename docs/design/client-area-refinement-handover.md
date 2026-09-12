@@ -1,7 +1,8 @@
 # Client-area refinement — handover (T-087)
 
-Branch `t087-client-area-refinement`. Nothing is pushed and no pull
-request is open.
+Branch `t087-client-area-refinement` — since integrated into `master`
+(fast-forward, 2026-09-13), pushed (`origin/master` at `1caff32`, CI
+run `34719294647` green across all five jobs) and deleted.
 
 Read in this order: this file, then
 `client-area-refinement-decisions.md` (what was decided and why, D1–D14),
@@ -272,9 +273,9 @@ by its own verification:
    Integration into `master` followed on 2026-09-13: `master` was an
    ancestor of the branch tip, so it fast-forwarded with no second merge
    commit, and `t087-client-area-refinement` was deleted once `master`
-   held the work. What remains is **publication only** — `origin/master`
-   is still at `a8657a7`, nothing has been pushed, and no pull request
-   is open.
+   held the work. Publication happened next: `origin/master` was pushed
+   to `1caff32` and its CI run `34719294647` completed green across all
+   five jobs — the first GitHub-Actions verification of this work.
 2. **The unit suites cover pure logic only.** 92 tests across the two
    runners exercise `decimal.ts`, `nav.ts`, the RBAC matrix against
    `rbac.go`, and the Settings anchor contract. **No component is
@@ -353,6 +354,11 @@ by its own verification:
 9. **GitHub Actions cannot be used to verify anything.**
    `docs/PENDING.md` §0 records repo-wide failure since 2026-08-31 with
    no runner assigned. "CI-equivalent" here means the local suite.
+   *(Corrected 2026-09-13: Actions was restored on 2026-09-12 — see
+   PENDING §0's resolution note — and the pushed `master` run
+   `34719294647` is green across all five jobs, including the e2e
+   suite. The statement above was true when written and is kept as the
+   record of what this session could verify.)*
 10. **Parallel work landed on master and has now been reconciled, and the
     result is merged back into master.** What
     was an uncommitted `client-area-navigation` branch when this work
