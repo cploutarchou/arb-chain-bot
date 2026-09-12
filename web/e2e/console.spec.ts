@@ -1120,9 +1120,13 @@ test("Screener include_suspect/include_unknown_liquidity toggles are off by defa
   expect(seenQueries[0]?.get("include_suspect")).toBeNull();
   expect(seenQueries[0]?.get("include_unknown_liquidity")).toBeNull();
 
-  await expect(page.getByText("Excluded: suspect")).toBeVisible();
-  await expect(page.getByText("3", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Excluded: suspect 3/)).toBeVisible();
 
+  // The unsafe-lane opt-ins live behind the Advanced disclosure
+  // (client-area audit §2): open it, then check both toggles. Scoped to
+  // the summary element — the excluded-counts line also mentions
+  // "Advanced filters" in prose.
+  await page.locator("summary", { hasText: "Advanced filters" }).click();
   await page.getByLabel("Include suspect lanes (asset-identity guard)").check();
   await page.getByLabel("Include unknown-liquidity lanes").check();
   await expect
