@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T14:29:40.366Z",
+  "generatedAt": "2026-09-12T16:33:22.130Z",
   "base": "http://127.0.0.1:3100",
   "results": [
     {
@@ -110,9 +110,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 168
+          "overflow": 154
         }
       ]
     },
@@ -128,9 +128,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 147
+          "overflow": 155
         }
       ]
     },
@@ -206,9 +206,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 416
+          "overflow": 413
         }
       ]
     },
@@ -224,9 +224,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 416
+          "overflow": 410
         }
       ]
     },
@@ -302,11 +302,17 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 548
+          "overflow": 534
         }
       ]
+    },
+    {
+      "state": "03-screener-detail",
+      "theme": "dark",
+      "viewport": "390x844",
+      "error": "prepare failed: TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('complementary').first() to be visible\n"
     },
     {
       "state": "03-screener-detail",
@@ -320,9 +326,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 548
+          "overflow": 534
         }
       ]
     },
@@ -370,6 +376,102 @@
       "file": "07-settings--dark--390x844.png",
       "scrollWidth": 390,
       "clientWidth": 390,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
+      "theme": "dark",
+      "viewport": "844x390",
+      "file": "01-overview--dark--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "dark",
+      "viewport": "844x390",
+      "file": "02-screener--dark--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": "Cross-exchange spreads",
+          "focusable": true,
+          "overflow": 335
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "dark",
+      "viewport": "844x390",
+      "file": "03-screener-detail--dark--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": "Cross-exchange spreads",
+          "focusable": true,
+          "overflow": 334
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "dark",
+      "viewport": "844x390",
+      "file": "04-calculator--dark--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "dark",
+      "viewport": "844x390",
+      "file": "05-paper--dark--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "dark",
+      "viewport": "844x390",
+      "file": "06-auto-paper--dark--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "dark",
+      "viewport": "844x390",
+      "file": "07-settings--dark--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
       "overflow": 0,
       "widest": null,
       "scrollers": []
@@ -482,9 +584,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 160
+          "overflow": 166
         }
       ]
     },
@@ -500,9 +602,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 167
+          "overflow": 179
         }
       ]
     },
@@ -578,9 +680,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 407
+          "overflow": 414
         }
       ]
     },
@@ -596,9 +698,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 410
+          "overflow": 414
         }
       ]
     },
@@ -674,11 +776,17 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 546
+          "overflow": 543
         }
       ]
+    },
+    {
+      "state": "03-screener-detail",
+      "theme": "light",
+      "viewport": "390x844",
+      "error": "prepare failed: TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('complementary').first() to be visible\n"
     },
     {
       "state": "03-screener-detail",
@@ -692,7 +800,7 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
           "overflow": 537
         }
@@ -749,6 +857,102 @@
     {
       "state": "01-overview",
       "label": "Overview",
+      "theme": "light",
+      "viewport": "844x390",
+      "file": "01-overview--light--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "02-screener",
+      "label": "Discover — spot screener",
+      "theme": "light",
+      "viewport": "844x390",
+      "file": "02-screener--light--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": "Cross-exchange spreads",
+          "focusable": true,
+          "overflow": 334
+        }
+      ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "light",
+      "viewport": "844x390",
+      "file": "03-screener-detail--light--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": "Cross-exchange spreads",
+          "focusable": true,
+          "overflow": 334
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "light",
+      "viewport": "844x390",
+      "file": "04-calculator--light--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "05-paper",
+      "label": "Paper Trading — triangular",
+      "theme": "light",
+      "viewport": "844x390",
+      "file": "05-paper--light--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "06-auto-paper",
+      "label": "Paper Trading — rule simulations",
+      "theme": "light",
+      "viewport": "844x390",
+      "file": "06-auto-paper--light--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "07-settings",
+      "label": "Settings",
+      "theme": "light",
+      "viewport": "844x390",
+      "file": "07-settings--light--844x390.png",
+      "scrollWidth": 844,
+      "clientWidth": 844,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
+    },
+    {
+      "state": "01-overview",
+      "label": "Overview",
       "theme": "dark",
       "viewport": "1440x900 @ 200% zoom",
       "file": "01-overview--dark--zoom200.png",
@@ -770,9 +974,9 @@
       "widest": null,
       "scrollers": [
         {
-          "label": null,
+          "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 229
+          "overflow": 199
         }
       ]
     },

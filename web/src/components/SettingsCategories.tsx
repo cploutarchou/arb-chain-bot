@@ -101,9 +101,16 @@ export function SettingsCategories({
   // rendered and focus has actually landed on it.
   const pendingAnchor = useRef<string | null>(null);
   const pendingSince = useRef(0);
-  // An anchor this reader's permissions do not reach. Named rather than
-  // swallowed: landing on Account with the URL still reading #users and
-  // no explanation anywhere is the failure master did not have.
+  const deadlineTimer = useRef<number | null>(null);
+  // An anchor this reader cannot be taken to, for either of the two
+  // reasons that happen in practice: the whole category is unavailable to
+  // their role, or the category is available but the *section* inside it
+  // is not (a VIEWER may read Scanner Suite settings, so Administration
+  // opens for them, while #users within it is platform-only). Named
+  // rather than swallowed: landing somewhere else with the URL still
+  // reading #users and nothing explaining why is the failure master did
+  // not have, because master rendered an honest "Requires…" at the
+  // anchor itself.
   const [unreachableAnchor, setUnreachableAnchor] = useState<string | null>(
     null,
   );
@@ -121,6 +128,21 @@ export function SettingsCategories({
       if (anchor) {
         pendingAnchor.current = anchor;
         pendingSince.current = performance.now();
+        // A real timer, not just a deadline checked inside the focus
+        // effect. The effect only runs when something re-renders, and an
+        // anchor that is never going to appear produces no renders — so
+        // without this, the "we could not take you there" answer depended
+        // on unrelated activity happening to wake the component.
+        if (deadlineTimer.current !== null) {
+          window.clearTimeout(deadlineTimer.current);
+        }
+        deadlineTimer.current = window.setTimeout(() => {
+          deadlineTimer.current = null;
+          if (pendingAnchor.current === null) return; // it landed
+          const missed = pendingAnchor.current;
+          pendingAnchor.current = null;
+          setUnreachableAnchor(missed);
+        }, ANCHOR_DEADLINE_MS);
       }
     },
     [],
@@ -181,6 +203,12 @@ export function SettingsCategories({
     // Give up before looking, not after: an anchor whose section appears
     // late (a slow platform poll) must be abandoned rather than
     // satisfied, or a deep link turns into focus theft seconds later.
+    //
+    // Defensive only. The timer started in `activate` owns the deadline
+    // and the explanation that goes with it, and it clears the request at
+    // exactly this moment — so in practice this branch is not reached. It
+    // stays because the cost of being wrong about that is focus moving
+    // under someone's hands.
     if (performance.now() - pendingSince.current > ANCHOR_DEADLINE_MS) {
       pendingAnchor.current = null;
       return;
@@ -200,8 +228,24 @@ export function SettingsCategories({
     // would otherwise burn the retry having achieved nothing — the same
     // failure class as clearing it too early.
     const landed = document.activeElement;
-    if (landed && el.contains(landed)) pendingAnchor.current = null;
+    if (landed && el.contains(landed)) {
+      pendingAnchor.current = null;
+      if (deadlineTimer.current !== null) {
+        window.clearTimeout(deadlineTimer.current);
+        deadlineTimer.current = null;
+      }
+    }
   });
+
+  // Don't leave a timer running past unmount.
+  useEffect(
+    () => () => {
+      if (deadlineTimer.current !== null) {
+        window.clearTimeout(deadlineTimer.current);
+      }
+    },
+    [],
+  );
 
   const onTabKey = (e: React.KeyboardEvent, index: number) => {
     const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
@@ -241,8 +285,8 @@ export function SettingsCategories({
         >
           The settings section you linked to (
           <span className="font-mono text-[12px]">#{unreachableAnchor}</span>) is
-          not available to your role, so this page opened at{" "}
-          {categories[0]?.label ?? "the first category"} instead.
+          not available to your role, so it could not be opened. Everything
+          your role can reach is in the categories above.
         </p>
       )}
       <div

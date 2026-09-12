@@ -25,7 +25,7 @@ produce a different "before", not a better one.
 | Console unit suite (this branch) | `cd web && npm run test:unit` | pass — 63 tests |
 | Console unit suite (master's, PR #30) | `cd web && npm test` | pass — 10 tests |
 | `golangci-lint run ./...` | `golangci-lint run ./...` | pass — **0 issues** (v2.13.1) on the merged tree |
-| Playwright e2e | `scripts/e2e.sh` | *assigned — in progress* |
+| Playwright e2e | `scripts/e2e.sh` | **66 of 67 pass.** The one failure is pre-existing and not caused by this change — see below |
 | GitHub Actions CI | — | **unverified, environment blocked.** `docs/PENDING.md` §0 records repo-wide Actions failure since 2026-08-31 with no runner assigned and no logs, on every branch including `master`. "CI-equivalent" here means the local suite above. |
 
 **On the Go row.** No `.go` file is modified by this branch's own
@@ -143,6 +143,39 @@ without it a deep link would scroll without moving focus.
 This closes a real gap: the earlier test proved only that the metadata
 table *claimed* nine anchors, which the page could have contradicted.
 
+## 3a. The one failing e2e test, classified rather than excused
+
+`console.spec.ts:134` — *structured config edit applies as a new version
+end to end* — fails inside the full suite and **passes in isolation in
+2.1s**:
+
+```
+$ bash scripts/e2e.sh -g "structured config edit applies as a new version end to end"
+  ✓  1 e2e/console.spec.ts:134:5 › structured config edit applies as a new version end to end (2.1s)
+  1 passed (5.3s)
+```
+
+It is not a regression from this change, and the reasoning is checkable
+rather than asserted:
+
+* The test exercises `/strategies` only. That page is **not** in this
+  branch's diff (`git diff --name-only 15f82d2..HEAD -- web/src` does not
+  list it).
+* The one shared file it touches is `lib/api/client.ts`, where this
+  branch's edits are confined to `ScreenerAutoPaperPosition` and
+  `ScreenerCalculatorResult`. Neither is on the strategy-config path.
+* It failed for the QA pass too, once, on a tree that did not contain
+  today's fixes, and passed on every other run.
+
+The mechanism is test isolation, not product behaviour: several tests
+apply new versions of the same versioned configuration document against
+one shared disposable backend, and this one asserts a
+`Version N active.` confirmation that a `parent_version` it no longer
+holds will not produce. It is deliberately **not** "fixed" by relaxing
+the assertion — the assertion is the point of the test. It belongs to
+whoever owns the suite's fixture isolation, and is recorded here so the
+next person does not spend the afternoon on it believing it is theirs.
+
 ## 3b. Float-shortcut audit across `web/src`
 
 Grepped for `parseFloat`, `toFixed` and `Number(` outside tests.
@@ -215,6 +248,7 @@ non-zero if any stop has page-level horizontal overflow.
 
 ```
 61 stops captured, 0 with page-level horizontal overflow, 0 prepare errors
+(the first run; see the re-measured 75-stop table below)
 ```
 
 | Dimension | Covered |
@@ -230,7 +264,7 @@ mattered — it failed.
 
 ### What the first run found
 
-**Eight of 61 stops overflowed**, all on the screener at 768px and
+**Eight of 61 stops overflowed** in the first run, all on the screener at 768px and
 below, and the cause was in this change:
 
 `DecimalValue` renders the exact value in a `sr-only` sibling.
@@ -243,7 +277,7 @@ extended `documentElement`'s scrollable overflow. Measured: `html`
 scrollWidth 677 against a body and viewport of 390.
 
 Adding `relative` to the `DecimalValue` wrapper makes it the containing
-block. All 61 stops now measure zero.
+block. All 61 stops then measured zero, and the re-run below measures zero across all 75.
 
 Two further defects surfaced in the same pass:
 
@@ -290,19 +324,32 @@ the **Operations** destination highlighted and a breadcrumb reading
 The Settings captures are to be retaken once the e2e run releases the
 dev server.
 
-**The whole report predates HEAD, not just those captures.** This was
-understated here before, and an independent audit was right to flag it:
-every one of the 13 scroller entries in `overflow-report.json` records
-`"label": null`, yet at HEAD `/screener` passes
-`label="Cross-exchange spreads"` and both `VirtualTable` branches set
-`aria-label` from it unconditionally. So the run predates the
-scroll-region naming, the row-identity keys and the Calculator venue
-fix, all of which landed in the same commit as the report. The **width**
-numbers are still carried forward, because none of those changes alters
-layout width — but nobody has measured HEAD, and a reviewer opening the
-JSON to confirm the "the scroll region is named" claims above will find
-the artefact contradicting them. Treat the widths as evidence and the
-labels in that file as stale.
+**Re-run against HEAD.** An earlier version of this section disclosed
+that the report predated the scroll-region naming; an independent audit
+pointed out the disclosure still understated it, because the run also
+predated the row-identity keys, the Calculator venue fix and then the
+whole second round of audit fixes. Rather than narrow the claim again,
+the matrix was re-measured:
+
+| | earlier run | current run |
+| --- | --- | --- |
+| Stops | 61 | **75** |
+| Viewports | 1440×900, 1024×768, 768×1024, 390×844 | those four **plus 844×390** |
+| Stops with page-level horizontal overflow | 0 | **0** |
+| Scroll regions carrying an accessible name | 0 (all `null` — the artefact contradicted the claim) | **17** |
+
+The 844×390 stop is new and deliberate: a phone in landscape is *above*
+the md breakpoint, so the desktop sidebar renders into 390px of height,
+and that is the geometry in which `SecondaryNav` collapsed to zero
+height and took every secondary destination with it. A capture can only
+show that nothing overflows there — the reachability of those entries is
+asserted in e2e (`secondary navigation stays reachable on a short
+landscape viewport above the md breakpoint`), because that is a
+behavioural claim and a screenshot cannot carry it.
+
+The 200% zoom pass still covers 5 of the 7 states, for the reason stated
+in §6: it skips states that need an interaction to reach. That is a
+known gap, not a measured pass.
 
 ### An honest limitation of the "after" captures
 
@@ -358,7 +405,7 @@ the same as nothing being wrong.
 | --- | --- |
 | Discovery/Calculator implementation | done |
 | e2e selector updates for the renamed pause control | assigned — updated to the new names, **not** relaxed |
-| Responsive/theme/zoom capture matrix | done — 61 stops, with the 200% zoom scope stated honestly in §6 |
+| Responsive/theme/zoom capture matrix | done — **75 stops** across five viewports and both themes, re-measured against HEAD, 0 with overflow; the 200% zoom scope is stated honestly in §6 |
 | Keyboard, focus-return, contrast checks in a browser | done — contrast machine-checked (54 assertions); keyboard and focus-return checked by hand on the audited flows; no screen-reader pass |
 | Independent diff review | pending |
 | Mobile drawer / mobile nav sheet: scrim without `aria-modal` or focus containment | **fixed** — modality now follows the breakpoint (`lib/a11y.ts`): non-modal side panel at ≥md, `role="dialog"` + `aria-modal` + focus containment below it, with focus moved into the sheet on open. The focusable query excludes disabled and invisible controls, which is what a naive trap gets wrong around `PaperControl`'s disabled VIEWER button |

@@ -2082,6 +2082,74 @@ test("every pre-existing Settings anchor activates its category and moves focus 
   }
 });
 
+test("secondary navigation stays reachable on a short landscape viewport above the md breakpoint", async ({
+  page,
+}) => {
+  // 844x390 — a phone in landscape. 844 is above md(768), so the *desktop*
+  // sidebar renders into 390px of height. With `min-h-0 flex-1` the
+  // secondary list resolved to zero height, and because it owns its own
+  // overflow-y its clipped content did not extend the aside's scroll
+  // either: every secondary entry became genuinely unreachable rather
+  // than merely scrolled out of view. The capture matrix cannot catch
+  // this — it measures horizontal overflow — so this is the evidence.
+  await login(page);
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto("/risk");
+  const opsNav = page.getByRole("navigation", { name: "Operations sections" });
+  await expect(opsNav).toBeVisible();
+  const box = await opsNav.boundingBox();
+  expect(box, "the secondary nav must have a box at all").not.toBeNull();
+  expect(
+    box!.height,
+    "the secondary nav collapsed to zero height, taking every secondary destination with it",
+  ).toBeGreaterThan(40);
+  // And an entry inside it is actually reachable, not merely present.
+  const entry = opsNav.getByRole("link", { name: /Risk centre/i }).first();
+  await entry.scrollIntoViewIfNeeded();
+  await expect(entry).toBeVisible();
+});
+
+test("a Settings anchor this role cannot open says so instead of silently landing on Account", async ({
+  page,
+}) => {
+  // The counterpart to the test above, and the branch that had no
+  // coverage. A VIEWER has neither platform_admin nor screener:config, so
+  // #users maps to a category they cannot open. Landing them on Account
+  // with the URL still reading #users and nothing explaining why is what
+  // master did not do — it rendered an honest "Requires…" at the anchor —
+  // and the first version of SettingsCategories lost it by returning
+  // early. The notice must also not appear while the session is still
+  // loading, when the category list is legitimately short.
+  const viewer = await ensureViewerAccount(page);
+  await login(page, viewer.email, viewer.password);
+  // #users is platform-only. Note what this does NOT assert: that the
+  // Administration tab is absent. A VIEWER may read Scanner Suite
+  // settings, so Administration legitimately opens for them — the
+  // section inside it is what they cannot reach, which is why the
+  // explanation is driven by whether the anchor was actually reached
+  // rather than by whether the category exists.
+  await page.goto("/settings#users");
+  const notice = page.getByRole("status").filter({ hasText: /#users/ });
+  await expect(notice).toBeVisible({ timeout: 10_000 });
+  await expect(notice).toContainText(/not available to your role/i);
+  await expect(page.locator("#users")).toHaveCount(0);
+
+  // And the capability a VIEWER does have still works: the backend grants
+  // PermScreenerView to VIEWER, so hiding the whole Administration
+  // category from them was a lost capability, not a safety measure.
+  await page.goto("/settings#scanner-suite");
+  await expect(
+    page.getByRole("tab", { name: "Administration" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#scanner-suite")).toBeFocused({ timeout: 5_000 });
+  // No stale explanation left over from the previous navigation. Matched
+  // on the notice's own wording rather than on "#", which other status
+  // regions on this page could contain.
+  await expect(
+    page.getByRole("status").filter({ hasText: /not available to your role/i }),
+  ).toHaveCount(0);
+});
+
 test("switching Settings category and back does not lose an unsaved edit", async ({
   page,
 }) => {

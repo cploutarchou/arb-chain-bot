@@ -152,16 +152,34 @@ for (const theme of THEMES) {
     const page = await context.newPage();
 
     // Log in once per context.
-    await page.goto(`${BASE}/login`, { waitUntil: "load" });
-    // Wait for hydration before touching the form. Before React
-    // attaches its submit handler the button is inert, so filling
-    // and clicking immediately silently does nothing — the first
-    // run of this script sat on /login for 30s for that reason.
-    await page.waitForTimeout(3000);
-    await page.locator('input[type="email"]').fill(EMAIL);
-    await page.locator('input[type="password"]').fill(PASSWORD);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await page.waitForURL((u) => !u.pathname.endsWith("/login"), { timeout: 30_000 });
+    //
+    // Retried, because a fixed hydration wait is not a guarantee. Before
+    // React attaches its submit handler the button is inert, so a click
+    // silently does nothing and this script then sat on /login until the
+    // navigation timeout. `next dev` compiles routes on demand, so how
+    // long hydration takes depends on what the server is busy with — one
+    // capture run died on the fourth viewport for exactly this reason
+    // after three had passed. Clicking again is safe: if the first click
+    // did register, the URL has already changed and the loop exits.
+    for (let attempt = 1; ; attempt++) {
+      await page.goto(`${BASE}/login`, { waitUntil: "load" });
+      await page.waitForLoadState("networkidle").catch(() => {});
+      await page.waitForTimeout(1500);
+      await page.locator('input[type="email"]').fill(EMAIL);
+      await page.locator('input[type="password"]').fill(PASSWORD);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      try {
+        await page.waitForURL((u) => !u.pathname.endsWith("/login"), {
+          timeout: 20_000,
+        });
+        break;
+      } catch (err) {
+        if (attempt >= 3) throw err;
+        console.warn(
+          `login attempt ${attempt} did not navigate (${vp.id}/${theme}); retrying`,
+        );
+      }
+    }
     // The theme toggle persists a choice in localStorage that would
     // override the emulated colorScheme; clear it so the media query
     // stays authoritative and `colorScheme` above is what is captured.

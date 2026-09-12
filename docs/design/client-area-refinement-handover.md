@@ -31,15 +31,22 @@ Operations is itself one of the primary links — the earlier "6 primary
 highlighted no navigation entry fell from **3 to 0**; routes served
 stayed at **37**.
 
-On overflow: **61 of 61** capture stops show zero page-level horizontal
-overflow. That is seven states × four viewports × two themes, **plus
-200% zoom on five of the seven states** — the screener drawer and the
-Calculator are not covered at 200% zoom, because the zoom pass skips the
-states that need an interaction to reach. The Calculator is one of the
-surfaces the original audit flagged for clipped figures, so this gap is
-named rather than averaged into the total. At 200% the 1440-wide stop
-renders at 720 CSS px, which is the *mobile* layout, not a zoomed
-desktop one.
+On overflow: **75 of 75** capture stops show zero page-level horizontal
+overflow, re-measured against HEAD after every fix below. That is seven
+states × five viewports × two themes, **plus 200% zoom on five of the
+seven states** — the screener drawer and the Calculator are not covered
+at 200% zoom, because the zoom pass skips the states that need an
+interaction to reach. The Calculator is one of the surfaces the original
+audit flagged for clipped figures, so this gap is named rather than
+averaged into the total. At 200% the 1440-wide stop renders at 720 CSS
+px, which is the *mobile* layout, not a zoomed desktop one.
+
+The fifth viewport is **844×390** — a phone in landscape, which is above
+the md breakpoint and therefore renders the *desktop* sidebar into 390px
+of height. That is the geometry in which the secondary navigation
+collapsed to zero height and took every secondary destination with it. A
+capture can only show that nothing overflows there; that those entries
+are reachable is asserted in e2e, because it is a behavioural claim.
 
 ## The reconciliation decision, with the diff already read
 
@@ -173,6 +180,13 @@ by its own verification:
 
    The mobile drawer and nav sheet modality gap recorded here earlier is
    **now fixed** (`lib/a11y.ts`). What remains open is listed below.
+
+   E2E: **66 of 67 pass.** The single failure
+   (`console.spec.ts:134`, a `/strategies` config apply) is pre-existing,
+   passes in isolation in 2.1s, and is on a page this branch does not
+   touch — a fixture-isolation problem in the suite, classified with its
+   evidence in verification.md §3a and deliberately not "fixed" by
+   relaxing its assertion.
 7. **Tables outside the audited flows are keyboard-reachable but
    unnamed.** `Table`'s `label` is optional; the audited surfaces pass
    it, the rest do not yet.
