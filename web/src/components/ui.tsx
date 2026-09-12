@@ -35,12 +35,21 @@ export function Stat({
   label,
   value,
   tone,
+  exact,
 }: {
   label: string;
   value: ReactNode;
   tone?: Tone;
+  // exact: the untouched backend string behind a formatted display
+  // value — becomes the tooltip so the full precision stays one hover
+  // away (client-area audit: bounded display, exact-value disclosure).
+  exact?: string;
 }) {
-  const statTitle = typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+  const statTitle =
+    exact ??
+    (typeof value === "string" || typeof value === "number"
+      ? String(value)
+      : undefined);
   const color =
     tone === "ok"
       ? "text-[var(--ok)]"

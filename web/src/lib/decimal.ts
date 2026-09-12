@@ -103,7 +103,7 @@ export function signTone(value: string | undefined | null): Tone {
 export function signedText(value: string | undefined | null): string {
   if (value === undefined || value === null || value === "") return "—";
   const t = value.trim();
-  if (t === "—" || t.startsWith("-") || t.startsWith("+")) return value;
+  if (t === "—" || t.startsWith("-") || t.startsWith("+") || t.startsWith("<")) return value;
   if (/^0(\.0+)?$/.test(t)) return value;
   return `+${value}`;
 }
@@ -151,4 +151,62 @@ export function subtractDecimalStr(
   const fracPart = scale === 0 ? "" : abs.slice(abs.length - scale).replace(/0+$/, "");
   const body = fracPart ? `${intPart}.${fracPart}` : intPart;
   return body === "0" ? "0" : neg ? `-${body}` : body;
+}
+
+// fmtDecimal: bounded, grouped display form for an exact backend
+// decimal string (client-area audit 2026-09-12: gross/net bps cells
+// rendered twenty-plus fractional digits, which made the screener
+// table impossible to scan). Digit-string and BigInt manipulation
+// only — rounding a DISPLAY, never recomputing the value; the raw
+// string stays the source of truth for sorting, filters, forms,
+// exports and API round-trips, and callers expose it verbatim as the
+// exact-value disclosure (title attribute).
+//
+// Rules the audit set, all tested below:
+//   - bound fractional digits (default 6; bps call sites use 2),
+//     half-up on the digit string, trailing zeros trimmed;
+//   - a tiny nonzero value that would render as "0" shows as
+//     "< 0.000001" (sign retained: "-< 0.000001"), never a false
+//     zero;
+//   - "-0"/"-0.0" is an artifact and renders "0";
+//   - thousands separators on the integer part (opt out with
+//     { group: false });
+//   - null/undefined/"" → "—"; a non-numeric string passes through
+//     unchanged ("unknown" stays "unknown", never throws a render).
+export function fmtDecimal(
+  raw: string | null | undefined,
+  opts: { maxFrac?: number; group?: boolean } = {},
+): string {
+  if (raw === null || raw === undefined || raw === "") return "—";
+  const t = typeof raw === "string" ? raw.trim() : String(raw);
+  if (!/^-?\d+(\.\d+)?$/.test(t)) return t;
+  const maxFrac = Math.max(0, Math.floor(opts.maxFrac ?? 6));
+  const group = opts.group ?? true;
+
+  const neg = t.startsWith("-");
+  const unsigned = neg ? t.slice(1) : t;
+  const dot = unsigned.indexOf(".");
+  const intPart = dot === -1 ? unsigned : unsigned.slice(0, dot);
+  const fracPart = dot === -1 ? "" : unsigned.slice(dot + 1);
+
+  // Scale to maxFrac fractional digits, rounding half-up on the digit
+  // that would be dropped (BigInt keeps this exact at any length).
+  const cut = intPart.length + maxFrac;
+  const digits = (intPart + fracPart).padEnd(cut + 1, "0");
+  let scaled = BigInt(digits.slice(0, cut) || "0");
+  if ((digits[cut] ?? "0") >= "5") scaled += 1n;
+  const s = scaled.toString().padStart(maxFrac + 1, "0");
+  const intLen = s.length - maxFrac;
+  const intOut = s.slice(0, intLen).replace(/^0+(?=\d)/, "") || "0";
+  const fracOut = s.slice(intLen).replace(/0+$/, "");
+
+  if (intOut === "0" && fracOut === "") {
+    const exactlyZero = /^0*$/.test(intPart + fracPart);
+    if (exactlyZero) return "0";
+    const floor = maxFrac === 0 ? "1" : `0.${"0".repeat(maxFrac - 1)}1`;
+    return neg ? `-< ${floor}` : `< ${floor}`;
+  }
+  const grouped = group ? intOut.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : intOut;
+  const out = fracOut ? `${grouped}.${fracOut}` : grouped;
+  return neg ? `-${out}` : out;
 }

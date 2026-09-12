@@ -34,6 +34,7 @@ import {
   staleCellClass,
   useScreenerStatus,
 } from "@/components/screener/ScreenerShared";
+import { fmtDecimal } from "@/lib/decimal";
 import {
   Button,
   PageTitle,
@@ -456,23 +457,24 @@ export default function ScreenerPage() {
                   <span key="p" className={dim}>
                     {r.base}/{r.quote}
                   </span>,
-                  <span key="b" className={dim}>
-                    {r.buy_venue} @ {r.buy_ask}
+                  <span key="b" className={dim} title={r.buy_ask}>
+                    {r.buy_venue} @ {fmtDecimal(r.buy_ask, { maxFrac: 8 })}
                   </span>,
-                  <span key="s" className={dim}>
-                    {r.sell_venue} @ {r.sell_bid}
+                  <span key="s" className={dim} title={r.sell_bid}>
+                    {r.sell_venue} @ {fmtDecimal(r.sell_bid, { maxFrac: 8 })}
                   </span>,
-                  <span key="g" className={dim}>
-                    {r.spread_bps_gross}
+                  <span key="g" className={dim} title={r.spread_bps_gross}>
+                    {fmtDecimal(r.spread_bps_gross, { maxFrac: 2 })}
                   </span>,
                   <span
                     key="n"
+                    title={r.spread_bps_net}
                     className={`font-semibold ${dim} ${netTone === "ok" ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}
                   >
-                    {signedText(r.spread_bps_net)}
+                    {signedText(fmtDecimal(r.spread_bps_net, { maxFrac: 2 }))}
                   </span>,
-                  <span key="l" className={dim}>
-                    {r.liquidity_quote ?? "unknown"}
+                  <span key="l" className={dim} title={r.liquidity_quote ?? undefined}>
+                    {r.liquidity_quote ? fmtDecimal(r.liquidity_quote, { maxFrac: 2 }) : "unknown"}
                   </span>,
                   <span key="lt" className={dim}>
                     {r.lifetime_s}
@@ -571,8 +573,9 @@ export default function ScreenerPage() {
               <dt className="text-[var(--text-dim)]">Venue</dt>
               <dd className="text-right">{expandedRow.buy_venue}</dd>
               <dt className="text-[var(--text-dim)]">Ask × qty</dt>
-              <dd className="text-right">
-                {expandedRow.buy_ask} × {expandedRow.buy_ask_qty}
+              <dd className="text-right" title={`${expandedRow.buy_ask} × ${expandedRow.buy_ask_qty}`}>
+                {fmtDecimal(expandedRow.buy_ask, { maxFrac: 8 })} ×{" "}
+                {fmtDecimal(expandedRow.buy_ask_qty, { maxFrac: 8 })}
               </dd>
               <dt className="text-[var(--text-dim)]">Taker fee</dt>
               <dd className="text-right">{expandedRow.buy_fee_bps} bps</dd>
@@ -587,8 +590,9 @@ export default function ScreenerPage() {
               <dt className="text-[var(--text-dim)]">Venue</dt>
               <dd className="text-right">{expandedRow.sell_venue}</dd>
               <dt className="text-[var(--text-dim)]">Bid × qty</dt>
-              <dd className="text-right">
-                {expandedRow.sell_bid} × {expandedRow.sell_bid_qty}
+              <dd className="text-right" title={`${expandedRow.sell_bid} × ${expandedRow.sell_bid_qty}`}>
+                {fmtDecimal(expandedRow.sell_bid, { maxFrac: 8 })} ×{" "}
+                {fmtDecimal(expandedRow.sell_bid_qty, { maxFrac: 8 })}
               </dd>
               <dt className="text-[var(--text-dim)]">Taker fee</dt>
               <dd className="text-right">{expandedRow.sell_fee_bps} bps</dd>
@@ -601,11 +605,21 @@ export default function ScreenerPage() {
           <Section title="Calculator">
             <dl className="grid grid-cols-2 gap-y-2 text-[13px]">
               <dt className="text-[var(--text-dim)]">Liquidity (quote)</dt>
-              <dd className="text-right">{expandedRow.liquidity_quote}</dd>
+              <dd
+                className="text-right"
+                title={expandedRow.liquidity_quote ?? undefined}
+              >
+                {expandedRow.liquidity_quote
+                  ? fmtDecimal(expandedRow.liquidity_quote, { maxFrac: 2 })
+                  : "unknown"}
+              </dd>
               <dt className="text-[var(--text-dim)]">Gross / Net (bps)</dt>
-              <dd className="text-right">
-                {expandedRow.spread_bps_gross} /{" "}
-                {signedText(expandedRow.spread_bps_net)}
+              <dd
+                className="text-right"
+                title={`${expandedRow.spread_bps_gross} / ${expandedRow.spread_bps_net}`}
+              >
+                {fmtDecimal(expandedRow.spread_bps_gross, { maxFrac: 2 })} /{" "}
+                {signedText(fmtDecimal(expandedRow.spread_bps_net, { maxFrac: 2 }))}
               </dd>
               <dt className="text-[var(--text-dim)]">First seen</dt>
               <dd className="text-right">
