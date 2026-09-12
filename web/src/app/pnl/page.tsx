@@ -41,7 +41,7 @@ export default function PnLAnalyticsPage() {
   const distributions = usePoll(() => api.analytics.distributions(distHours), 15000, [distHours]);
 
   return (
-    <ConsoleShell active="PnL & Analytics">
+    <ConsoleShell>
       <PageTitle>PnL &amp; Analytics</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         Every number below is computed server-side from settled paper cycles — the console renders it,

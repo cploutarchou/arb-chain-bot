@@ -83,7 +83,7 @@ function CalculatorPageInner() {
   };
 
   return (
-    <ConsoleShell active="Calculator">
+    <ConsoleShell>
       <PageTitle>Spreads calculator</PageTitle>
 
       <Section title="Inputs">

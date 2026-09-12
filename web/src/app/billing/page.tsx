@@ -412,7 +412,7 @@ export default function BillingPage() {
     sub.kind === "ready" && sub.data.status?.subscription === "active";
 
   return (
-    <ConsoleShell active="Billing">
+    <ConsoleShell>
       <PageTitle>Billing</PageTitle>
 
       {clientToken && (

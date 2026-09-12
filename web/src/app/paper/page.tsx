@@ -105,7 +105,7 @@ export default function PaperPage() {
   const resetButtonDisabled = !mayReset || !paperPresent || paperRunning !== false;
 
   return (
-    <ConsoleShell active="Paper Trading">
+    <ConsoleShell>
       <PageTitle>Paper Trading</PageTitle>
       <Section title="Engine">
         <Await state={status} what="paper status">

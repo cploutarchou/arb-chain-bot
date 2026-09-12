@@ -111,7 +111,7 @@ export default function OverviewPage() {
   const mode = status.kind === "ready" ? status.data.mode : undefined;
 
   return (
-    <ConsoleShell active="Overview">
+    <ConsoleShell>
       <PageTitle>Overview</PageTitle>
       <FirstRunBanner />
 

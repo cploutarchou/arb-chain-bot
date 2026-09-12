@@ -179,7 +179,7 @@ export default function ScannerPage() {
   );
 
   return (
-    <ConsoleShell active="Scanner">
+    <ConsoleShell>
       <PageTitle>Scanner</PageTitle>
       <Section title="Live counters">
         <Await state={status} what="scanner status">

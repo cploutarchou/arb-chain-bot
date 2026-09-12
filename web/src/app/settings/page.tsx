@@ -852,7 +852,7 @@ function NotificationsSection() {
 
 export default function SettingsPage() {
   return (
-    <ConsoleShell active="Settings">
+    <ConsoleShell>
       <PageTitle>Settings</PageTitle>
       <Section title="Setup wizard">
         <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">

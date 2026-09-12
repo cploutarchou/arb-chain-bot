@@ -99,7 +99,7 @@ function OrdersPageInner() {
   };
 
   return (
-    <ConsoleShell active="Orders">
+    <ConsoleShell>
       <PageTitle>Orders</PageTitle>
       <Section title="Filters">
         <div className="mb-3 flex flex-wrap items-end gap-3 text-[13px]">

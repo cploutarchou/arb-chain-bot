@@ -83,7 +83,7 @@ export default function PerpetualsPage() {
   )?.hold_days_assumed;
 
   return (
-    <ConsoleShell active="Perpetuals">
+    <ConsoleShell>
       <PageTitle>Perpetuals & funding</PageTitle>
 
       <FilterCard activeCount={activeFilterCount}>

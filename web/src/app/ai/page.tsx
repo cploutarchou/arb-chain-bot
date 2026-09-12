@@ -30,7 +30,7 @@ export default function AIPage() {
   };
 
   return (
-    <ConsoleShell active="AI Advisor">
+    <ConsoleShell>
       <PageTitle>AI Advisor</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         The advisor is an analyst: recommendations change nothing until a human approves them, and

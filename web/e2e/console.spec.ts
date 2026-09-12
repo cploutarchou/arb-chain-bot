@@ -865,21 +865,22 @@ async function ensureViewerAccount(page: Page) {
   return VIEWER_TEST;
 }
 
-test("nav gating is visible for a VIEWER (role-restricted, not just hidden)", async ({
+test("Administration navigation is hidden for a VIEWER (operator-only section, never flashed)", async ({
   page,
 }) => {
   const viewer = await ensureViewerAccount(page);
   await login(page, viewer.email, viewer.password);
   await page.goto("/overview");
   const nav = page.getByRole("navigation");
-  // Audit Log: GatedControl state="role" — grey, cursor-not-allowed,
-  // non-navigable, with the actual minimum role named in the tooltip
-  // (console-v2.md §2.4 — never a generic "restricted").
+  // The operator administration section (Risk Center, Exchanges,
+  // Markets, System Health, Audit Log) is not part of a VIEWER's
+  // navigation at all — the client-area refinement keeps platform
+  // administration to entitled operator staff, and the routes'
+  // own pages still answer 403 with a clear error if reached by URL.
+  for (const label of ["Administration", "Risk Center", "Audit Log"]) {
+    await expect(nav.getByText(label)).toHaveCount(0);
+  }
   await expect(nav.getByRole("link", { name: "Audit Log" })).toHaveCount(0);
-  const gated = nav.locator('[title="Requires OPERATOR or ADMIN"]');
-  await expect(gated).toBeVisible();
-  await expect(gated).toHaveAttribute("aria-disabled", "true");
-  await expect(gated).toContainText("Audit Log");
 });
 
 test("shell paper control shows a VIEWER the live state but never the pause/resume button (F2 RBAC)", async ({
@@ -1141,22 +1142,42 @@ test.describe("Scanner Suite", () => {
     await page.close();
   });
 
-  test("nav group renders and every Scanner Suite page loads for an OPERATOR login", async ({
+  test("six primary destinations render; every Scanner Suite page is reachable through Discover for an OPERATOR login", async ({
     page,
   }) => {
     test.setTimeout(120_000);
     await login(page, OPERATOR.email, OPERATOR.password);
     await page.goto("/overview");
     const nav = page.getByRole("navigation");
-    await expect(nav.getByText("Scanner Suite")).toBeVisible();
+    // The task-based primary navigation (client-area audit §1): six
+    // destinations fit without scrolling, replacing the 29-link group
+    // wall. Administration is an explicitly labelled operator section.
     for (const label of [
-      "Screener",
+      "Overview",
+      "Discover",
+      "Paper Trading",
+      "Research & Results",
+      "Alerts & Rules",
+      "Settings",
+    ]) {
+      await expect(
+        nav.getByRole("link", { name: label, exact: true }),
+      ).toBeVisible();
+    }
+    await expect(nav.getByText("Administration")).toBeVisible();
+
+    // Discover reveals the Scanner Suite surfaces contextually (the
+    // audit's discoverability requirement: not all links at once, but
+    // one navigation activation away).
+    await page.goto("/screener");
+    for (const label of [
+      "Screener (cross-exchange)",
+      "Scanner (triangular)",
       "Perpetuals",
       "Funding",
       "Calculator",
-      "Alert Rules",
-      "Evidence — Screener Reports",
-      "Auto-Paper",
+      "Triangles",
+      "Opportunities",
     ]) {
       await expect(
         nav.getByRole("link", { name: label, exact: true }),

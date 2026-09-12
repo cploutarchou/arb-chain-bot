@@ -226,7 +226,7 @@ export default function ScreenerPage() {
   };
 
   return (
-    <ConsoleShell active="Screener">
+    <ConsoleShell>
       <PageTitle>Screener</PageTitle>
 
       <ScreenerAwait state={status} what="screener status">

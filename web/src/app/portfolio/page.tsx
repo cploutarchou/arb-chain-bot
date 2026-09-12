@@ -10,7 +10,7 @@ export default function PortfolioPage() {
   const pnl = usePoll(() => api.pnl(), 5000);
 
   return (
-    <ConsoleShell active="Portfolio & Balances">
+    <ConsoleShell>
       <PageTitle>Portfolio &amp; Balances</PageTitle>
       <Section title="Virtual balances">
         <Await state={portfolio} what="portfolio">

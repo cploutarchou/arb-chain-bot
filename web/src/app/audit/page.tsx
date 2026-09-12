@@ -11,7 +11,7 @@ export default function AuditPage() {
   const events = usePoll(() => api.audit(entity, 100), 10000, [entity]);
 
   return (
-    <ConsoleShell active="Audit Log">
+    <ConsoleShell>
       <PageTitle>Audit Log</PageTitle>
       <div className="mb-3">
         <input
