@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import {
   api,
@@ -854,65 +854,229 @@ export default function SettingsPage() {
   return (
     <ConsoleShell>
       <PageTitle>Settings</PageTitle>
-      <Section title="Setup wizard">
-        <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
-          Pick venues, set simulated paper balances and create a rule in three
-          short steps.{" "}
-          <Link href="/onboarding" className="text-[var(--accent)] underline">
-            Run the setup wizard →
-          </Link>
-        </p>
-      </Section>
-      <SessionSection />
-      <div id="operating-mode">
-        <OperatingModeSection />
-      </div>
-      <div id="markets">
-        <MarketsSection />
-      </div>
-      <VenuesSection />
-      <div id="scanner-suite">
-        <ScreenerSettingsSection />
-      </div>
-      <div id="logging">
-        <LoggingAccessSection />
-      </div>
-      <div id="ai">
-        <AIAdvisorSection />
-      </div>
-      <div id="platform-versions">
-        <PlatformVersionHistorySection />
-      </div>
-      <div id="users">
-        <UsersSection />
-      </div>
-      <StrategyRiskSection />
-      <div id="notifications">
-        <NotificationsSection />
-      </div>
-      <div id="security">
-        <SecretsSection />
-      </div>
-      <Section title="Security posture">
-        <ul className="max-w-2xl list-inside list-disc space-y-1 text-[13px] text-[var(--text-dim)]">
-          <li>
-            Live trading is permanently disabled by design (LiveExecutor returns
-            ErrLiveTradingDisabled).
-          </li>
-          <li>
-            Sessions are server-side and revocable; CSRF required on every state
-            change; RBAC enforced in the backend.
-          </li>
-          <li>
-            Exchange access is public market data only — no API keys with trade,
-            withdrawal, or transfer permissions exist anywhere in this system.
-          </li>
-          <li>
-            MFA (TOTP) enrollment is reserved in the auth flow but not yet
-            implemented (MASTER_PLAN T-052).
-          </li>
-        </ul>
-      </Section>
+      <SettingsCategories />
     </ConsoleShell>
+  );
+}
+
+// Focused categories (client-area audit §7 / refine command §4F): the
+// former single mixed-purpose form becomes Account, Organisation,
+// Notifications and — for entitled operator staff only —
+// Administration. Inactive categories stay MOUNTED but hidden: the
+// heavy platform editors keep their unsaved drafts and poll state, so
+// switching a tab never discards an edit, and a deep link
+// (/settings#markets, #users, #security, #scanner-suite,
+// #operating-mode, #logging, #ai, #platform-versions, #notifications)
+// activates the right category and focuses its anchor.
+const CATEGORY_ANCHORS: Record<string, string> = {
+  "#operating-mode": "administration",
+  "#markets": "administration",
+  "#scanner-suite": "administration",
+  "#logging": "administration",
+  "#ai": "administration",
+  "#platform-versions": "administration",
+  "#users": "administration",
+  "#security": "administration",
+  "#notifications": "notifications",
+};
+
+function SettingsCategories() {
+  const { state: auth } = useAuth();
+  const role = auth.kind === "authenticated" ? auth.me.role : undefined;
+  // Administration is operator territory; a missing role (auth loading
+  // or anonymous) hides it rather than flashing it — same rule as the
+  // shell's Administration nav.
+  const showAdmin = role === "OPERATOR" || role === "ADMIN";
+  const [category, setCategory] = useState<"account" | "organisation" | "notifications" | "administration">(
+    "account",
+  );
+  const tabRefs = {
+    account: useRef<HTMLButtonElement>(null),
+    organisation: useRef<HTMLButtonElement>(null),
+    notifications: useRef<HTMLButtonElement>(null),
+    administration: useRef<HTMLButtonElement>(null),
+  };
+
+  // Deep links: the hash picks the category, then the browser's native
+  // anchor scroll lands on the section (the anchor ids are preserved
+  // inside the panels). The hash is applied unconditionally — the
+  // effective category below handles "administration requested but the
+  // operator tabs are not available (yet)" — so a slow /auth/me can
+  // never strand a deep link on the wrong panel.
+  useEffect(() => {
+    const apply = () => {
+      const cat = CATEGORY_ANCHORS[window.location.hash];
+      if (cat) setCategory(cat as typeof category);
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+
+  // A viewer (or a still-loading session) never lands on a blank page:
+  // an administration deep link falls back to Account until the tabs
+  // exist.
+  const effective =
+    category === "administration" && !showAdmin ? "account" : category;
+
+  const tabs = [
+    { id: "account", label: "Account" },
+    { id: "organisation", label: "Organisation" },
+    { id: "notifications", label: "Notifications" },
+    ...(showAdmin ? [{ id: "administration", label: "Administration" }] : []),
+  ] as const;
+
+  const onTabKey = (e: React.KeyboardEvent, idx: number) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const dir = e.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(idx + dir + tabs.length) % tabs.length];
+    if (!next) return;
+    const id = next.id as keyof typeof tabRefs;
+    setCategory(id);
+    tabRefs[id].current?.focus();
+  };
+
+  return (
+    <>
+      <div
+        role="tablist"
+        aria-label="Settings categories"
+        className="mb-4 flex flex-wrap gap-1 border-b border-[var(--border)]"
+      >
+        {tabs.map((t, i) => {
+          const id = t.id as keyof typeof tabRefs;
+          return (
+          <button
+            key={t.id}
+            ref={tabRefs[id]}
+            role="tab"
+            id={`settings-tab-${t.id}`}
+            aria-selected={effective === id}
+            aria-controls={`settings-panel-${t.id}`}
+            tabIndex={effective === id ? 0 : -1}
+            onClick={() => setCategory(id)}
+            onKeyDown={(e) => onTabKey(e, i)}
+            className={`rounded-t border-b-2 px-3 py-1.5 text-[13px] ${
+              effective === id
+                ? "border-[var(--accent)] font-medium text-[var(--text)]"
+                : "border-transparent text-[var(--text-dim)] hover:text-[var(--text)]"
+            }`}
+          >
+            {t.label}
+          </button>
+          );
+        })}
+      </div>
+
+      <div
+        role="tabpanel"
+        id="settings-panel-account"
+        aria-labelledby="settings-tab-account"
+        hidden={effective !== "account"}
+      >
+        <Section title="Setup wizard">
+          <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+            Pick venues, set simulated paper balances and create a rule in three
+            short steps.{" "}
+            <Link href="/onboarding" className="text-[var(--accent)] underline">
+              Run the setup wizard →
+            </Link>
+          </p>
+        </Section>
+        <SessionSection />
+        <Section title="Security posture">
+          <ul className="max-w-2xl list-inside list-disc space-y-1 text-[13px] text-[var(--text-dim)]">
+            <li>
+              Live trading is permanently disabled by design (LiveExecutor returns
+              ErrLiveTradingDisabled).
+            </li>
+            <li>
+              Sessions are server-side and revocable; CSRF required on every state
+              change; RBAC enforced in the backend.
+            </li>
+            <li>
+              Exchange access is public market data only — no API keys with trade,
+              withdrawal, or transfer permissions exist anywhere in this system.
+            </li>
+            <li>
+              MFA (TOTP) enrollment is reserved in the auth flow but not yet
+              implemented (MASTER_PLAN T-052).
+            </li>
+          </ul>
+        </Section>
+      </div>
+
+      <div
+        role="tabpanel"
+        id="settings-panel-organisation"
+        aria-labelledby="settings-tab-organisation"
+        hidden={effective !== "organisation"}
+      >
+        <Section title="Organisation">
+          <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+            Organisation profile, members and API keys live on their own page.{" "}
+            <Link href="/org" className="text-[var(--accent)] underline">
+              Open Organisation →
+            </Link>
+          </p>
+        </Section>
+        <Section title="Billing">
+          <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+            Subscription, package changes and payment method.{" "}
+            <Link href="/billing" className="text-[var(--accent)] underline">
+              Open Billing →
+            </Link>
+          </p>
+        </Section>
+      </div>
+
+      <div
+        role="tabpanel"
+        id="settings-panel-notifications"
+        aria-labelledby="settings-tab-notifications"
+        hidden={effective !== "notifications"}
+      >
+        <div id="notifications">
+          <NotificationsSection />
+        </div>
+      </div>
+
+      {showAdmin && (
+        <div
+          role="tabpanel"
+          id="settings-panel-administration"
+          aria-labelledby="settings-tab-administration"
+          hidden={effective !== "administration"}
+        >
+          <div id="operating-mode">
+            <OperatingModeSection />
+          </div>
+          <div id="markets">
+            <MarketsSection />
+          </div>
+          <VenuesSection />
+          <div id="scanner-suite">
+            <ScreenerSettingsSection />
+          </div>
+          <div id="logging">
+            <LoggingAccessSection />
+          </div>
+          <div id="ai">
+            <AIAdvisorSection />
+          </div>
+          <div id="platform-versions">
+            <PlatformVersionHistorySection />
+          </div>
+          <div id="users">
+            <UsersSection />
+          </div>
+          <StrategyRiskSection />
+          <div id="security">
+            <SecretsSection />
+          </div>
+        </div>
+      )}
+    </>
   );
 }

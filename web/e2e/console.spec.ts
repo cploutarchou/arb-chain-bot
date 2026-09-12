@@ -559,7 +559,9 @@ test("settings Operating mode renders the mode table from capabilities with SHAD
   );
   // Immediate for the section header's field_timing lookup would be
   // wrong here — platform.mode is restart-scoped.
-  await expect(page.getByText("On restart").first()).toBeVisible();
+  await expect(
+    page.locator("#operating-mode").getByText("On restart"),
+  ).toBeVisible();
 });
 
 test("settings AI advisor shows the fake provider running (ARB_AI_PROVIDER=fake in the harness)", async ({
@@ -860,6 +862,7 @@ async function ensureViewerAccount(page: Page) {
       timeout: 10_000,
     });
   }
+  await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
   return VIEWER_TEST;
@@ -925,6 +928,7 @@ async function ensureOperatorAccount(page: Page) {
       timeout: 10_000,
     });
   }
+  await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
 }
