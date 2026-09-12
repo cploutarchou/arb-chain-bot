@@ -39,6 +39,7 @@ import { useAuth } from "@/lib/auth";
 import { worstVerdict } from "@/lib/campaignVerdict";
 import { feedState } from "@/lib/feedState";
 import {
+  presentQty,
   presentDecimal,
   presentPercentFromFraction,
   presentQuote,
@@ -220,7 +221,16 @@ function PipelineExplainer({
       key: "rejected",
       label: "Rejected at the risk gate",
       value: s.rejected,
-      note: "These have a recorded reason for each rejection.",
+      // Each rejection does carry a reason code, but the histogram on
+      // /risk is not a breakdown *of this count*: countReject is reached
+      // both from the event consumer (so rejections dropped before the
+      // consumer read them are missing from it) and from
+      // OnRevalidationReject, which refuses already-qualified
+      // opportunities at a later stage this page reports separately
+      // under Engine internals. The two figures therefore do not tie,
+      // and promising a per-rejection reason breakdown behind this link
+      // sent people to reconcile numbers that cannot be reconciled.
+      note: "Each rejection is assigned a reason code. The histogram on the Risk page covers the rejections the consumer read and also includes later pre-execution refusals, so it will not tie exactly to this count.",
       href: "/risk",
       action: "See rejection reasons",
     },
@@ -281,18 +291,29 @@ function PipelineExplainer({
           </li>
         ))}
       </ul>
-      {/* The invariant is stated, and so is any gap in it. A mismatch is
-          a real signal (events dropped before the consumer saw them),
-          not something to hide by adjusting a number. */}
+      {/* The invariant is stated, and so is any gap in it — but only
+          with the one cause that can actually produce it.
+          
+          This paragraph used to blame dropped events and print
+          `dropped_events` as if it were the size of the gap. It cannot
+          be: internal/scanner/scanner.go increments Qualified (line 422)
+          or Rejected (425) and only *then* attempts the non-blocking
+          send that may drop (429-431), so every dropped event has
+          already been counted in one of the four stages. The number was
+          typically orders of magnitude larger than the discrepancy it
+          claimed to explain, and the gap can fall either way — the
+          stages can exceed the total — which no amount of data loss
+          would produce. The real and only cause is that the five
+          counters are read one at a time, so a live session can advance
+          between the first read and the last. */}
       {accounted !== s.evaluations && (
         <p className="mt-2 max-w-3xl text-[11px] text-[var(--text-dim)]">
           The four stages account for{" "}
           <DecimalValue d={presentDecimal(accounted, { maxFrac: 0 })} /> of{" "}
           <DecimalValue d={presentDecimal(s.evaluations, { maxFrac: 0 })} />{" "}
-          evaluations. The difference is events that never reached the consumer
-          (
-          <DecimalValue d={presentDecimal(s.dropped_events, { maxFrac: 0 })} />{" "}
-          dropped) or counters advancing between two reads of the same snapshot.
+          evaluations. These counters are read one at a time rather than as a
+          single instant, so on a running engine they can disagree slightly in
+          either direction. A persistent or large gap is worth reporting.
         </p>
       )}
     </div>
@@ -624,7 +645,7 @@ export default function OverviewPage() {
                   asset and never combined — different assets are different
                   monies. Realized is cash basis; marked exposure values what is
                   still held. Figures are shown to 2 decimals; the exact value
-                  is in each figure&apos;s tooltip and on{" "}
+                  is shown on hover wherever a figure was rounded, and on{" "}
                   <Link href="/pnl" className="text-[var(--accent)] underline">
                     Results &amp; analytics
                   </Link>
@@ -677,22 +698,16 @@ export default function OverviewPage() {
                   empty="balances (see Balances for the full view)"
                   rows={shown.map(([asset, b]) => [
                     asset,
-                    <DecimalValue
-                      key="a"
-                      d={presentDecimal(b.available, {
-                        maxFrac: 2,
-                        minFrac: 2,
-                        unit: asset,
-                      })}
-                    />,
-                    <DecimalValue
-                      key="r"
-                      d={presentDecimal(b.reserved, {
-                        maxFrac: 2,
-                        minFrac: 2,
-                        unit: asset,
-                      })}
-                    />,
+                    // presentQty, not the 2-decimal money preset. A
+                    // balance is an amount of an *asset*, and the start
+                    // assets are operator-configurable — BTC is a legal
+                    // one — so two fixed decimals rendered a 0.00052 BTC
+                    // holding as "< 0.01 BTC" while the intermediate
+                    // exposure table on /portfolio showed the identical
+                    // quantity as "0.00052 BTC". Same asset, same page,
+                    // two precisions. This is the exposure table's rule.
+                    <DecimalValue key="a" d={presentQty(b.available, asset)} />,
+                    <DecimalValue key="r" d={presentQty(b.reserved, asset)} />,
                   ])}
                 />
                 {entries.length > shown.length && (

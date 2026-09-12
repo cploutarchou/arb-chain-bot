@@ -579,9 +579,17 @@ function routeScore(route: string, pathname: string): number {
 // resolveNav finds the entry that owns a pathname. Route-based, so a
 // label rename cannot change the answer, and a detail page resolves to
 // its parent entry instead of highlighting nothing.
+//
+// A fragment is deliberately *not* part of this decision — it names a
+// sub-view, not a route, and `usePathname()` never supplies one. Callers
+// that need fragment-level resolution use `findLeafByHref` first; see
+// `useCurrentNav`. It is stripped here rather than left to poison the
+// match, because a hand-written path with a fragment previously scored
+// nothing at all and resolved to `null` — highlighting nothing.
 export function resolveNav(pathname: string): NavMatch | null {
   // Trailing slashes and query/hash are not part of the decision.
-  const path = (pathname.split("?")[0] ?? pathname).replace(/\/+$/, "") || "/";
+  const path =
+    (pathname.split(/[?#]/)[0] ?? pathname).replace(/\/+$/, "") || "/";
   let best: NavMatch | null = null;
   let bestScore = 0;
   for (const destination of NAV) {
@@ -600,15 +608,36 @@ export function resolveNav(pathname: string): NavMatch | null {
   return best;
 }
 
+// findLeafByHref matches a navigation entry by its exact href, fragment
+// included. This is what lets a `/settings#markets` entry under
+// Operations own the current view: the *path* alone resolves to the
+// Settings destination, so route matching on its own moved the highlight
+// onto Settings the moment one of those entries was clicked, emptied the
+// list it came from, and left the entry the reader just activated with
+// no current state anywhere.
+export function findLeafByHref(href: string): NavMatch | null {
+  for (const destination of NAV) {
+    for (const group of destination.groups) {
+      for (const leaf of group.items) {
+        if (leaf.href === href) return { destination, leaf, group };
+      }
+    }
+  }
+  return null;
+}
+
 // SETTINGS_CATEGORIES: the Settings page's own category structure, and
 // the mapping every preserved deep link goes through. The nine anchors
 // that existed before this change are listed explicitly and each one
 // must still activate and focus its category — that is asserted in the
 // e2e suite, not merely intended.
+// Three categories, not five: Organisation and Billing are their own
+// routes (/org, /billing) and always were. Declaring them here as
+// in-page categories that no SETTINGS_SECTIONS entry maps to is what
+// seeded the "five categories by audience" claim that the page does not
+// build.
 export type SettingsCategoryId =
   | "account"
-  | "organisation"
-  | "billing"
   | "notifications"
   | "administration";
 

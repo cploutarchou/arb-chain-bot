@@ -28,7 +28,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV, resolveNav, type NavDestination, type NavLeaf } from "@/lib/nav";
+import {
+  NAV,
+  findLeafByHref,
+  resolveNav,
+  type NavDestination,
+  type NavLeaf,
+} from "@/lib/nav";
 import { can, useAuth, useEntitlement } from "@/lib/auth";
 import { NavIcon } from "@/components/icons";
 import { GatedControl } from "@/components/GatedControl";
@@ -112,9 +118,10 @@ function stripHash(href: string): string {
 }
 
 // useHash tracks the current fragment. `usePathname` deliberately
-// excludes it, and it is the only thing that distinguishes one Settings
-// entry from another, so the highlight needs it. Read in an effect, so
-// server and client markup agree on the first paint.
+// excludes it, and it is the only thing that distinguishes one
+// `/settings#…` entry from another — eight of which live under
+// Operations — so the highlight genuinely needs it. Read in an effect,
+// so server and client markup agree on the first paint.
 function useHash(): string {
   const [hash, setHash] = useState("");
   useEffect(() => {
@@ -126,18 +133,44 @@ function useHash(): string {
   return hash;
 }
 
-// useCurrentNav resolves the current route for the shell.
+// useCurrentNav resolves the current view for the whole shell — primary
+// highlight, secondary list and breadcrumb all read this one answer, so
+// they cannot disagree with each other.
+//
+// The fragment is consulted *before* the route, because a fragment can
+// move the answer to a different destination entirely: Operations owns
+// eight `/settings#…` entries, and resolving on `usePathname()` alone
+// (which Next strips the fragment from) sent every one of them to the
+// Settings destination. The visible symptom was that clicking "Markets
+// & assets" under Operations highlighted Settings, replaced the
+// secondary list with Settings' two entries, and left the entry just
+// activated with no `aria-current` at all — so a screen-reader user was
+// told they were in Settings and a pointer user lost the seven siblings
+// they were working through.
+//
+// A fragment match only wins if the reader can actually see that entry;
+// otherwise a deep link into platform configuration would highlight an
+// Operations entry that is hidden for their role.
 export function useCurrentNav() {
   const pathname = usePathname() ?? "/";
+  const hash = useHash();
+  const { leafState } = useNavVisibility();
+  if (hash) {
+    const byHash = findLeafByHref(`${stripHash(pathname)}#${hash}`);
+    if (byHash && leafState(byHash.leaf).kind !== "hidden") return byHash;
+  }
   return resolveNav(pathname);
 }
 
 // ---- Primary navigation --------------------------------------------------
 
-// PrimaryNav renders the primary destinations. It never scrolls: the
-// primary choices must all be visible without scrolling at 1440×900, so
-// the shell gives this block a fixed place and lets only the secondary
-// list below it scroll.
+// PrimaryNav renders the primary destinations. It is `shrink-0`, so at
+// the viewport heights this console is designed for the primary choices
+// are all visible at once and only the secondary list below scrolls. On
+// a viewport too short to hold both (a landscape phone above the md
+// breakpoint) the sidebar itself scrolls rather than anything becoming
+// unreachable — which is the honest version of the claim this comment
+// used to make unconditionally.
 export function PrimaryNav({ onNavigate }: { onNavigate?: () => void }) {
   const { destinations } = useNavVisibility();
   const current = useCurrentNav();
@@ -199,19 +232,15 @@ export function PrimaryNav({ onNavigate }: { onNavigate?: () => void }) {
 export function SecondaryNav({ onNavigate }: { onNavigate?: () => void }) {
   const { leafState } = useNavVisibility();
   const current = useCurrentNav();
-  const hash = useHash();
   if (!current) return null;
   const destination = current.destination;
-  // Entries in this destination that share the current path and differ
-  // only by fragment. When there are any, the fragment picks the current
-  // one; with no fragment the first such entry is the landing view.
-  const samePathLeaves = destination.groups
-    .flatMap((g) => g.items)
-    .filter((l) => stripHash(l.href) === stripHash(current.leaf.href));
-  const fragmented = samePathLeaves.filter((l) => l.href.includes("#"));
-  const currentByHash = hash
-    ? fragmented.find((l) => l.href.endsWith(`#${hash}`))
-    : undefined;
+  // No fragment bookkeeping here any more: useCurrentNav resolves the
+  // fragment itself, so `current.leaf` already *is* the entry the reader
+  // is on, including the `/settings#…` ones. The local
+  // samePathLeaves/fragmented/currentByHash block that used to live here
+  // could never fire — it looked for fragmented siblings inside
+  // `current.destination`, which route matching had already set to
+  // Settings, where there are none.
 
   const rendered = destination.groups
     .map((group) => ({
@@ -230,10 +259,17 @@ export function SecondaryNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav
       aria-label={`${destination.label} sections`}
-      // The only scrolling region in the sidebar. The primary list above
-      // keeps its place; this list yields when a destination has many
-      // sections (Operations has the most).
-      className="mt-3 min-h-0 flex-1 overflow-y-auto border-t border-[var(--border)] pt-2"
+      // `min-h-[8rem]`, not `min-h-0`. With `min-h-0 flex-1` this box was
+      // free to resolve to *zero* height whenever the sidebar's fixed
+      // children already filled the viewport — which happens on a short
+      // landscape phone (844×390 is still wider than the md breakpoint,
+      // so the desktop sidebar renders into 390px of height). Because
+      // this element owns its own `overflow-y`, its clipped content did
+      // not extend the aside's scroll either, so every secondary entry
+      // became genuinely unreachable rather than merely scrolled away.
+      // With a floor it overflows the aside instead, and the aside's own
+      // scrolling takes over.
+      className="mt-3 min-h-[8rem] flex-1 overflow-y-auto border-t border-[var(--border)] pt-2"
     >
       <h2 className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
         In {destination.label}
@@ -265,13 +301,7 @@ export function SecondaryNav({ onNavigate }: { onNavigate?: () => void }) {
                     </li>
                   );
                 }
-                const active = currentByHash
-                  ? currentByHash.id === leaf.id
-                  : // No fragment in the URL: fall back to route
-                    // matching, except that a fragmented sibling must
-                    // not claim the plain path — on bare /settings the
-                    // first Settings entry is the one shown.
-                    current.leaf.id === leaf.id;
+                const active = current.leaf.id === leaf.id;
                 return (
                   <li key={leaf.id}>
                     <Link

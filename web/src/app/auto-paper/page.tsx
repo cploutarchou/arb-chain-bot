@@ -60,9 +60,15 @@ import {
 function RuleLabel({
   ruleId,
   names,
+  namesLoaded,
 }: {
   ruleId: string | undefined;
   names: Map<string, string>;
+  // namesLoaded: the rules list was actually read. Without this the
+  // no-name branch made a positive claim — "Rule (unnamed)" — on the
+  // strength of a failed or in-flight request, telling an operator who
+  // had carefully named every rule that none of them had a name.
+  namesLoaded: boolean;
 }) {
   if (!ruleId) return <span className="text-[var(--text-dim)]">—</span>;
   const name = names.get(ruleId);
@@ -87,7 +93,7 @@ function RuleLabel({
   return (
     <span className="inline-flex flex-col gap-0.5">
       <span className="text-[12px] text-[var(--text-dim)]">
-        Rule (unnamed)
+        {namesLoaded ? "Rule (unnamed)" : "Rule name unavailable"}
       </span>
       <span className="font-mono text-[11px] text-[var(--text)]" title={ruleId}>
         {ruleId}
@@ -104,12 +110,15 @@ export default function AutoPaperPage() {
   // failure here degrades to identifiers, never to a guessed name, and
   // never blocks the page.
   const rules = usePoll(() => api.screener.rules.list(), 60000);
+  // usePoll keeps the last good payload on an error (usePoll.ts:35-40),
+  // so a transient failure must not throw away names that were on
+  // screen a second ago.
+  const ruleRows = rules.kind === "loading" ? undefined : rules.data;
+  const namesLoaded = ruleRows !== undefined;
   const names = new Map<string, string>(
-    rules.kind === "ready"
-      ? rules.data
-          .filter((r) => r.name.trim() !== "")
-          .map((r) => [r.id, r.name] as const)
-      : [],
+    (ruleRows ?? [])
+      .filter((r) => r.name.trim() !== "")
+      .map((r) => [r.id, r.name] as const),
   );
 
   return (
@@ -131,6 +140,19 @@ export default function AutoPaperPage() {
           Screener evidence
         </Link>
       </p>
+
+      {!namesLoaded && rules.kind === "error" && (
+        // Above both tables, because RuleLabel is used in the second one
+        // and the note previously sat inside the first — and only when
+        // that one had rows.
+        <p
+          role="status"
+          className="mb-3 text-[12px] text-[var(--text-dim)]"
+        >
+          Rule names could not be loaded just now, so rules below are
+          identified by their id. ({rules.message})
+        </p>
+      )}
 
       <Section title="Results by rule">
         <ScreenerAwait state={autoPaper} what="rule results">
@@ -169,17 +191,7 @@ export default function AutoPaperPage() {
                 </p>
               );
             }
-            return (
-              <>
-                <RuleEvidenceTable rows={rows} />
-                {rules.kind === "error" && (
-                  <p className="mt-2 text-[11px] text-[var(--text-dim)]">
-                    Rule names could not be loaded just now, so rules are
-                    identified by their id.
-                  </p>
-                )}
-              </>
-            );
+            return <RuleEvidenceTable rows={rows} />;
           }}
         </ScreenerAwait>
       </Section>
@@ -192,11 +204,21 @@ export default function AutoPaperPage() {
                 "Rule",
                 "Strategy",
                 "Pair",
-                "Buy → Sell",
+                // "Venues", not "Buy → Sell": the backend names these
+                // venue_a and venue_b, neutrally, because for a carry
+                // position they are the spot and perp legs rather than a
+                // buy and a sell. Asserting a direction the field names
+                // do not carry would be an invention.
+                "Venues",
                 "Status",
                 "Opened",
-                "Net result",
-                "Position",
+                // Two columns, not one "Net result": pnl_quote is
+                // realised and mark_pnl_quote is the unrealised mark of
+                // a position still open. Merging them into one figure
+                // would combine two different meanings, and an em dash
+                // here honestly means "not applicable in this state".
+                "Marked (open)",
+                "Realised",
               ]}
               align={[
                 "text",
@@ -206,18 +228,21 @@ export default function AutoPaperPage() {
                 "text",
                 "text",
                 "num",
-                "text",
+                "num",
               ]}
               label="Open simulated positions"
               rowKeys={(a.positions ?? []).map((p) => p.id)}
               empty="open positions. A rule opens one when it fires and its conditions are met"
               rows={(a.positions ?? []).map((p) => [
-                <RuleLabel key="rule" ruleId={p.rule_id} names={names} />,
+                <RuleLabel
+                  key="rule"
+                  ruleId={p.rule_id}
+                  names={names}
+                  namesLoaded={namesLoaded}
+                />,
                 p.strategy ?? "—",
                 p.base && p.quote ? `${p.base}/${p.quote}` : "—",
-                p.buy_venue && p.sell_venue
-                  ? `${p.buy_venue} → ${p.sell_venue}`
-                  : "—",
+                p.venue_a && p.venue_b ? `${p.venue_a} · ${p.venue_b}` : "—",
                 <Badge
                   key="st"
                   tone={
@@ -235,21 +260,23 @@ export default function AutoPaperPage() {
                 // ternary sent anything that was not "ok" to the loss
                 // colour, so a flat position rendered as a loss.
                 <DecimalValue
-                  key="pnl"
+                  key="mark"
                   d={
                     p.quote
-                      ? presentSignedQuote(p.net_pnl_quote, p.quote)
+                      ? presentSignedQuote(p.mark_pnl_quote, p.quote)
                       : presentDecimal(null)
                   }
                   tone="sign"
                 />,
-                <span
-                  key="id"
-                  className="font-mono text-[11px] text-[var(--text-dim)]"
-                  title={p.id}
-                >
-                  {p.id.length > 12 ? `${p.id.slice(0, 12)}…` : p.id}
-                </span>,
+                <DecimalValue
+                  key="pnl"
+                  d={
+                    p.quote
+                      ? presentSignedQuote(p.pnl_quote, p.quote)
+                      : presentDecimal(null)
+                  }
+                  tone="sign"
+                />,
               ])}
             />
           )}

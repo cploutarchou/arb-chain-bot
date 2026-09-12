@@ -340,16 +340,40 @@ function ScreenerPageInner() {
       { label: "Spreads / sec", value: s.spreads_per_sec },
       { label: "Data age", value: fmtAge(ageMs) },
     );
-  } else {
-    const placeholder = status.kind === "loading" ? "…" : "—";
+  } else if (status.kind === "loading") {
     statusItems.push(
-      { label: "Venues online", value: placeholder },
-      { label: "Pairs tracked", value: placeholder },
-      { label: "Spreads / sec", value: placeholder },
-      { label: "Data age", value: placeholder },
+      { label: "Venues online", value: "…" },
+      { label: "Pairs tracked", value: "…" },
+      { label: "Spreads / sec", value: "…" },
+      { label: "Data age", value: "…" },
+    );
+  } else {
+    // A failed status call is not a reading of zero. An em dash here was
+    // indistinguishable from a healthy-but-empty deployment — "no venues
+    // configured, nothing tracked yet" — while the spreads table below
+    // carried on rendering, so nothing on the page said the venue-health
+    // source was unreachable. The word and the tone both say it now, and
+    // the backend's own message rides along as the hint.
+    statusItems.push(
+      { label: "Venues online", value: "unavailable", tone: "bad", hint: status.message },
+      { label: "Pairs tracked", value: "unavailable", tone: "bad", hint: status.message },
+      { label: "Spreads / sec", value: "unavailable", tone: "bad", hint: status.message },
+      { label: "Data age", value: "unavailable", tone: "bad", hint: status.message },
     );
   }
-  statusItems.push({ label: "Poll interval", value: `${pollIntervalS}s` });
+  // The poll interval is a backend-owned figure that falls back to a
+  // local default when status is unreadable — so it must not be stated
+  // as fact while the endpoint that owns it is down.
+  statusItems.push(
+    status.kind === "error"
+      ? {
+          label: "Poll interval",
+          value: `${pollIntervalS}s (default)`,
+          tone: "dim",
+          hint: "The configured interval could not be read; this is the console's fallback.",
+        }
+      : { label: "Poll interval", value: `${pollIntervalS}s` },
+  );
   if (spreads.kind === "ready" && spreads.data.excluded) {
     const { suspect, liquidity_unknown } = spreads.data.excluded;
     statusItems.push(

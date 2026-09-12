@@ -682,6 +682,8 @@ interface NotifApplyConfirm {
 function NotificationsSection() {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
+  const platformAdmin =
+    auth.kind === "authenticated" && auth.me.platform_admin === true;
   const mayEdit = can(role, "scanner:config");
   const [refresh, setRefresh] = useState(0);
   const current = usePoll(() => api.config.current(), 15000, [refresh]);
@@ -827,7 +829,14 @@ function NotificationsSection() {
           </div>
         )}
       </Await>
-      <TelegramAllowlistSection />
+      {/* TelegramAllowlistSection polls GET /platform/settings, which
+          internal/api/platformapi.go wraps in requirePlatformAdmin — so
+          for a VIEWER, an OPERATOR or a tenant ADMIN it rendered an
+          ErrorBox carrying `platform_admin_required` inside a category
+          every member sees. It is a platform-wide destination allowlist,
+          not a personal notification preference, so it is gated like the
+          rest of the platform configuration rather than explained. */}
+      {platformAdmin && <TelegramAllowlistSection />}
       {confirmState && (
         <ConfirmDialog
           title="Apply new notification settings?"
@@ -878,6 +887,17 @@ export default function SettingsPage() {
   // show an OPERATOR forms the backend then refuses.
   const mayConfigure =
     can(role, "screener:config") || can(role, "risk:config");
+  // Reading Scanner Suite settings is a *different* permission from
+  // changing them: GET /api/v1/screener/settings is registered with
+  // PermScreenerView, which internal/auth/rbac.go grants to VIEWER,
+  // OPERATOR and ADMIN alike (rbac.go:49,56,65). Master rendered the
+  // panel unconditionally and let it self-gate — every input carries
+  // `disabled={!editing}` and the Edit button is behind its own
+  // `mayEdit` — so a non-ADMIN saw a complete read-only view of poll
+  // interval, liquidity floor, per-venue enablement and paper balances.
+  // Gating the whole category on the *write* permission took that away
+  // from exactly the roles whose job is to watch it.
+  const mayReadScanner = can(role, "screener:view");
 
   const categories: SettingsCategoryDef[] = [
     {
@@ -940,25 +960,28 @@ export default function SettingsPage() {
     },
   ];
 
-  // Administration appears only for someone who can configure something.
-  if (mayConfigure || platformAdmin) {
+  // Administration appears for anyone who can read or configure
+  // something in it — not only for someone who can write.
+  if (mayReadScanner || mayConfigure || platformAdmin) {
     categories.push({
       id: "administration",
       label: "Administration",
       description: platformAdmin
         ? "Platform-wide configuration. Changes here affect every organisation on this deployment, and most apply on the next engine restart."
-        : "Trading configuration for this deployment. Platform-wide settings are operated by platform staff and are not shown here.",
+        : mayConfigure
+          ? "Trading configuration for this deployment. Platform-wide settings are operated by platform staff and are not shown here."
+          : "The scanning configuration this deployment runs on, read-only for your role. Changing it needs an administrator.",
       content: (
         <>
+          {mayReadScanner && (
+            <SettingsAnchor anchor="scanner-suite">
+              <ScreenerSettingsSection />
+            </SettingsAnchor>
+          )}
           {mayConfigure && (
-            <>
-              <SettingsAnchor anchor="scanner-suite">
-                <ScreenerSettingsSection />
-              </SettingsAnchor>
-              <SettingsAnchor anchor="strategy-risk">
-                <StrategyRiskSection />
-              </SettingsAnchor>
-            </>
+            <SettingsAnchor anchor="strategy-risk">
+              <StrategyRiskSection />
+            </SettingsAnchor>
           )}
           {platformAdmin ? (
             <>
@@ -1009,7 +1032,13 @@ export default function SettingsPage() {
   return (
     <ConsoleShell>
       <PageTitle>Settings</PageTitle>
-      <SettingsCategories categories={categories} />
+      {/* ready: while the session is loading the category list is
+          legitimately short, and an anchor for a category that has not
+          appeared yet must not be reported as one this role cannot open. */}
+      <SettingsCategories
+        categories={categories}
+        ready={auth.kind !== "loading"}
+      />
     </ConsoleShell>
   );
 }

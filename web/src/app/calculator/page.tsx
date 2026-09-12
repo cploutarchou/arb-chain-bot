@@ -180,6 +180,37 @@ function ResultPanel({
               </p>
             </div>
           </div>
+        ) : result.liquidity_unknown ? (
+          // A third state, and it has to come before the "insufficient"
+          // one. Several venues (Gate, Crypto.com, WhiteBIT) publish
+          // bulk tickers with no sizes at all, and
+          // internal/screener/calculator.go then computes
+          // liquidity_quote as zero — which makes liquidity_ok false for
+          // *every* size, including the smallest. Rendering that as
+          // "does not cover this trade size … try a smaller size"
+          // asserted a depth measurement that was never made and gave
+          // advice that can never succeed: shrinking 1000 to 0.01 clears
+          // nothing. The backend already distinguishes the two cases;
+          // the console simply was not reading the flag.
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded border border-[var(--warn)] bg-[var(--bg-panel)] p-3"
+          >
+            <span className="mt-0.5 shrink-0 text-[var(--warn)]">
+              <WarnTriIcon />
+            </span>
+            <div>
+              <p className="text-[13px] font-medium text-[var(--warn)]">
+                Liquidity could not be checked
+              </p>
+              <p className="mt-1 text-[13px] text-[var(--text-dim)]">
+                {request.buyVenue} or {request.sellVenue} publishes no
+                top-of-book size, so depth was not measured at this size or at
+                any other. The estimate below uses the quoted prices only —
+                whether the size is available is unknown, not insufficient.
+              </p>
+            </div>
+          </div>
         ) : (
           <div
             role="status"

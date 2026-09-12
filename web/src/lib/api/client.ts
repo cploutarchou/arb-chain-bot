@@ -1660,6 +1660,15 @@ export interface ScreenerCalculatorResult {
   net: string;
   net_bps: string;
   liquidity_ok: boolean;
+  // liquidity_unknown: the venue publishes no top-of-book size, so depth
+  // could not be checked *at any size*. internal/screener/calculator.go
+  // computes liquidity_quote as zero in that case, which makes
+  // liquidity_ok false for every possible size — indistinguishable from
+  // "your size is too large" unless this flag is read.
+  liquidity_unknown?: boolean;
+  suspect?: boolean;
+  buy_age_ms?: number;
+  sell_age_ms?: number;
 }
 
 export interface ScreenerVenueSettings {
@@ -1799,18 +1808,33 @@ export interface ScreenerAutoPaperRuleSummary {
 // ("positions: [...]") — every field beyond id is optional and an
 // unrecognized backend field still renders via the index signature,
 // mirroring the Report interface's forward-compat convention above.
+// The field names are those `PaperPosition` actually marshals
+// (internal/screener/service_automation.go:56-77). They were previously
+// guessed as buy_venue/sell_venue/net_pnl_quote — keys the backend has
+// never sent — so the venue pair and the result column of the Open
+// positions table were structurally empty on every row, for every user,
+// and read as "this simulation produced no result" rather than as a
+// console bug. The index signature meant TypeScript could not catch it.
 export interface ScreenerAutoPaperPosition {
   id: string;
   rule_id?: string;
   strategy?: string;
   base?: string;
   quote?: string;
-  buy_venue?: string;
-  sell_venue?: string;
+  venue_a?: string;
+  venue_b?: string;
+  qty?: string;
   status?: string;
+  skipped_reason?: string;
   opened_at?: string;
   closed_at?: string;
-  net_pnl_quote?: string;
+  // Realised for a closed position; the open ones carry mark_pnl_quote
+  // as the unrealised mark, with mark_age_ms as the age of the quotes it
+  // came from. Distinct meanings, so they are not merged here.
+  pnl_quote?: string;
+  funding_quote?: string;
+  mark_pnl_quote?: string;
+  mark_age_ms?: number;
   [field: string]: unknown;
 }
 

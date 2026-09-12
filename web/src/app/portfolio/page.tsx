@@ -12,7 +12,6 @@ import {
   Table,
 } from "@/components/ui";
 import {
-  presentDecimal,
   presentPercentFromFraction,
   presentQuote,
   presentQty,
@@ -43,15 +42,21 @@ export default function PortfolioPage() {
                   // point, and a column total would add different monies.
                   <DecimalValue
                     key="a"
-                    d={presentDecimal(b.available, { maxFrac: 2, minFrac: 2, unit: asset })}
+                    // presentQty, matching the intermediate-exposure
+                    // table below: both are amounts of an asset, and
+                    // start assets are operator-configurable, so two
+                    // fixed decimals collapsed a sub-cent crypto balance
+                    // to "< 0.01" while the exposure table showed the
+                    // same quantity in full.
+                    d={presentQty(b.available, asset)}
                   />,
                   <DecimalValue
                     key="r"
-                    d={presentDecimal(b.reserved, { maxFrac: 2, minFrac: 2, unit: asset })}
+                    d={presentQty(b.reserved, asset)}
                   />,
                   <DecimalValue
                     key="e"
-                    d={presentDecimal(p.equity[asset], { maxFrac: 2, minFrac: 2, unit: asset })}
+                    d={presentQty(p.equity[asset], asset)}
                   />,
                 ])}
               />
