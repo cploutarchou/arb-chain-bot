@@ -10,7 +10,7 @@ export default function ExchangesPage() {
   const health = usePoll(() => api.system.health(), 3000);
 
   return (
-    <ConsoleShell active="Exchanges">
+    <ConsoleShell>
       <PageTitle>Exchanges &amp; Markets</PageTitle>
       <Await state={health} what="exchange health">
         {(h) => (

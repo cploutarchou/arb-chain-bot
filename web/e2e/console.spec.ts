@@ -76,6 +76,13 @@ test("mode banner announces the mode on mobile without opening the menu (F1)", a
   await expect(
     page.getByTitle(/REPLAY — replaying recorded data, not live/),
   ).toBeVisible();
+  // The status poll keeps firing, so a route callback can still be in
+  // `route.fetch()` when the test ends — it then rejects with "Test
+  // ended" and Playwright attributes the failure to whichever test runs
+  // next (it surfaced on the page sweep at :81, which registers no
+  // routes of its own). Dropping the handler here ends that race.
+  // Assertions above are untouched: this runs only after they pass.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
 test("every nav page renders content or an honest state", async ({ page }) => {
@@ -608,7 +615,9 @@ test("settings Operating mode renders the mode table from capabilities with SHAD
   );
   // Immediate for the section header's field_timing lookup would be
   // wrong here — platform.mode is restart-scoped.
-  await expect(page.getByText("On restart").first()).toBeVisible();
+  await expect(
+    page.locator("#operating-mode").getByText("On restart"),
+  ).toBeVisible();
 });
 
 test("settings AI advisor shows the fake provider running (ARB_AI_PROVIDER=fake in the harness)", async ({
@@ -1185,8 +1194,7 @@ test("Screener include_suspect/include_unknown_liquidity toggles are off by defa
   expect(seenQueries[0]?.get("include_suspect")).toBeNull();
   expect(seenQueries[0]?.get("include_unknown_liquidity")).toBeNull();
 
-  await expect(page.getByText("Excluded: suspect")).toBeVisible();
-  await expect(page.getByText("3", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Excluded: suspect\s*3/)).toBeVisible();
 
   // The two opt-ins moved behind a collapsed-by-default "Advanced
   // filters" disclosure (T-087 §A2/§A3) — the labels and their off-by-

@@ -202,7 +202,7 @@ export default function CampaignsPage() {
   };
 
   return (
-    <ConsoleShell active="Campaigns">
+    <ConsoleShell>
       <PageTitle>Campaigns</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         Recordings capture public Binance depth only — no orders are ever placed. The §80 campaign

@@ -146,7 +146,7 @@ Two e2e assertions the navigation change necessarily touches:
 | Unit tests | added this task: `npm run test:unit`, Playwright runner, no browser, no backend |
 | `scripts/e2e.sh` | available; dedicated backend on :18080, Next on :3100 |
 | Go toolchain checks | to be run and recorded even though no Go is expected to change |
-| Browser | Claude in Chrome is connected (one local Linux browser) — used read-only |
+| Browser | A connected Chrome browser (one local Linux instance) — used read-only |
 | GitHub Actions CI | **unverifiable**: `docs/PENDING.md` §0 records repo-wide Actions failure since 2026-08-31 with no runner assigned. CI-equivalent means the local suite here. |
 
 ### Runtime isolation rules adopted

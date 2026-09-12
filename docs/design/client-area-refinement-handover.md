@@ -75,6 +75,12 @@ every row is checkable with `git show master:<file>`.
 | | master (PR #31) | this branch |
 | --- | --- | --- |
 | Where the nav lives | inline in `ConsoleShell.tsx`, 788 lines | `lib/nav.ts` (data) + `components/ConsoleNav.tsx` (render); shell is 552 lines |
+
+*Line counts in this table are as measured when the comparison was made,*
+*against master's `a8657a7` (still 788) and this branch at `6d5c039`. After*
+*the merge the shell is **586** lines — the resolution kept the extracted*
+*structure, and the growth is master's non-nav shell content merging in.*
+*The split is now `nav.ts` 689 + `ConsoleNav.tsx` 379 beside it.*
 | Primary links | 6 destinations | 6 + an explicit **Operations** destination = 7 |
 | Selection | route prefixes against stable **destination** ids | same, plus stable ids on **every leaf** (`data-nav-id`, used by the tests) |
 | Operator routes | flat `ADMIN_LINKS`, shown when `role === "OPERATOR" \|\| role === "ADMIN"` | entries inside Operations, each gated on the permission the backend actually checks |
@@ -95,6 +101,104 @@ row; on both, this branch matches `internal/auth/rbac.go` and master
 does not. The cost of keeping this branch is re-resolving
 `ConsoleShell.tsx`, `overview/page.tsx` and the `active=` prop on 27
 pages against master's versions.
+
+## The merge, as resolved
+
+Master was rewritten again after the table above was written: PRs #30/#31/#32
+are no longer separate commits in its history. They were squashed into
+`a8657a7` "feat: close T-062 and T-084, and land the client-area refinement",
+which moved the merge base from `15f82d2` to `b1faf6d`. Master was merged into
+this branch on 2026-09-12. Rescue point: tag `pre-merge-t087`.
+
+**14 files conflicted; 27 auto-merged.** Every conflict was resolved by reading
+both sides and asking one question — does master's side hold anything this
+branch lacks? — rather than by preferring a side:
+
+| File | Resolution | Evidence the other side lost nothing |
+| --- | --- | --- |
+| `internal/scanner/scanner_test.go` | both tests kept | master's T-062 `NoViableSize` test and this branch's four-stage partition test both pass against master's `scanner.go`; `go test -race` green |
+| `.github/workflows/ci.yml`, `web/package.json` | both runners kept | `npm test` (10, `fmtDecimal`) **and** `npm run test:unit` (82, `presentDecimal`) both run in CI |
+| `web/src/lib/decimal.ts` | both APIs kept | `fmtDecimal` and the `presentDecimal` presets coexist; master's 59-line addition is untouched |
+| `ConsoleShell.tsx` | this branch's extracted nav | master's inline `DESTINATIONS` holds **31** hrefs; `lib/nav.ts` holds **41**, and set-difference against master's is empty |
+| `calculator/page.tsx` | this branch's `ResultPanel` | all nine of master's result fields present, plus `liquidity_unknown`, a third state master lacks |
+| `overview/page.tsx` | this branch's attention composer | see below |
+| `screener/page.tsx` | this branch's | no API field only on master's side; the two differing names were locals over the same helpers |
+| `console.spec.ts` | this branch's | master's one unique test asserts master's wording and its hidden-`/risk` behaviour; the six-destination assertion it carried already exists in the merged file and in `web/unit/nav.spec.ts` |
+
+**One deliberate drop, argued rather than assumed.** Master's Overview reads
+`risk.data.reject_reason_counts` and prints the top three rejection reasons
+directly beneath a session-scoped evaluation count. That was not grafted in.
+The Rejected card on this branch already documents *why* those two figures
+cannot be reconciled: `countReject` is reached both from the event consumer
+(so rejections dropped before the consumer read them are absent) and from
+`OnRevalidationReject`, a later stage reported separately under Engine
+internals. Rendering the histogram under the session count re-creates exactly
+the reconciliation trap that note exists to prevent. The reasons stay one
+click away, behind the card's "See rejection reasons" link to `/risk`, which
+is the surface whose scope matches the number. Surfacing the top three
+*inside* the Rejected card, labelled "since engine start", would be defensible
+— but it is a product change, not a merge resolution, and it is not in this
+commit.
+
+Master's two other Overview attention items — "Paper simulation is paused" and
+"Persistence not configured" — were dropped as duplicates, not as losses: both
+already render in this branch's status strip above the fold, which is where a
+*state* belongs. Attention is for anomalies.
+
+**Four defects the merge itself introduced**, all caught by `typecheck`/`lint`
+on the merged tree and none by the conflict resolution:
+
+- `NetworkBadge` lost from the `ScreenerShared` import — an import list is the
+  one conflict shape where the correct resolution is the **union**, not a side.
+- master's `clearFilters` (exact duplicate of `clearAllFilters`), its
+  `fmtDecimal` import, its `pathname` read in `ConsoleShell`, and its
+  `CATEGORY_ANCHORS` map arrived as orphans once their call sites went.
+- master's `function SettingsCategories()` and its `attention` composer
+  auto-merged **cleanly** alongside this branch's versions, giving two
+  declarations of each. A clean merge is not a verified merge.
+
+A repo-wide scan for duplicate top-level declarations now reports zero.
+
+That scan is structural, so it could not see the two the **e2e suite** caught
+after everything static was green:
+
+- `paper/page.tsx` rendered **two** reset controls — master's prominent red
+  "Danger zone" `Section` auto-merged alongside this branch's `Collapsible`.
+  Removing the panel is the whole point of the change (the audit's note that
+  the console's most destructive control had the strongest visual pull), so
+  master's copy went. Every safeguard is untouched: ADMIN only, engine paused,
+  type-to-confirm, backend-enforced.
+- `console.spec.ts:1190` took master's combined assertion
+  `getByText(/Excluded: suspect 3/)`. `MetricStrip` renders the label and the
+  value as two sibling `<span>`s, so no single element carries that text and
+  the assertion cannot pass against this markup. Replaced with
+  `/Excluded: suspect\s*3/`, which matches the parent span's concatenated text
+  — **stronger** than the branch's previous pair of assertions, because it ties
+  the count to its own label instead of asserting a bare "3" somewhere on the
+  page.
+
+One further master-side test edit was reverted rather than kept: master renamed
+the VIEWER test to "Administration navigation is hidden for a VIEWER". The body
+— unchanged, this branch's — asserts the Audit log entry *renders* as a
+role-gated, non-navigable control naming its minimum role. The title asserted
+the opposite of the test. The accurate name is restored. Master's other spec
+edit, scoping "On restart" to `#operating-mode` instead of `.first()`, is a
+real strengthening and was kept.
+
+A third failure was **not** a merge regression and was not treated as one.
+`every nav page renders content or an honest state` (:81) failed in the suite
+and passed alone in 14.9s — the discriminator for this repo. The error was not
+an assertion but `route.fetch: Test ended`: the *previous* test leaves a
+`/api/v1/system/status` interceptor registered, the status poll keeps firing,
+and an in-flight callback rejects after that test ends, which Playwright
+attributes to whichever test runs next. Fixed at the source with
+`page.unrouteAll({ behavior: "ignoreErrors" })` after that test's assertions,
+so no assertion was touched or relaxed.
+
+**The exit code lied once.** `bash scripts/e2e.sh | tail -40` reported exit 0
+while two tests failed — the pipeline's status is `tail`'s. The suite result
+here is read from `$?` of the unpiped run, and from the explicit
+"N passed / M failed" line.
 
 ## What stayed technically distinct — deliberately
 

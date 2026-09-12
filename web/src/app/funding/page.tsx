@@ -56,7 +56,7 @@ export default function FundingPage() {
   );
 
   return (
-    <ConsoleShell active="Funding">
+    <ConsoleShell>
       <PageTitle>Funding</PageTitle>
 
       <Section title="Current funding rates (venue × base)">

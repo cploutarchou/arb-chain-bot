@@ -642,7 +642,7 @@ function ScreenerPageInner() {
   align.push("text", "text");
 
   return (
-    <ConsoleShell active="Screener">
+    <ConsoleShell>
       <PageTitle>Screener</PageTitle>
 
       <MetricStrip items={statusItems} />

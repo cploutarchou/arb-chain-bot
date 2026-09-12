@@ -15,7 +15,7 @@ export default function TrianglesPage() {
   const status = usePoll(() => api.scanner.status(), 10000);
 
   return (
-    <ConsoleShell active="Triangles">
+    <ConsoleShell>
       <PageTitle>Triangles</PageTitle>
       <Section title="Active topology">
         <Await state={status} what="topology">

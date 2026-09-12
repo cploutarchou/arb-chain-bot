@@ -1044,3 +1044,14 @@ export default function SettingsPage() {
     </ConsoleShell>
   );
 }
+
+// Focused categories (client-area audit §7 / refine command §4F): the
+// former single mixed-purpose form becomes Account, Organisation,
+// Notifications and — for entitled operator staff only —
+// Administration. Inactive categories stay MOUNTED but hidden: the
+// heavy platform editors keep their unsaved drafts and poll state, so
+// switching a tab never discards an edit, and a deep link
+// (/settings#markets, #users, #security, #scanner-suite,
+// #operating-mode, #logging, #ai, #platform-versions, #notifications)
+// activates the right category and focuses its anchor.
+

@@ -28,7 +28,7 @@ export default function TriangleDetailPage() {
   const detail = usePoll(() => api.triangles.get(id), 5000, [id]);
 
   return (
-    <ConsoleShell active="Triangles">
+    <ConsoleShell>
       <PageTitle>Triangle {id}</PageTitle>
       <Await state={detail} what="triangle detail">
         {(d) => (

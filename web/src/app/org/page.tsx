@@ -357,7 +357,7 @@ export default function OrgPage() {
   const platformAdmin = auth.kind === "authenticated" && auth.me.platform_admin;
 
   return (
-    <ConsoleShell active="Organisation">
+    <ConsoleShell>
       <PageTitle>Organisation</PageTitle>
       <Await state={org} what="organisation">
         {(data) => {

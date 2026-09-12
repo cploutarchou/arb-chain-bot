@@ -398,7 +398,7 @@ function CalculatorPageInner() {
   const sizeUnit = quote.trim() ? quote.trim().toUpperCase() : "quote";
 
   return (
-    <ConsoleShell active="Calculator">
+    <ConsoleShell>
       <div className="mb-4 flex items-center justify-between gap-3">
         <PageTitle>Spreads calculator</PageTitle>
         <Link

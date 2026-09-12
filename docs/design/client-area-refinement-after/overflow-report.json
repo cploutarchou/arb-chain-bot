@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T18:19:44.705Z",
+  "generatedAt": "2026-09-12T20:21:28.001Z",
   "base": "http://127.0.0.1:3100",
   "results": [
     {
@@ -112,7 +112,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 181
+          "overflow": 163
         }
       ]
     },
@@ -208,7 +208,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 414
+          "overflow": 419
         }
       ]
     },
@@ -226,7 +226,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 426
+          "overflow": 419
         }
       ]
     },
@@ -304,7 +304,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 555
+          "overflow": 541
         }
       ]
     },
@@ -322,7 +322,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 555
+          "overflow": 540
         }
       ]
     },
@@ -400,7 +400,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 350
+          "overflow": 345
         }
       ]
     },
@@ -418,7 +418,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 350
+          "overflow": 326
         }
       ]
     },
@@ -580,7 +580,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 170
+          "overflow": 165
         }
       ]
     },
@@ -598,7 +598,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 175
+          "overflow": 146
         }
       ]
     },
@@ -676,7 +676,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 438
+          "overflow": 422
         }
       ]
     },
@@ -694,7 +694,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 437
+          "overflow": 410
         }
       ]
     },
@@ -772,7 +772,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 560
+          "overflow": 521
         }
       ]
     },
@@ -790,7 +790,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 560
+          "overflow": 524
         }
       ]
     },
@@ -868,7 +868,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 353
+          "overflow": 326
         }
       ]
     },
@@ -886,7 +886,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 350
+          "overflow": 326
         }
       ]
     },
@@ -964,7 +964,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 218
+          "overflow": 194
         }
       ]
     },
@@ -982,7 +982,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 218
+          "overflow": 200
         }
       ]
     },

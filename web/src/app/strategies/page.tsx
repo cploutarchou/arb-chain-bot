@@ -384,7 +384,7 @@ export default function StrategiesPage() {
   };
 
   return (
-    <ConsoleShell active="Strategies">
+    <ConsoleShell>
       <PageTitle>Strategy Configuration</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         Every change becomes an immutable version with a diff, actor, and audit event, and hot-swaps

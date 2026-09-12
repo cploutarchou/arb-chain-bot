@@ -167,7 +167,7 @@ export default function RiskPage() {
   const health = usePoll(() => api.system.health(), 5000);
 
   return (
-    <ConsoleShell active="Risk Center">
+    <ConsoleShell>
       <PageTitle>Risk Center</PageTitle>
       <RiskTopStrip risk={risk} portfolio={portfolio} pnl={pnl} health={health} />
       <Await state={risk} what="risk state">

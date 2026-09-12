@@ -11,6 +11,55 @@ desktop captures from a real Brave session on 2026-09-12. These are
 live data whose values differ between runs, so re-shooting them would
 produce a different "before", not a better one.
 
+## 0. Re-verification after the master merge (2026-09-12, 23:xx)
+
+Everything in §1 onward was first measured at `6d5c039`, **before** master's
+`a8657a7` (T-062, T-084 and master's own client-area variant, ~50 files) was
+merged in. A clean merge is not a verified merge, so the whole suite was re-run
+on the merged tree. These are the merged-tree numbers:
+
+| Check | Result on the merged tree |
+| --- | --- |
+| `gofmt -l internal cmd` | clean |
+| `go build ./...` / `go vet ./...` | pass |
+| `golangci-lint run ./...` | **0 issues** |
+| `go test -race -count=1 ./internal/scanner/ ./internal/storage/` | pass — master's T-062 `NoViableSize` test and this branch's stage-partition test both green against master's `scanner.go` |
+| `npm run lint` (eslint + contrast) | clean, 54/54 contrast checks |
+| `npm run typecheck` | clean |
+| `npm run build` | pass |
+| `npm test` (node:test, `fmtDecimal`) | **10/10** |
+| `npm run test:unit` (Playwright, `presentDecimal`/nav/rbac/anchors) | **82/82** |
+| `scripts/e2e.sh` | **68/68, exit 0** |
+| `node scripts/gen-route-map.mjs` | 37 routes, **0 orphans**, 38 standing entries |
+| duplicate top-level declarations across `web/src` + `web/e2e` | **0** |
+
+Test counts are unchanged from the pre-merge branch (68 e2e, 82 unit, 10
+node:test), and both decimal test runners survive the merge — that was the
+point of keeping both `web/package.json` scripts and both CI steps.
+
+Three failures surfaced on the merged tree and all three were fixed at the
+source, not by relaxing an assertion; they are described in the handover's
+"The merge, as resolved". One caution recorded for whoever runs this next:
+`bash scripts/e2e.sh | tail` reports the **pipe's** exit status, not the
+suite's. An early run showed "exit 0" with two tests failing. Read `$?` from
+the unpiped command, or the explicit "N passed / M failed" line.
+
+The capture sweep was re-run too, and it needed to be: the merge removed
+master's duplicate renderings from `/paper` (the `Danger zone` panel),
+`/overview` (the second attention composer) and `/settings` (the local
+`SettingsCategories`) — three of the seven audited states. "No layout
+primitive changed" was reasoning, not measurement, and by then it was no
+longer even true.
+
+```
+77 stops MEASURED, 0 with page-level horizontal overflow, 0 NOT MEASURED (prepare failed)
+```
+
+Same matrix as before the merge: seven workflows × {1440×900, 1024×768,
+768×1024, 390×844, 844×390} × both themes, plus a 200% zoom pass over all
+seven. `capture-after.mjs` exits non-zero on a prepare failure, so
+"0 NOT MEASURED" is the script's own assertion, not a reading of the log.
+
 ## 1. Repository checks
 
 | Check | Command | Result |

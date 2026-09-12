@@ -28,7 +28,7 @@ export default function CycleDetailPage() {
   const fills = usePoll(() => api.fills.list({ cycle: id, limit: 200 }), 10000);
 
   return (
-    <ConsoleShell active="Paper">
+    <ConsoleShell>
       <PageTitle>Cycle {id}</PageTitle>
       <Await state={cycle} what="cycle">
         {(c) => (
