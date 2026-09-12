@@ -56,7 +56,7 @@ T-106 asks.
 | **T-078** | Nightly paper report | Code shipped 2026-08-27. Filing a real ≥30-day window under `docs/campaigns/` has not happened — no run that long exists yet. |
 | **T-079** | Operations automation | Self-healing collectors done. Scheduled migrations, backups, health checks and alerting on failure: not started. |
 | **T-083** | Paddle billing | Implemented; a sandbox run against the real Paddle account and catalogue is still owed. |
-| **T-084** | Affiliate programme | Accrual ledger with maturation/reversal done. Payouts report and jobs open. |
+| **T-084** | Affiliate programme | Accrual ledger, maturation job, payouts report and payout recording done (2026-09-12). Still owed with T-083: Paddle refund events don't reach the lifecycle, so reversals never fire from live data; the affiliate-facing dashboard (clicks/sign-ups) has no data source. |
 | **T-085** | Marketing site | Copy and legal drafts exist; site scaffold with copy lint being built. Compliance blocks open: legal-page drafts, sign-up risk acknowledgement, hypothetical-performance disclaimer on every paper surface. |
 | **T-057/059/060/061** | Platform settings, operating mode, secrets vault, venue capabilities | Backend implemented; console surfaces for these were not carried through with the same coverage. |
 

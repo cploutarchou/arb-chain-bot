@@ -327,6 +327,33 @@ export interface BillingPricesResponse {
   client_token: string;
 }
 
+// Affiliate payouts report (T-084, packages.md §5): one line per
+// affiliate account — the folded ledger balance plus the fraud-rule
+// review figures. Amounts are exact decimal strings.
+export interface AffiliatePayoutLine {
+  id: string;
+  org_id: number;
+  code: string;
+  status: "active" | "review" | "closed";
+  payout: {
+    balance: {
+      accrued: string;
+      matured: string;
+      paid: string;
+      reversed: string;
+      payable: boolean;
+    };
+    refund_rate_90d?: string;
+    manual_review: boolean;
+    paid_last_180d: string;
+  };
+}
+
+export interface AffiliatePayoutsResponse {
+  generated_at: string;
+  accounts: AffiliatePayoutLine[];
+}
+
 export interface BillingCheckoutResult {
   transaction_id?: string;
   client_token?: string;
@@ -2035,6 +2062,18 @@ export const api = {
     portal: () => get<{ url: string }>("/api/v1/billing/portal"),
     cancel: () =>
       post<{ status: string; effective: string }>("/api/v1/billing/cancel"),
+    affiliatePayouts: () =>
+      get<AffiliatePayoutsResponse>("/api/v1/billing/affiliate/payouts"),
+    recordAffiliatePayout: (
+      affiliateId: string,
+      amountUsd: string,
+      reference: string,
+    ) =>
+      post<{ entry: { id: string } }>("/api/v1/billing/affiliate/payouts", {
+        affiliate_id: affiliateId,
+        amount_usd: amountUsd,
+        reference: reference,
+      }),
   },
   users: {
     list: async () =>
