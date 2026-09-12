@@ -47,7 +47,11 @@ var packages = map[string]Entitlements{
 		// 2026-08-29) switched it off until T-116 builds it. Restore
 		// "dex" and DexEnabled: true in the same change that flips
 		// DexImplemented — Validate rejects them until then.
-		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2", "tier3"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: false, PerpsEnabled: true},
+		// tier4 joins tier3 here the T-104 way: the tier shipped, soaked
+		// clean (2026-09-13) and is enabled by default, so the top
+		// packages' row must include it or their tenants cannot even
+		// apply the default settings document (prices unchanged).
+		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2", "tier3", "tier4"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: false, PerpsEnabled: true},
 		Rules:     Rules{MaxActive: 80, TemplatesMax: Unlimited, MinRefreshS: 3, Kinds: []string{"spread", "carry", "basis", "funding", "triangular"}},
 		Alerts:    Alerts{Channels: []string{"web", "telegram", "email", "webhook"}, PerDay: 8000, TelegramDestinationsMax: 1, MinCooldownS: 10},
 		AutoPaper: AutoPaper{Strategies: []string{"cross_venue_spot", "carry", "futures_futures", "funding_harvest", "triangular"}, MaxOpenPositions: 150, LedgersMax: 10, MaxSizeQuote: "100000"},
@@ -59,8 +63,9 @@ var packages = map[string]Entitlements{
 	},
 	PackageInstitution: {
 		SchemaVersion: SchemaVersion, PackageCode: PackageInstitution,
-		// See the Desk note: no DEX tier until T-116 (T-102).
-		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2", "tier3"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: false, PerpsEnabled: true},
+		// See the Desk note: no DEX tier until T-116 (T-102), tier4 per
+		// the same T-104 rule as Desk.
+		Venues:    Venues{ScreenerMax: Unlimited, ScreenerTiers: []string{"tier1", "tier2", "tier3", "tier4"}, ScreenerFixed: []string{}, TriangularMax: Unlimited, DexEnabled: false, PerpsEnabled: true},
 		Rules:     Rules{MaxActive: 250, TemplatesMax: Unlimited, MinRefreshS: 2, Kinds: []string{"spread", "carry", "basis", "funding", "triangular"}},
 		Alerts:    Alerts{Channels: []string{"web", "telegram", "email", "webhook"}, PerDay: 40000, TelegramDestinationsMax: 5, MinCooldownS: 5},
 		AutoPaper: AutoPaper{Strategies: []string{"cross_venue_spot", "carry", "futures_futures", "funding_harvest", "triangular"}, MaxOpenPositions: 600, LedgersMax: 25, MaxSizeQuote: "1000000"},

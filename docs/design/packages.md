@@ -35,7 +35,7 @@ sign-off and a margin check against infra cost per tenant (T-094 load tests).
 | Monthly | $0 | $39 | $89 | $219 | from $690 (annual only, quoted) |
 | Annual | – | $390 | $890 | $2,190 | from $6,900 |
 | Trial | – | 14-day Operator trial on sign-up, no card, one per organisation | ← same | ← same | pilot by agreement |
-| Venues (screener + perps) [^tiers] | 3 fixed (Binance, OKX, Bybit) | 6 (Tier-1 set) | Tier-1 + Tier-2 (10 venues) | all CEX venues: Tier-1 + Tier-2 + Tier-3 (15) | all, plus venue requests |
+| Venues (screener + perps) [^tiers] | 3 fixed (Binance, OKX, Bybit) | 6 (Tier-1 set) | Tier-1 + Tier-2 (10 venues) | all CEX venues: Tier-1 + Tier-2 + Tier-3 + Tier-4 (19) | all, plus venue requests |
 | Triangular engine venues [^tri] | 1 | 2 | 4 | all supported | all |
 | Concurrent alert rules | 2 | 8 | 25 | 80 | 250 (soft; raise on request) |
 | Saved screener templates | 3 | 10 | 40 | unlimited | unlimited |
@@ -98,6 +98,16 @@ rules, the write API and 400 days with Parquet — what a desk needs to
 audit our evidence itself. Reasoning and the rejected alternative
 (repricing Desk to ~$169) are in
 `docs/decisions/2026-08-29-dex-package-capability-withdrawn.md` §5.
+
+**Tier-4 followed the same rule on 2026-09-13** (T-075 remainder:
+Bithumb, Phemex, Upbit, LBank — research, collectors, a clean 30-min
+nineteen-venue soak with zero 429/418/403 and zero failed polls, then
+enabled by default). Desk and Institution now carry
+`["tier1","tier2","tier3","tier4"]` for the same reason T-104 gave:
+a shipped-and-default tier that the row omits does not protect a price
+step — it just makes the default settings document unappliable for the
+tenants who pay the most. Prices unchanged; Operator still ends at
+Tier-2, so the venue row keeps differentiating.
 
 Rationale for the levers:
 

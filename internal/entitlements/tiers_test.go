@@ -101,21 +101,29 @@ func TestCheckVenueTiersFailsClosed(t *testing.T) {
 	}
 }
 
-// TestTier3IsAdvertisedByTheTopTwoPackages is the packaging half of
-// T-104: Tier-3 venues ship, are soaked and are enabled by default, and
-// the row that describes them has to say so or Desk and Operator remain
-// indistinguishable on venues.
-func TestTier3IsAdvertisedByTheTopTwoPackages(t *testing.T) {
+// TestTier3AndTier4AreAdvertisedByTheTopTwoPackages is the packaging
+// half of T-104 (and its Tier-4 repetition, 2026-09-13): a tier that
+// ships, soaks clean and is enabled by default must be in the top
+// packages' row or their tenants cannot even apply the default settings
+// document — and without it Desk and Operator remain indistinguishable
+// on venues.
+func TestTier3AndTier4AreAdvertisedByTheTopTwoPackages(t *testing.T) {
 	for _, code := range []string{PackageDesk, PackageInstitution} {
 		p, _ := Package(code)
 		if !Has(p.Venues.ScreenerTiers, "tier3") {
 			t.Errorf("package %q does not advertise tier3: %v", code, p.Venues.ScreenerTiers)
+		}
+		if !Has(p.Venues.ScreenerTiers, "tier4") {
+			t.Errorf("package %q does not advertise tier4: %v", code, p.Venues.ScreenerTiers)
 		}
 	}
 	for _, code := range []string{PackageWatch, PackageSignal, PackageOperator} {
 		p, _ := Package(code)
 		if Has(p.Venues.ScreenerTiers, "tier3") {
 			t.Errorf("package %q advertises tier3; it is the Desk differentiator: %v", code, p.Venues.ScreenerTiers)
+		}
+		if Has(p.Venues.ScreenerTiers, "tier4") {
+			t.Errorf("package %q advertises tier4; it is the Desk differentiator: %v", code, p.Venues.ScreenerTiers)
 		}
 	}
 	desk, _ := Package(PackageDesk)
