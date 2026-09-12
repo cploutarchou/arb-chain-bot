@@ -59,7 +59,7 @@ T-106 asks.
 
 | Task | What it is | What remains |
 | --- | --- | --- |
-| **T-075** | Venue breadth (screener) | Tier-1/2/3 shipped and enabled by default (15 venues). **Remaining: Upbit, Bithumb, LBank, Phemex.** Also two recorded soak regressions not yet acted on: Coinbase took 20× HTTP 429 sharing an IP, and HTX returned a request-limit error the rate gate does **not** classify as a rate limit — so it neither counted nor backed off. |
+| **T-075** | Venue breadth (screener) | Tier-1/2/3 shipped and enabled by default (15 venues); the two recorded soak regressions are fixed (HTX rate refusals classified + Coinbase partial-poll/burst adaptation, `768eda1`/`137698d`). **Remaining: the Upbit, Bithumb, LBank, Phemex collectors** — endpoint research landed 2026-09-13 under `docs/research/venues/{upbit,bithumb,lbank,phemex}.md` (Upbit/Bithumb: KRW/BTC/USDT lanes with bulk books; LBank: per-symbol depth under an unverified rate budget; Phemex: bulk spot+perp tickers, scaled integers, 8 h funding). |
 | **T-078** | Nightly paper report | Code shipped 2026-08-27. Filing a real ≥30-day window under `docs/campaigns/` has not happened — no run that long exists yet. |
 | **T-079** | Operations automation | Self-healing collectors done. Scheduled migrations, backups, health checks and alerting on failure: not started. |
 | **T-083** | Paddle billing | Implemented; a sandbox run against the real Paddle account and catalogue is still owed. |
