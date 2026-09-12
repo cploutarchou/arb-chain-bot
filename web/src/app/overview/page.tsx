@@ -367,7 +367,8 @@ export default function OverviewPage() {
                 // not degraded, and must not read as a mild problem.
                 if (t === "ok") return "ok";
                 if (t === "bad") return "bad";
-                if (t === "dim") return "unknown";
+                // NOT STARTED: read successfully, knowably not running.
+                if (t === "dim") return "absent";
                 return "warn";
               })()
             : "unknown",
@@ -396,7 +397,9 @@ export default function OverviewPage() {
               ? scanner.data.paper.running
                 ? "ok"
                 : "warn"
-              : "unknown"
+              // No paper engine in this mode: a known configuration,
+              // not something the console failed to read.
+              : "absent"
             : "unknown",
       detail:
         scanner.kind === "ready" && !scanner.data.paper

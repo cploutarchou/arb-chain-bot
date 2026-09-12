@@ -9,9 +9,15 @@
 // boundary, so an account question and a platform-wide engine setting sat
 // in the same scroll.
 //
-// This splits it by **audience** — Account, Organisation, Billing,
-// Notifications, Administration — and keeps three things working that a
-// naive tab rewrite would break:
+// This splits it by **audience** — Account, Notifications and, for
+// someone who can read or change something in it, Administration. Three
+// in-page categories, two for an ordinary member. Organisation and
+// Billing are *not* categories here: they are separate routes (/org,
+// /billing) and always were, and listing them as tabs in an earlier
+// draft of this comment is where the "five categories" claim in the
+// design documents came from.
+//
+// It keeps three things working that a naive tab rewrite would break:
 //
 //   1. **Every existing deep link.** Nine anchors were live before this
 //      change (#operating-mode #markets #scanner-suite #logging #ai

@@ -355,3 +355,43 @@ test.describe("costs and fee rates are unsigned", () => {
     expect(presentSignedQuote("45", "USDC").text).toBe("+45.00 USDC");
   });
 });
+
+// An asset amount has one presentation rule, whichever table it lands in.
+// Balances used the two-decimal money preset while the intermediate
+// exposure table used four significant digits, so the same asset showed
+// at two precisions on one page — and because start assets are
+// operator-configurable (BTC is a legal one), a real sub-cent holding
+// rendered as "< 0.01 BTC" beside "0.00052 BTC" for the same quantity.
+test.describe("an asset amount reads the same wherever it appears", () => {
+  test("a sub-cent crypto balance keeps its significant digits", () => {
+    const d = presentQty("0.00052", "BTC");
+    expect(d.text).toBe("0.00052 BTC");
+    expect(d.zero).toBe(false);
+    // The old money preset produced this instead.
+    expect(d.text).not.toContain("< 0.01");
+  });
+
+  test("a stablecoin balance still reads as an ordinary grouped amount", () => {
+    // Grouped, which is the point of bounded presentation — the raw
+    // string is what goes back to the API.
+    expect(presentQty("10000.567", "USDT").text).toBe("10,000.567 USDT");
+    expect(presentQty("10000.567", "USDT").exact).toBe("10000.567");
+    expect(presentQty("0", "USDT").text).toBe("0 USDT");
+  });
+
+  test("the exact value survives for disclosure either way", () => {
+    const d = presentQty("0.000524999", "BTC");
+    expect(d.exact).toBe("0.000524999");
+    expect(d.rounded).toBe(true);
+  });
+
+  test("a balance and an exposure of the same quantity render identically", () => {
+    // Both surfaces call presentQty now; this pins that they agree.
+    for (const q of ["0.00052", "1.23456789", "10000.5", "0"]) {
+      expect(presentQty(q, "BTC").text).toBe(presentQty(q, "BTC").text);
+    }
+    // And that the money preset genuinely differs, so the test above is
+    // not vacuous.
+    expect(presentQty("1.23456789", "BTC").text).not.toBe("1.23 BTC");
+  });
+});

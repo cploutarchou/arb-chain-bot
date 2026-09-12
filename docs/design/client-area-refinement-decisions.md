@@ -255,10 +255,30 @@ matrix is correct**; there is no mismatch to fix.
 
 Two consequences for this change:
 
-1. Settings' Administration category gates on
-   `can(role, "screener:config") || can(role, "risk:config")` — both
-   ADMIN-only. An earlier draft used `scanner:config`, which would have
-   shown an OPERATOR forms the backend then refuses.
+1. Settings' Administration category **appears** for anyone who can
+   read something in it and gates each section on the check the backend
+   actually performs for that section. `ScreenerSettingsSection` is
+   behind `screener:view` (VIEWER+, which is what
+   `GET /api/v1/screener/settings` requires); `StrategyRiskSection` is
+   behind `can(role, "screener:config") || can(role, "risk:config")`,
+   both ADMIN-only; the platform sections are behind `platform_admin`.
+
+   This corrects an error in the first version of this decision, which
+   gated the **whole category** on the write permissions and so removed
+   the read-only Scanner Suite view from VIEWER and OPERATOR — the roles
+   whose job is to watch it, and whom master served correctly because it
+   rendered the section unconditionally and let its own `mayEdit`
+   suppress every mutating control. That is the same mistake as D1 in a
+   different place: gating a container on the strictest thing inside it.
+
+   The reason for choosing `screener:config` over `scanner:config` for
+   the *write* tier is simply that `screener:config` is the permission
+   the backend checks when a Scanner Suite change is applied. An earlier
+   draft of this note justified it by saying the looser permission
+   "would have shown an OPERATOR forms the backend then refuses" — which
+   the components do not support, since both sections already self-gate
+   their write controls. The permission is right; that argument for it
+   was not.
 2. Scanner Suite settings and Strategy & risk are therefore **not**
    marked platform-only, in the navigation metadata or on the page.
    They are deployment-wide settings gated on the ADMIN role, and

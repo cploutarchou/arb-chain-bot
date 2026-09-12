@@ -56,8 +56,15 @@ export function Collapsible({
 }) {
   return (
     <details className="mb-4 rounded border border-[var(--border)] bg-[var(--bg-panel)]" open={defaultOpen}>
-      <summary className="cursor-pointer list-none px-3 py-2 text-[13px] font-semibold text-[var(--text)] marker:content-none">
-        <span className="inline-flex items-center gap-2">
+      {/* The title is a real heading, not a styled span. HTML's content
+          model allows a single h1-h6 inside <summary>, and without one
+          this disclosure was a visual heading with no place in the
+          document outline — content that carried an <h2> through
+          <Section> became unreachable by the heading list a
+          screen-reader user skims a page with (WCAG 1.3.1). h3, because
+          these sit under the page <h1> and beside <Section>'s <h2>. */}
+      <summary className="cursor-pointer list-none px-3 py-2 marker:content-none">
+        <h3 className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--text)]">
           <span aria-hidden className="text-[var(--text-dim)]">
             ▸
           </span>
@@ -67,7 +74,7 @@ export function Collapsible({
               {note}
             </span>
           )}
-        </span>
+        </h3>
       </summary>
       <div className="border-t border-[var(--border)] px-3 py-3">{children}</div>
     </details>

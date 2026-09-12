@@ -92,6 +92,14 @@ jobs:
         run: npm run lint
       - name: unit tests (lib layer)
         run: npm test
+      # The presentation suites (web/unit/**) run on Playwright's test
+      # runner rather than node:test, so `npm test` never picked them up.
+      # That mattered more than it sounds: `npm test` covers fmtDecimal,
+      # which has no production callers, while presentDecimal and its
+      # presets are the render path for every money, bps, price and
+      # quantity cell in the console and had no CI coverage at all.
+      - name: presentation and navigation suites
+        run: npm run test:unit
       - name: typecheck
         run: npm run typecheck
       - name: build

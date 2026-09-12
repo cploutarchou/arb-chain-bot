@@ -1,4 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { resolveNav } from "@/lib/nav";
 
 // Critical path: unauthenticated redirect → login → every page renders
 // its real data or an HONEST empty/absent state (never a blank crash),
@@ -364,6 +367,13 @@ test("paper reset is disabled with a hint while the engine is running", async ({
 }) => {
   await login(page);
   await page.goto("/paper");
+  // T-087 moved the reset control into a closed-by-default disclosure
+  // (it was previously a prominent red panel between the live monitor
+  // and the history — the audit's own point was that the console's most
+  // destructive control had the strongest visual pull). Every safeguard
+  // — ADMIN only, engine must be paused, type-to-confirm — is unchanged;
+  // only reaching it now takes one extra click.
+  await page.getByText("Reset this simulation session").click();
   const resetButton = page.getByRole("button", {
     name: "Reset paper session…",
   });
@@ -418,16 +428,32 @@ test("shell pause control reaches Paper Trading in one click from an unrelated p
   // mobile overlay is closed) — the mobile top bar mounts the same
   // control too (CSS-hidden at this viewport, still in the DOM), so an
   // unscoped role query would be ambiguous.
+  // The control was renamed (D7/T-087): "Pause paper trading" overstated
+  // what POST /api/v1/paper/pause actually reaches — the triangular
+  // paper engine only, never Scanner Suite/rule-based auto-paper, which
+  // has no pause route at all (docs/design/client-area-refinement-
+  // backend-contract.md §1). Only the names changed here; what the test
+  // proves — one-click reach, a single confirmation, the backend's own
+  // failure verbatim — stays exactly as strict.
   const sidebar = page.getByRole("complementary");
   const pauseButton = sidebar.getByRole("button", {
-    name: "Pause paper trading",
+    name: "Pause triangular simulations",
   });
   await expect(pauseButton).toBeVisible({ timeout: 10_000 });
 
   await pauseButton.click();
-  const dialog = page.getByRole("dialog", { name: "Pause paper trading?" });
+  const dialog = page.getByRole("dialog", {
+    name: "Pause triangular simulations?",
+  });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText(/in-flight simulations/i);
+  // The control must state its scope in visible dialog text, not only a
+  // tooltip: rule-based automatic paper execution is unaffected and has
+  // no pause control of its own (backend-contract.md §1 — no pause route
+  // exists for it at all).
+  await expect(dialog).toContainText(
+    /rule-based automatic paper execution is not affected and has no pause control/i,
+  );
 
   // Mock the failure so the toast must carry the backend's own status and
   // message verbatim — and so the shared e2e backend, which other tests
@@ -442,7 +468,9 @@ test("shell pause control reaches Paper Trading in one click from an unrelated p
       }),
     });
   });
-  await dialog.getByRole("button", { name: "Pause paper trading" }).click();
+  await dialog
+    .getByRole("button", { name: "Pause triangular simulations" })
+    .click();
   await expect(
     page.getByText(
       "Pause failed (HTTP 409): a simulation is still settling",
@@ -860,6 +888,13 @@ async function ensureViewerAccount(page: Page) {
       timeout: 10_000,
     });
   }
+  // Sign out lives in the Account category's own SessionSection, which
+  // only renders while that category is the active tab (T-087: the
+  // other categories stay mounted-but-hidden). #users activates
+  // Administration, so a bare reload back to /settings (Account is the
+  // first/default category) is required before Sign out is reachable —
+  // clicking it while Administration is active hits a hidden element.
+  await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
   return VIEWER_TEST;
@@ -870,16 +905,23 @@ test("nav gating is visible for a VIEWER (role-restricted, not just hidden)", as
 }) => {
   const viewer = await ensureViewerAccount(page);
   await login(page, viewer.email, viewer.password);
-  await page.goto("/overview");
-  const nav = page.getByRole("navigation");
-  // Audit Log: GatedControl state="role" — grey, cursor-not-allowed,
+  // Audit log now lives under Operations › Platform health, not
+  // Overview, and the secondary nav only lists a destination's own
+  // entries — /risk is a plain member-visible page (D1), so landing
+  // there is what actually renders the Operations secondary list that
+  // Audit log sits in.
+  await page.goto("/risk");
+  const opsNav = page.getByRole("navigation", { name: "Operations sections" });
+  // Audit log: GatedControl state="role" — grey, cursor-not-allowed,
   // non-navigable, with the actual minimum role named in the tooltip
   // (console-v2.md §2.4 — never a generic "restricted").
-  await expect(nav.getByRole("link", { name: "Audit Log" })).toHaveCount(0);
-  const gated = nav.locator('[title="Requires OPERATOR or ADMIN"]');
+  await expect(
+    opsNav.getByRole("link", { name: /Audit log/i }),
+  ).toHaveCount(0);
+  const gated = opsNav.locator('[title="Requires OPERATOR or ADMIN"]');
   await expect(gated).toBeVisible();
   await expect(gated).toHaveAttribute("aria-disabled", "true");
-  await expect(gated).toContainText("Audit Log");
+  await expect(gated).toContainText(/Audit log/i);
 });
 
 test("shell paper control shows a VIEWER the live state but never the pause/resume button (F2 RBAC)", async ({
@@ -895,7 +937,7 @@ test("shell paper control shows a VIEWER the live state but never the pause/resu
   });
   await expect(
     sidebar.getByRole("button", {
-      name: /Pause paper trading|Resume paper trading/,
+      name: /Pause triangular simulations|Resume triangular simulations/,
     }),
   ).toHaveCount(0);
 });
@@ -924,6 +966,9 @@ async function ensureOperatorAccount(page: Page) {
       timeout: 10_000,
     });
   }
+  // Same reason as ensureViewerAccount above: Sign out only renders
+  // while the Account category is active.
+  await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
 }
@@ -1122,6 +1167,13 @@ test("Screener include_suspect/include_unknown_liquidity toggles are off by defa
   await expect(page.getByText("Excluded: suspect")).toBeVisible();
   await expect(page.getByText("3", { exact: true }).first()).toBeVisible();
 
+  // The two opt-ins moved behind a collapsed-by-default "Advanced
+  // filters" disclosure (T-087 §A2/§A3) — the labels and their off-by-
+  // default behaviour are unchanged, but they are unreachable until the
+  // disclosure is opened.
+  await page
+    .getByRole("button", { name: /Show advanced filters/i })
+    .click();
   await page.getByLabel("Include suspect lanes (asset-identity guard)").check();
   await page.getByLabel("Include unknown-liquidity lanes").check();
   await expect
@@ -1141,46 +1193,62 @@ test.describe("Scanner Suite", () => {
     await page.close();
   });
 
-  test("nav group renders and every Scanner Suite page loads for an OPERATOR login", async ({
+  // gotoViaNav asserts the page is actually *discoverable* through the
+  // new structure — click the primary destination, then the secondary
+  // entry it contains, rather than a bare page.goto() — which is what a
+  // standing "Scanner Suite" nav group used to make a one-hop assertion.
+  // That group no longer exists (T-087): its pages moved into Discover,
+  // Paper Trading, Research & Results and Alerts & Rules, so this
+  // exercises each one's real new home instead of just asserting the
+  // URL still resolves.
+  async function gotoViaNav(
+    page: Page,
+    destLabel: string,
+    secondaryLabel: string,
+    marker: RegExp,
+  ) {
+    // Start from a page outside every destination's own landing route,
+    // so the click is a real navigation rather than a no-op.
+    await page.goto("/overview");
+    const primary = page.getByRole("navigation", { name: "Primary" });
+    await primary.getByRole("link", { name: destLabel, exact: true }).click();
+    const secondary = page.getByRole("navigation", {
+      name: `${destLabel} sections`,
+    });
+    await secondary
+      .getByRole("link", { name: secondaryLabel, exact: true })
+      .click();
+    await expect(page.locator("main")).toContainText(marker, {
+      timeout: 10_000,
+    });
+  }
+
+  test("every former Scanner Suite page is reachable through its new destination for an OPERATOR login", async ({
     page,
   }) => {
     test.setTimeout(120_000);
     await login(page, OPERATOR.email, OPERATOR.password);
-    await page.goto("/overview");
-    const nav = page.getByRole("navigation");
-    await expect(nav.getByText("Scanner Suite")).toBeVisible();
-    for (const label of [
-      "Screener",
-      "Perpetuals",
-      "Funding",
-      "Calculator",
-      "Alert Rules",
-      "Evidence — Screener Reports",
-      "Auto-Paper",
-    ]) {
-      await expect(
-        nav.getByRole("link", { name: label, exact: true }),
-      ).toBeVisible();
-    }
 
     const notAvailable = /Screener backend not available in this build\./;
-    const pages: [string, RegExp][] = [
-      ["/screener", new RegExp(`Screener|${notAvailable.source}`)],
-      ["/perpetuals", new RegExp(`Perpetuals|${notAvailable.source}`)],
-      ["/funding", new RegExp(`Funding|${notAvailable.source}`)],
-      ["/calculator", /Spreads calculator/],
-      ["/scanner-alerts", new RegExp(`Alert Rules|${notAvailable.source}`)],
+    const routes: [string, string, RegExp][] = [
+      ["Discover", "Spot screener", new RegExp(`Screener|${notAvailable.source}`)],
+      ["Discover", "Perpetuals", new RegExp(`Perpetuals|${notAvailable.source}`)],
+      ["Discover", "Funding", new RegExp(`Funding|${notAvailable.source}`)],
+      ["Discover", "Spreads calculator", /Spreads calculator/],
+      ["Alerts & Rules", "Alert rules", new RegExp(`Alert Rules|${notAvailable.source}`)],
       [
-        "/screener-reports",
+        "Research & Results",
+        "Screener evidence",
         new RegExp(`Screener Reports|${notAvailable.source}`),
       ],
-      ["/auto-paper", new RegExp(`Auto-Paper|${notAvailable.source}`)],
+      [
+        "Paper Trading",
+        "Rule simulations",
+        new RegExp(`Rule simulations|${notAvailable.source}`),
+      ],
     ];
-    for (const [path, marker] of pages) {
-      await page.goto(path);
-      await expect(page.locator("main")).toContainText(marker, {
-        timeout: 10_000,
-      });
+    for (const [destLabel, secondaryLabel, marker] of routes) {
+      await gotoViaNav(page, destLabel, secondaryLabel, marker);
     }
   });
 
@@ -1491,16 +1559,22 @@ test("overview answers PnL, breakers, feed state and clock in the status strip (
           assets: [
             {
               asset: "USDT",
-              realized: "-12.5",
+              // Two-decimal-friendly values: the bounded decimal display
+              // (D3) rounds at 2dp here, and this test pins the *shape*
+              // Overview renders, not a raw backend string — a value
+              // that rounds to a different-looking figure (e.g.
+              // "0.0012") would make this test assert its own rounding
+              // rather than the page's.
+              realized: "-12.50",
               exposure_mark: "0",
-              net_pnl: "-12.5",
+              net_pnl: "-12.50",
               unmarked: [],
               fees: "1.1",
-              fees_marked: "1.34",
+              fees_marked: "1.10",
               fees_by_asset: { USDT: "1.1", BNB: "0.0012" },
               fees_unmarked: [],
-              daily_loss: "-12.5",
-              drawdown: "0.0012",
+              daily_loss: "-12.50",
+              drawdown: "0.10",
             },
           ],
         },
@@ -1547,21 +1621,52 @@ test("overview answers PnL, breakers, feed state and clock in the status strip (
   });
   await page.goto("/overview");
 
-  // Realized PnL with the asset, toned by the backend's own sign.
-  const pnl = page.getByText("Realized PnL (session)").locator("..");
-  await expect(pnl.getByText("-12.5 USDT")).toBeVisible({ timeout: 10_000 });
-  // Breakers open, bad when > 0, with the reason one hover away.
-  const breakers = page.getByText("Breakers open").locator("..");
-  await expect(breakers.getByText("1")).toBeVisible();
-  // Feed cell: one STALE book of three → DEGRADED.
-  const feed = page.getByText("Feed", { exact: true }).locator("..");
+  // Realized PnL, per start asset (T-087 Overview rebuild — a ResultRow
+  // card per asset, never a cross-asset sum), toned by the backend's own
+  // sign; presentSignedQuote shows an explicit sign on every value.
+  // Two ancestors up: the asset span's immediate parent is only the
+  // header row (asset + "this session"); the dl of values is that
+  // header row's sibling under the outer card div.
+  const resultCard = page.getByText("USDT", { exact: true }).locator("../..");
+  // .first(): DecimalValue renders both an aria-hidden visible span and
+  // a sr-only span carrying the identical text (for assistive tech), so
+  // an unscoped match always resolves to two elements minimum; realized
+  // and net happen to share this value here too (exposure_mark is 0).
+  await expect(resultCard.getByText("-12.50 USDT").first()).toBeVisible({
+    timeout: 10_000,
+  });
+  // Drawdown is a dimensionless ratio, rendered as a percentage via
+  // presentPercentFromFraction (D10: presentSignedQuote with the start
+  // asset as its "unit" was a real defect — a 5.23% drawdown displayed
+  // as "+0.05 USDC", a fabricated currency unit and a ~200x
+  // understatement) — 0.10 is a 10% drawdown, not "0.10 USDT".
+  await expect(resultCard.getByText("10.00%").first()).toBeVisible(); // drawdown
+  // Fees paid is a cost, not a signed result — presentQuote, not
+  // presentSignedQuote, so no leading "+" (a credit would be the wrong
+  // reading of a fee).
+  await expect(resultCard.getByText("1.10 USDT").first()).toBeVisible();
+
+  // Attention: one open breaker, composed client-side from /api/v1/risk
+  // (there is no backend field for "what needs attention" — the console
+  // composes it, per the backend-contract review §5) — the backend's own
+  // reason text renders verbatim as the item's detail line.
+  const attentionItem = page.getByText(
+    /1 circuit breaker open — qualification is gated while any is open\./,
+  );
+  await expect(attentionItem).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByText(
+      "daily_loss (global): USDT session loss reached the limit",
+    ),
+  ).toBeVisible();
+
+  // Status strip: one STALE book of three → DEGRADED under "Market feed"
+  // (renamed from a bare "Feed" cell — still the same feedState() word).
+  const feed = page.getByText("Market feed", { exact: true }).locator("..");
   await expect(feed.getByText("DEGRADED")).toBeVisible();
-  // Venue clock cell.
-  const clock = page.getByText("Venue clock").locator("..");
+  // Venue clock cell — label unchanged.
+  const clock = page.getByText("Venue clock", { exact: true }).locator("..");
   await expect(clock.getByText("OK")).toBeVisible();
-  // Fees and drawdown cells render the backend's own strings.
-  await expect(page.getByText("1.34 USDT").first()).toBeVisible();
-  await expect(page.getByText("0.0012 USDT").first()).toBeVisible();
 });
 
 test("overview explains a missing paper engine instead of a bare N/A (F5)", async ({
@@ -1575,9 +1680,14 @@ test("overview explains a missing paper engine instead of a bare N/A (F5)", asyn
     await route.fulfill({ response, json: body });
   });
   await page.goto("/overview");
-  const cell = page.getByText("Paper engine").locator("..");
+  // Status strip segment renamed "Paper engine" → "Triangular
+  // simulation" (T-087 Overview rebuild) — same honest "NOT RUNNING"
+  // word, plus a detail line naming the real running mode instead of a
+  // bare N/A.
+  const cell = page.getByText("Triangular simulation", { exact: true }).locator("..");
   await expect(cell.getByText("NOT RUNNING")).toBeVisible({ timeout: 10_000 });
   await expect(cell.getByText("N/A")).toHaveCount(0);
+  await expect(cell.getByText(/mode is PAPER/)).toBeVisible();
 });
 
 // --- F6: Paper page as a live-cycle monitor --------------------------------
@@ -1645,8 +1755,12 @@ test("paper page shows in-flight cycles with leg badges, elapsed and the persist
   });
   await page.goto("/paper");
 
+  // The three summary stats and the "Live cycles (in flight)" heading
+  // were retired with the audit's duplication finding (§5) — the
+  // section is now the plain "Running now" (ActiveCycles.tsx), and the
+  // in-flight count is just the length of the list below it.
   await expect(
-    page.getByText("Live cycles (in flight)"),
+    page.getByRole("heading", { name: "Running now" }),
   ).toBeVisible({ timeout: 10_000 });
   const card = page.getByTestId("active-cycle");
   await expect(card).toBeVisible();
@@ -1666,7 +1780,12 @@ test("paper page shows in-flight cycles with leg badges, elapsed and the persist
   await expect(page.getByText("book ETHBTC is STALE at fill time")).toBeVisible({
     timeout: 10_000,
   });
-  await expect(page.getByText("0.0012 BNB")).toBeVisible();
+  // Fees now go through the bounded decimal display too: 0.0012 BNB
+  // rounds to zero at 2dp, so it renders as the signed less-than form,
+  // not the raw backend string — the exact value survives in the
+  // wrapping title (feesExact).
+  await expect(page.getByText("< 0.01 BNB")).toBeVisible();
+  await expect(page.getByTitle("0.0012 BNB")).toBeVisible();
   await expect(page.getByText("Realized PnL", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "opportunity" })).toHaveAttribute(
     "href",
@@ -1752,4 +1871,720 @@ test("risk center closes an open breaker with the backend's own failure copy and
     page.getByText(/Breaker daily_loss is CLOSED/),
   ).toBeVisible({ timeout: 10_000 });
   await expect(dialog).toHaveCount(0);
+});
+
+// ---- Navigation (T-087 new coverage) --------------------------------------
+// web/unit/nav.spec.ts proves resolveNav()'s own logic in isolation; these
+// prove the DOM actually reflects it — the primary/secondary nav highlight,
+// the six-destinations-fit-without-scrolling layout guarantee, and that
+// browser back/forward behaves. All against a real logged-in session.
+
+const APP_DIR = join(__dirname, "..", "src", "app");
+const OUTSIDE_SHELL = new Set(["/", "/login"]);
+
+function discoverRoutes(dir: string, prefix = ""): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      out.push(...discoverRoutes(full, `${prefix}/${entry}`));
+    } else if (entry === "page.tsx") {
+      out.push(prefix === "" ? "/" : prefix);
+    }
+  }
+  return out;
+}
+
+function concreteRoute(route: string): string {
+  return route.replace(/\[[^\]]+\]/g, "sample-id-01");
+}
+
+test("all six primary destinations are visible without scrolling at 1440x900", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await login(page);
+  const primary = page.getByRole("navigation", { name: "Primary" });
+  for (const label of [
+    "Overview",
+    "Discover",
+    "Paper Trading",
+    "Research & Results",
+    "Alerts & Rules",
+    "Settings",
+  ]) {
+    await expect(
+      primary.getByRole("link", { name: label, exact: true }),
+    ).toBeInViewport();
+  }
+  // The Operator area (Operations) is a separate, explicitly labelled
+  // group below the six product destinations — also always in view, not
+  // scrolled away, since PrimaryNav is shrink-0 (D2).
+  await expect(
+    primary.getByRole("link", { name: "Operations", exact: true }),
+  ).toBeInViewport();
+});
+
+test("aria-current marks the exact page 'page' and the destination containing it 'location'", async ({
+  page,
+}) => {
+  await login(page);
+  // /perpetuals is a secondary entry of Discover, not Discover's own
+  // landing route (/screener) — the case that actually distinguishes
+  // "location" from "page" (ConsoleNav.tsx's isLanding check).
+  await page.goto("/perpetuals");
+  const primary = page.getByRole("navigation", { name: "Primary" });
+  await expect(
+    primary.getByRole("link", { name: "Discover", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+  const secondary = page.getByRole("navigation", {
+    name: "Discover sections",
+  });
+  await expect(
+    secondary.getByRole("link", { name: "Perpetuals", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+
+  // Discover's own landing route: the primary link itself is the page.
+  await page.goto("/screener");
+  await expect(
+    primary.getByRole("link", { name: "Discover", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
+test("the three previously-broken pages now highlight their destination", async ({
+  page,
+}) => {
+  // Before T-087 these three passed an `active` label matching nothing
+  // in the old shell's lookup and highlighted no destination at all
+  // (nav.ts's own header comment; web/unit/nav.spec.ts pins the same
+  // three at the resolveNav() level). This is the DOM-level proof.
+  await login(page);
+  const primary = page.getByRole("navigation", { name: "Primary" });
+
+  await page.goto("/cycles/sample-id-01");
+  await expect(
+    primary.getByRole("link", { name: "Paper Trading", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+
+  await page.goto("/onboarding");
+  await expect(
+    primary.getByRole("link", { name: "Overview", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+
+  await page.goto("/screener-reports/sample-id-01");
+  await expect(
+    primary.getByRole("link", { name: "Research & Results", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+  const secondary = page.getByRole("navigation", {
+    name: "Research & Results sections",
+  });
+  await expect(
+    secondary.getByRole("link", { name: "Screener evidence", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
+test("every route on disk loads (or an honest Unavailable) and highlights the destination resolveNav() predicts", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await login(page);
+  const primary = page.getByRole("navigation", { name: "Primary" });
+  const routes = discoverRoutes(APP_DIR).sort();
+  expect(routes.length).toBeGreaterThanOrEqual(37);
+
+  for (const route of routes) {
+    if (OUTSIDE_SHELL.has(route)) continue;
+    const concrete = concreteRoute(route);
+    const match = resolveNav(concrete);
+    expect(match, `${route} resolves to no navigation entry`).toBeTruthy();
+
+    await page.goto(concrete);
+    // Never a blank crash — either real content or an honest absence
+    // notice (both are valid; a silently empty <main> is not).
+    await expect(page.locator("main")).not.toBeEmpty({ timeout: 10_000 });
+    await expect(page.locator("main")).not.toContainText(
+      /Application error|this page could not be rendered/i,
+    );
+
+    const destId = match!.destination.id;
+    await expect(
+      primary.locator(`[data-nav-id="${destId}"]`),
+      `${route}: destination "${destId}" is not marked current`,
+    ).toHaveAttribute("aria-current", /page|location/);
+  }
+});
+
+test("browser back and forward behave across destinations", async ({
+  page,
+}) => {
+  await login(page);
+  const primary = page.getByRole("navigation", { name: "Primary" });
+  await page.goto("/overview");
+  await page.getByRole("link", { name: "Discover", exact: true }).click();
+  await expect(page).toHaveURL(/\/screener$/);
+  await page.getByRole("link", { name: "Paper Trading", exact: true }).click();
+  await expect(page).toHaveURL(/\/paper$/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/screener$/);
+  await expect(
+    primary.getByRole("link", { name: "Discover", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/overview$/);
+  await expect(
+    primary.getByRole("link", { name: "Overview", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+
+  await page.goForward();
+  await expect(page).toHaveURL(/\/screener$/);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/paper$/);
+  await expect(
+    primary.getByRole("link", { name: "Paper Trading", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
+// ---- Settings deep links (T-087 new coverage) ------------------------------
+// web/unit/settings-anchors.spec.ts proves the page *renders* every anchor
+// it declares (a static source-text check, by its own admission not a
+// browser proof); this is the browser proof it defers to the e2e suite:
+// each anchor activates the right category tab AND moves focus into the
+// section, not just scroll.
+
+const LEGACY_ANCHOR_CATEGORIES: [string, string][] = [
+  ["operating-mode", "Administration"],
+  ["markets", "Administration"],
+  ["scanner-suite", "Administration"],
+  ["logging", "Administration"],
+  ["ai", "Administration"],
+  ["platform-versions", "Administration"],
+  ["users", "Administration"],
+  ["notifications", "Notifications"],
+  ["security", "Administration"],
+];
+
+test("every pre-existing Settings anchor activates its category and moves focus into the section", async ({
+  page,
+}) => {
+  await login(page); // bootstrap ADMIN: platform_admin true, sees Administration
+  for (const [anchor, categoryLabel] of LEGACY_ANCHOR_CATEGORIES) {
+    await page.goto(`/settings#${anchor}`);
+    await expect(
+      page.getByRole("tab", { name: categoryLabel }),
+      `#${anchor} must activate the ${categoryLabel} tab`,
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.locator(`#${anchor}`),
+      `#${anchor} must take focus, not just scroll`,
+    ).toBeFocused({ timeout: 5_000 });
+  }
+});
+
+test("switching Settings category and back does not lose an unsaved edit", async ({
+  page,
+}) => {
+  // Categories stay mounted (hidden, not unmounted) precisely so a draft
+  // survives a tab switch — SettingsCategories.tsx's whole reason for
+  // existing over a naive tab rewrite.
+  await login(page);
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "Change my password" }).click();
+  const draftValue = "unsaved-draft-password-text";
+  await page.getByLabel("Current password").fill(draftValue);
+
+  await page.getByRole("tab", { name: "Notifications" }).click();
+  await expect(page.getByRole("tab", { name: "Notifications" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.getByRole("tab", { name: "Account" }).click();
+  await expect(page.getByLabel("Current password")).toHaveValue(draftValue);
+});
+
+test("the Settings category tablist is arrow-key navigable with a roving tabindex", async ({
+  page,
+}) => {
+  // Derived from the DOM rather than a hardcoded category list: Settings
+  // categories are Account/Notifications plus a conditional
+  // Administration for anyone who can configure something — the
+  // bootstrap ADMIN always gets all three, but the count is not this
+  // test's business, only the roving-tabindex mechanics are.
+  await login(page);
+  await page.goto("/settings");
+  const tablist = page.getByRole("tablist", { name: "Settings categories" });
+  const tabs = tablist.getByRole("tab");
+  // /settings is a fresh full navigation, so AuthProvider remounts and
+  // starts at `{kind: "loading"}` — the Administration tab only appears
+  // once /auth/me resolves (platform_admin/role-gated). Wait for it
+  // rather than counting on whatever the very first paint happened to
+  // have, which would otherwise race this assertion.
+  await expect(tablist.getByRole("tab", { name: "Administration" })).toBeVisible({
+    timeout: 10_000,
+  });
+  const count = await tabs.count();
+  expect(count).toBeGreaterThanOrEqual(3);
+
+  const first = tabs.nth(0);
+  const second = tabs.nth(1);
+  const last = tabs.nth(count - 1);
+
+  await expect(first).toHaveAttribute("tabindex", "0");
+  await first.focus();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(second).toBeFocused();
+  await expect(second).toHaveAttribute("aria-selected", "true");
+  await expect(second).toHaveAttribute("tabindex", "0");
+  // The tab that lost selection drops out of the tab order — one stop
+  // for the whole widget, not one per tab.
+  await expect(first).toHaveAttribute("tabindex", "-1");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute("aria-selected", "true");
+
+  // Wrap-around: ArrowLeft from the first tab goes to the last one
+  // (onTabKey's explicit `index === 0 ? last : index - 1`).
+  await page.keyboard.press("ArrowLeft");
+  await expect(last).toBeFocused();
+  await expect(last).toHaveAttribute("aria-selected", "true");
+
+  await page.keyboard.press("Home");
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute("aria-selected", "true");
+
+  await page.keyboard.press("End");
+  await expect(last).toBeFocused();
+  await expect(last).toHaveAttribute("aria-selected", "true");
+});
+
+// ---- Drawer, Calculator hand-off, decimal display (T-087 new coverage) ----
+// One fixed pair of screener rows reused by all three tests below: a BTC/
+// USDT row with a many-fractional-digit spread for the decimal-shape
+// assertion, and an ETH/USDT row selling on `kucoin` — a venue outside
+// VENUE_OPTIONS' six-name chip vocabulary — for the calculator hand-off
+// regression (D-doc: sourcing options from /screener/status, not the
+// static list, is what fixed a real defect where such a venue silently
+// fell back to "binance").
+const SCREENER_ROWS = [
+  {
+    base: "BTC",
+    quote: "USDT",
+    buy_venue: "binance",
+    sell_venue: "okx",
+    buy_ask: "50000.12",
+    buy_ask_qty: "1.5",
+    sell_bid: "50010.339999",
+    sell_bid_qty: "1.2",
+    spread_bps_gross: "15.987654321098765",
+    spread_bps_net: "12.345678912345678901",
+    liquidity_quote: "75000",
+    liquidity_unknown: false,
+    suspect: false,
+    lifetime_s: 30,
+    first_seen_at: new Date().toISOString(),
+    buy_age_ms: 100,
+    sell_age_ms: 120,
+    buy_fee_bps: "10",
+    sell_fee_bps: "10",
+    networks: { buy_withdraw: "open", sell_deposit: "open" },
+  },
+  {
+    base: "ETH",
+    quote: "USDT",
+    buy_venue: "binance",
+    sell_venue: "kucoin",
+    buy_ask: "3000.5",
+    buy_ask_qty: "5",
+    sell_bid: "3005.75",
+    sell_bid_qty: "4",
+    spread_bps_gross: "8.5",
+    spread_bps_net: "5.00",
+    liquidity_quote: "15000",
+    liquidity_unknown: false,
+    suspect: false,
+    lifetime_s: 45,
+    first_seen_at: new Date().toISOString(),
+    buy_age_ms: 200,
+    sell_age_ms: 220,
+    buy_fee_bps: "10",
+    sell_fee_bps: "10",
+    networks: { buy_withdraw: "open", sell_deposit: "open" },
+  },
+];
+
+async function mockScreenerSpreads(page: Page) {
+  await page.route("**/api/v1/screener/spreads**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          rows: SCREENER_ROWS,
+          total: SCREENER_ROWS.length,
+          generated_at: new Date().toISOString(),
+          model: "no-transfer, top-of-book",
+          excluded: { suspect: 0, liquidity_unknown: 0 },
+        },
+        error: null,
+      }),
+    });
+  });
+  // kucoin is reported by the backend's own venue list — not part of the
+  // static six-name VENUE_OPTIONS chip vocabulary — so the Calculator's
+  // venueOptions (sourced from this endpoint) genuinely includes it.
+  await page.route("**/api/v1/screener/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          venues: ["binance", "okx", "kucoin"].map((name) => ({
+            id: name,
+            name,
+            enabled: true,
+            online: true,
+            poll_ms: 500,
+            spot_pairs: 10,
+            perp_contracts: 0,
+            rate_limited: false,
+          })),
+          pairs_tracked: 2,
+          spreads_per_sec: 1,
+          poll_interval_s: 3,
+          updated_at: new Date().toISOString(),
+        },
+        error: null,
+      }),
+    });
+  });
+}
+
+test("Screener Detail drawer manages focus: opens to the close button, Escape closes it, and focus returns to the originating row's Detail button", async ({
+  page,
+}) => {
+  await login(page);
+  await mockScreenerSpreads(page);
+  await page.goto("/screener");
+  const row = page.getByRole("row", { name: /ETH\/USDT/ });
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  const detailButton = row.getByRole("button", { name: "Detail" });
+  await detailButton.click();
+
+  const drawer = page.getByRole("complementary", { name: /^Detail:/ });
+  await expect(drawer).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Close detail panel" }),
+  ).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(detailButton).toBeFocused();
+});
+
+test("Screener → Detail → Open in Calculator prefills base, quote and both venues, and a venue outside the six-name list is not silently replaced", async ({
+  page,
+}) => {
+  await login(page);
+  await mockScreenerSpreads(page);
+  await page.goto("/screener");
+  const row = page.getByRole("row", { name: /ETH\/USDT/ });
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.getByRole("button", { name: "Detail" }).click();
+  // A <button> with an onClick router.push, not an <a> — no href to
+  // follow, so the navigation is the effect of the click.
+  await page.getByRole("button", { name: /Open in Calculator/ }).click();
+
+  await expect(page).toHaveURL(/\/calculator\?/);
+  // getByPlaceholder, not getByLabel: the Quote asset field's own hint
+  // text ("denominated in the quote asset above") makes a case-
+  // insensitive substring match on "Quote asset" ambiguous with the
+  // unrelated Size field's hint.
+  await expect(page.getByPlaceholder("BTC")).toHaveValue("ETH");
+  await expect(page.getByPlaceholder("USDT")).toHaveValue("USDT");
+  await expect(page.getByLabel("Buy venue")).toHaveValue("binance");
+  // The regression this pins: kucoin is outside VENUE_OPTIONS' static
+  // six-name list. A <select> whose value is not among its options
+  // renders the *first* option instead — which silently repriced a
+  // different venue pair than the row that was clicked. Sourcing options
+  // from /screener/status (mocked above) fixed it.
+  const sellVenue = page.getByLabel("Sell venue");
+  await expect(sellVenue).toHaveValue("kucoin");
+  await expect(
+    sellVenue.locator('option[value="kucoin"]'),
+  ).toHaveCount(1);
+});
+
+test("a bps cell shows a bounded value and the exact value is reachable via data-exact and the tooltip", async ({
+  page,
+}) => {
+  await login(page);
+  await mockScreenerSpreads(page);
+  await page.goto("/screener");
+  const row = page.getByRole("row", { name: /BTC\/USDT/ });
+  await expect(row).toBeVisible({ timeout: 10_000 });
+
+  const exactValue = "12.345678912345678901";
+  const cell = row.locator(`[data-exact="${exactValue}"]`);
+  await expect(cell).toHaveCount(1);
+  // Shape, not a specific number: bounded to 2 fraction digits, never
+  // the 20-plus-digit raw string the audit found on this exact column.
+  const visibleText = await cell.locator("[aria-hidden]").innerText();
+  expect(visibleText).toMatch(/^[+-]\d[\d,]*\.\d{2} bps$/);
+  expect(visibleText.replace(/[^0-9]/g, "").length).toBeLessThan(exactValue.length);
+  // The exact backend value is never lost — reachable via data-exact and
+  // the "Exactly …" tooltip (never with the unit re-appended).
+  await expect(cell).toHaveAttribute("title", `Exactly ${exactValue}`);
+});
+
+// ---- Roles and entitlements (T-087 new coverage) ---------------------------
+// The backend sets platform_admin = (role == ADMIN) unconditionally
+// (authstore.go), so a real tenant ADMIN with platform_admin:false cannot
+// be produced through this harness's real signup path — rewriting
+// /auth/me in place is the same, already-established pattern the
+// risk-ack test above uses for a field the harness cannot otherwise drive.
+test("Settings' platform-configuration sections are gated on platform_admin, never the ADMIN display role — Scanner Suite/Strategy & risk are the opposite tier (D13)", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      data?: { platform_admin?: boolean };
+    };
+    if (body.data) body.data.platform_admin = false;
+    await route.fulfill({ response, json: body });
+  });
+  await login(page); // bootstrap account: role ADMIN, platform_admin forced false above
+  await page.goto("/settings");
+  await page.getByRole("tab", { name: "Administration" }).click();
+
+  // Role-gated tier (PermScreenerConfig/PermRiskConfig, both ADMIN-role
+  // checks) is NOT platform-gated, so it still renders.
+  await expect(
+    page.getByRole("heading", { name: "Scanner Suite" }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByRole("heading", { name: "Strategy & risk" }),
+  ).toBeVisible();
+
+  // Platform-configuration tier (platform_admin-gated) does not — none
+  // of the eight platform-only sections render, and no tenant data
+  // belonging to them (e.g. Users & roles' member list, the vault's
+  // secret names) crosses into this account's view.
+  for (const heading of [
+    "Operating mode",
+    "Markets & assets",
+    "Venues & fees",
+    "AI advisor",
+    "Logging & access",
+    "Users & roles",
+    "Security",
+    "Platform settings — version history",
+  ]) {
+    await expect(page.getByRole("heading", { name: heading })).toHaveCount(0);
+  }
+  // In their place, an explanation pointing at the tenant's own surface —
+  // nothing the tenant could previously change becomes unavailable, the
+  // backend already refused all of it with platform_admin_required.
+  // Two matches by design: the category's own description line and the
+  // fallback section body say it in almost the same words.
+  await expect(
+    page.getByText(/operated by platform staff/i).first(),
+  ).toBeVisible();
+  await expect(
+    page.locator("main").getByRole("link", { name: "Organisation" }),
+  ).toHaveAttribute("href", "/org");
+});
+
+// ---- States (T-087 new coverage) -------------------------------------------
+// loading / healthy-empty / stale / failed request / 401 / 403 / 409
+// stale_version. An error must never render as "no results" or as a
+// successful submission (ui.tsx's Await/ErrorBox is the shared mechanism
+// behind every page this exercises).
+
+test("a slow request renders an explicit loading state, never a blank or a fabricated value", async ({
+  page,
+}) => {
+  await login(page);
+  await page.route("**/api/v1/risk", async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
+  await page.goto("/risk");
+  await expect(page.getByText("Loading risk state…")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Circuit breakers" }),
+  ).toBeVisible({ timeout: 10_000 });
+});
+
+test("a 401 mid-session renders 'Session required', never a false empty or healthy state", async ({
+  page,
+}) => {
+  await login(page);
+  await page.route("**/api/v1/risk", async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: null,
+        error: { code: "unauthenticated", message: "session expired" },
+      }),
+    });
+  });
+  await page.goto("/risk");
+  await expect(page.locator("main")).toContainText("Session required:");
+  await expect(page.locator("main")).toContainText("session expired");
+  // Never rendered as if the request had simply come back healthy/empty.
+  await expect(
+    page.getByRole("heading", { name: "Circuit breakers" }),
+  ).toHaveCount(0);
+});
+
+test("a generic 403 forbidden renders 'Forbidden', never a silent success", async ({
+  page,
+}) => {
+  await login(page);
+  await page.route("**/api/v1/system/health", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: null,
+        error: { code: "forbidden", message: "not allowed for this account" },
+      }),
+    });
+  });
+  await page.goto("/system");
+  await expect(page.locator("main")).toContainText("Forbidden:");
+  await expect(page.locator("main")).toContainText("not allowed for this account");
+});
+
+test("a 409 stale_version on a settings apply shows the reload notice, never a success, and the draft is not discarded", async ({
+  page,
+}) => {
+  await login(page); // bootstrap ADMIN: platform_admin true
+  await page.goto("/settings#operating-mode");
+  await page.getByRole("button", { name: "Edit mode" }).click();
+  // MARKET_DATA is Available in this build's ModeTable (unlike SHADOW),
+  // so picking it produces a real diff to review and apply.
+  await page.getByRole("radio", { name: "MARKET_DATA" }).check();
+  await page.getByRole("button", { name: "Review changes" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Apply new platform settings?",
+  });
+  await expect(dialog).toBeVisible({ timeout: 10_000 });
+
+  await page.route("**/api/v1/platform/settings", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: null,
+        error: { code: "stale_version", message: "settings changed" },
+        current_version: 7,
+      }),
+    });
+  });
+  await dialog.getByRole("button", { name: "Apply", exact: true }).click();
+
+  // The dialog closes on stale (the page-level notice takes over, not a
+  // retry against a version that no longer exists) — never a silent
+  // "Version N active." success message.
+  await expect(dialog).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByText(/reload to continue/i)).toBeVisible();
+  await expect(page.getByText(/Version \d+ active\./)).toHaveCount(0);
+  // Still in edit mode with the draft intact — the confirm-and-apply flow
+  // failed, so the operator's in-progress edit was not thrown away.
+  await expect(
+    page.getByRole("button", { name: "Review changes" }),
+  ).toBeVisible();
+  await expect(page.getByRole("radio", { name: "MARKET_DATA" })).toBeChecked();
+});
+
+test("a healthy-empty screener result renders an honest zero, not a generic 'no results'", async ({
+  page,
+}) => {
+  await login(page);
+  await page.route("**/api/v1/screener/spreads**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          rows: [],
+          total: 0,
+          generated_at: new Date().toISOString(),
+          model: "no-transfer, top-of-book",
+          excluded: { suspect: 0, liquidity_unknown: 0 },
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto("/screener");
+  // Specific and honest — states how many of how many pairs qualify —
+  // not an unlabelled "no results" indistinguishable from a stalled poll
+  // or a request that silently failed.
+  await expect(
+    page.getByText(/spreads matching these filters — 0 of 0 pairs qualify/),
+  ).toBeVisible({ timeout: 10_000 });
+});
+
+// ---- Mobile (T-087 new coverage) -------------------------------------------
+// At 390×844 the desktop <aside> is CSS-hidden (`hidden md:flex`) but
+// stays mounted, so an unscoped role query for "Primary"/"complementary"
+// matches it too. `.first()` reliably picks the currently-relevant one:
+// the mobile overlay's copy renders earlier in the JSX (conditionally, only
+// while open) than the always-mounted desktop one.
+test("mobile: the hamburger reveals the same navigation, Escape closes the overlay and returns focus, and the mode/pause control are visible without opening it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await mockPaperRunning(page, true);
+  await page.goto("/overview");
+
+  const menuButton = page.getByRole("button", { name: "Open navigation" });
+  await expect(menuButton).toBeVisible();
+  // Mode + pause control visible without ever opening the menu (F1/D7).
+  // The compact top-bar ModeBanner shows the bare word ("PAPER") with
+  // the full sentence in its title, mirroring the existing F1 test.
+  await expect(page.getByTitle(/PAPER TRADING ONLY/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Pause triangular simulations" }).first(),
+  ).toBeVisible();
+
+  await menuButton.click();
+  await expect(
+    page.getByRole("button", { name: "Close navigation" }),
+  ).toBeVisible();
+  // Same navigation definition — the six primary destinations plus
+  // Operations, in the overlay.
+  const overlayPrimary = page
+    .getByRole("navigation", { name: "Primary" })
+    .first();
+  for (const label of [
+    "Overview",
+    "Discover",
+    "Paper Trading",
+    "Research & Results",
+    "Alerts & Rules",
+    "Settings",
+    "Operations",
+  ]) {
+    await expect(
+      overlayPrimary.getByRole("link", { name: label, exact: true }),
+    ).toBeVisible();
+  }
+
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "Close navigation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Open navigation" }),
+  ).toBeFocused();
 });

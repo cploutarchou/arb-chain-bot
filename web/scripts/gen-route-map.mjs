@@ -93,10 +93,16 @@ for (const route of routes) {
     route,
     dest: m.destination.label,
     leaf: m.leaf.label,
-    reach: m.leaf.contextual
-      ? `contextual — opened from ${m.destination.label}`
-      : `${m.destination.label} › ${m.leaf.label}`,
-    clicks: m.leaf.contextual ? "in context" : clicks,
+    // A contextual leaf that is also its destination's landing href is
+    // still the direct target of that destination's primary nav link —
+    // /settings is exactly this case, and reporting it as reachable
+    // only "in context" told readers the Settings link does not go to
+    // Settings.
+    reach:
+      m.leaf.contextual && !isLanding
+        ? `contextual — opened from ${m.destination.label}`
+        : `${m.destination.label} › ${m.leaf.label}`,
+    clicks: m.leaf.contextual && !isLanding ? "in context" : clicks,
   });
 }
 
@@ -141,11 +147,18 @@ lines.push("## Counts");
 lines.push("");
 lines.push("| | Before | After |");
 lines.push("| --- | --- | --- |");
-lines.push(`| Primary navigation choices | 6 groups, all expanded | ${NAV.filter((d) => d.access?.kind !== "platform").length} destinations |`);
-lines.push("| Standing links rendered at once | 29 + 3 pinned = 32 | 6 primary (secondary appears in context) |");
+// primaryCount is what PrimaryNav actually renders: every destination
+// that is not wholly platform-gated, Operations included — Operations is
+// itself one of the primary links (D1 gates its *entries*, not the
+// destination). The literal 6 that used to sit in the next two rows
+// contradicted this row two lines above it and understated the measured
+// figure, in the one table that invites verification.
+const primaryCount = NAV.filter((d) => d.access?.kind !== "platform").length;
+lines.push(`| Primary navigation choices | 6 groups, all expanded | ${primaryCount} destinations |`);
+lines.push(`| Standing links rendered at once | 29 + 3 pinned = 32 | ${primaryCount} primary (secondary appears in context) |`);
 lines.push("| Duplicate group control (icon rail) | yes | removed |");
 lines.push(
-  `| Links visible at once (worst case) | 32 | ${6 + worstSecondary} = 6 primary + ${worstSecondary} secondary |`,
+  `| Links visible at once (worst case) | 32 | ${primaryCount + worstSecondary} = ${primaryCount} primary + ${worstSecondary} secondary |`,
 );
 lines.push(`| Navigation entries defined | 32 | ${standing} standing + ${contextual} contextual |`);
 lines.push(`| Pages served | ${routes.length} | ${routes.length} (unchanged) |`);

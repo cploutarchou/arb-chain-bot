@@ -76,20 +76,22 @@ route is preserved" a checked claim.
 
 ```
 $ cd web && node scripts/gen-route-map.mjs
-ok: 37 routes mapped, 0 orphans, 39 standing entries
+ok: 37 routes mapped, 0 orphans, 38 standing entries
 ```
 
 | | Before | After |
 | --- | --- | --- |
-| Primary choices | 6 groups, all expanded by default | 6 destinations + 1 operator area |
-| Links on screen at once | 29 group links + 3 pinned = **32** | **18 worst case** (6 primary + 12 secondary, in Operations); 11–13 typical |
+| Primary choices | 6 groups, all expanded by default | **7** primary links (6 product destinations + the operator area, which is itself a primary link) |
+| Links on screen at once | 29 group links + 3 pinned = **32** | **20 worst case** (7 primary + 13 secondary, in Operations); 9–14 typical |
 | Duplicate group control (icon rail) | present, alongside the label column | removed |
 | Pages served | 37 | 37 — unchanged |
 | Pages highlighting no nav entry | **3** | **0** |
 | Selection keyed on | display label string | stable id + route matching |
 
 Secondary entries per destination: Overview 1, Discover 7, Paper Trading
-5, Research & Results 6, Alerts & Rules 4, Settings 4, Operations 12.
+5, Research & Results 6, Alerts & Rules 4, Settings 2, Operations 13.
+(Settings is 2, not 4: `settings-home` is contextual and only
+Organisation and Billing are standing entries.)
 
 The three pages that previously highlighted nothing — `/cycles/[id]`
 (passed `"Paper"`, label was `"Paper Trading"`), `/screener-reports/*`
@@ -143,9 +145,24 @@ table *claimed* nine anchors, which the page could have contradicted.
 
 ## 3b. Float-shortcut audit across `web/src`
 
-Grepped for `parseFloat`, `toFixed` and `Number(` outside tests, then
-classified every hit. **Nothing this change introduces is a float
-shortcut on a money value.**
+Grepped for `parseFloat`, `toFixed` and `Number(` outside tests.
+**Nothing this change introduces is a float shortcut on a money value.**
+
+An earlier version of this section claimed to have "classified every
+hit" and then listed two. It had not: an independent audit found four
+more, all pre-existing, and two of them are the same defect class as the
+drawdown P0 this branch fixed —
+
+| Location | Hit | Status |
+| --- | --- | --- |
+| `app/risk/page.tsx:272` | `Number(limits["max_drawdown"]) * 100` for a limit label | **fixed here** — `presentPercentFromFraction` |
+| `app/risk/page.tsx:285` | `(Number(a.drawdown) * 100).toFixed(1)` for a drawdown | **fixed here** — same |
+| `lib/strategyFields.ts:320,336` | `Number(trimmed)` validating a bps and a quote-money threshold | pre-existing, untouched: validation bounds only, the exact string is what is submitted |
+| `app/replay/page.tsx:116,232,381` | `Number()` on a speed multiplier and a config version | pre-existing, untouched: neither is money |
+| `lib/format.ts:39`, `app/system/page.tsx` | `toFixed` on byte counts, GC pauses, latencies, msgs/sec | pre-existing, untouched: none is money |
+
+The two risk-page fixes are display-only — a `Stat` label and a summary
+string, neither a form value — so no submitted payload changes.
 
 | Hit | Verdict |
 | --- | --- |
@@ -205,7 +222,7 @@ non-zero if any stop has page-level horizontal overflow.
 | States | the same seven the audit captured, in its order |
 | Viewports | 1440×900, 1024×768, 768×1024, 390×844 |
 | Themes | dark and light (emulated `prefers-color-scheme`, with the stored theme choice cleared so the media query is authoritative) |
-| Zoom | 200% at the primary desktop stop, emulated as a halved CSS viewport rather than a scaled image |
+| Zoom | 200%, emulated as a halved CSS viewport rather than a scaled image — on **5 of the 7 states**. The zoom pass skips states needing an interaction to reach, so the screener drawer and the Calculator are not covered; and at 720 CSS px what renders is the **mobile** layout, not a zoomed desktop one |
 
 The measurement is the point: a clipped page and a fitting page look
 identical in a viewport-sized screenshot. Which is why the first run
@@ -271,8 +288,21 @@ the **Operations** destination highlighted and a breadcrumb reading
 "Operations / Operating mode".
 
 The Settings captures are to be retaken once the e2e run releases the
-dev server; the numbers in `overflow-report.json` are unaffected, since
-neither change alters layout width.
+dev server.
+
+**The whole report predates HEAD, not just those captures.** This was
+understated here before, and an independent audit was right to flag it:
+every one of the 13 scroller entries in `overflow-report.json` records
+`"label": null`, yet at HEAD `/screener` passes
+`label="Cross-exchange spreads"` and both `VirtualTable` branches set
+`aria-label` from it unconditionally. So the run predates the
+scroll-region naming, the row-identity keys and the Calculator venue
+fix, all of which landed in the same commit as the report. The **width**
+numbers are still carried forward, because none of those changes alters
+layout width — but nobody has measured HEAD, and a reviewer opening the
+JSON to confirm the "the scroll region is named" claims above will find
+the artefact contradicting them. Treat the widths as evidence and the
+labels in that file as stale.
 
 ### An honest limitation of the "after" captures
 
@@ -303,7 +333,7 @@ economics beside them.
 | `/pnl` | breakdown net result and average latency |
 | `/orders` | requested/filled quantity, average price, fee, latency |
 | `/fills` | price, quantity, fee |
-| `/screener`, `/calculator` | in progress |
+| `/screener`, `/calculator` | done |
 
 Tables on these routes also gained `rowKeys` (stable row identity under
 a poll) and a `label` on the scroll region (keyboard reachability).
@@ -326,9 +356,9 @@ the same as nothing being wrong.
 
 | Item | State |
 | --- | --- |
-| Discovery/Calculator implementation | in progress |
+| Discovery/Calculator implementation | done |
 | e2e selector updates for the renamed pause control | assigned — updated to the new names, **not** relaxed |
-| Responsive/theme/zoom capture matrix | pending |
-| Keyboard, focus-return, contrast checks in a browser | pending |
+| Responsive/theme/zoom capture matrix | done — 61 stops, with the 200% zoom scope stated honestly in §6 |
+| Keyboard, focus-return, contrast checks in a browser | done — contrast machine-checked (54 assertions); keyboard and focus-return checked by hand on the audited flows; no screen-reader pass |
 | Independent diff review | pending |
-| Mobile drawer / mobile nav sheet: scrim without `aria-modal` or focus containment | **found, assigned, not yet fixed** — correctly non-modal on desktop, but full-screen with a scrim on mobile, where modal semantics are right |
+| Mobile drawer / mobile nav sheet: scrim without `aria-modal` or focus containment | **fixed** — modality now follows the breakpoint (`lib/a11y.ts`): non-modal side panel at ≥md, `role="dialog"` + `aria-modal` + focus containment below it, with focus moved into the sheet on open. The focusable query excludes disabled and invisible controls, which is what a naive trap gets wrong around `PaperControl`'s disabled VIEWER button |

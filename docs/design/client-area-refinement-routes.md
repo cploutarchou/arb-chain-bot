@@ -15,9 +15,9 @@ checked claim rather than an assertion.
 | | Before | After |
 | --- | --- | --- |
 | Primary navigation choices | 6 groups, all expanded | 7 destinations |
-| Standing links rendered at once | 29 + 3 pinned = 32 | 6 primary (secondary appears in context) |
+| Standing links rendered at once | 29 + 3 pinned = 32 | 7 primary (secondary appears in context) |
 | Duplicate group control (icon rail) | yes | removed |
-| Links visible at once (worst case) | 32 | 19 = 6 primary + 13 secondary |
+| Links visible at once (worst case) | 32 | 20 = 7 primary + 13 secondary |
 | Navigation entries defined | 32 | 38 standing + 3 contextual |
 | Pages served | 37 | 37 (unchanged) |
 | Pages highlighting no nav entry | 3 | 0 |
@@ -69,7 +69,7 @@ Secondary entries per destination:
 | `/screener` | Scanner Suite › Screener | Discover | Discover › Spot screener | 1 |
 | `/screener-reports` | Scanner Suite › Evidence — Screener Reports | Research & Results | Research & Results › Screener evidence | 2 |
 | `/screener-reports/[id]` | (no nav entry — detail page, highlighted nothing) | Research & Results | Research & Results › Screener evidence | 2 |
-| `/settings` | footer › Settings | Settings | contextual — opened from Settings | in context |
+| `/settings` | footer › Settings | Settings | Settings › Settings | 1 |
 | `/strategies` | Control › Strategies | Alerts & Rules | Alerts & Rules › Strategies | 2 |
 | `/system` | System › System Health | Operations | Operations › System health | 2 |
 | `/telegram` | System › Telegram | Alerts & Rules | Alerts & Rules › Telegram | 2 |

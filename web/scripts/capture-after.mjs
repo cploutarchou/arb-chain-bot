@@ -83,6 +83,13 @@ const VIEWPORTS = [
   { id: "1024x768", width: 1024, height: 768 },
   { id: "768x1024", width: 768, height: 1024 },
   { id: "390x844", width: 390, height: 844 },
+  // 844x390 — the same phone in landscape. Added because it is the
+  // geometry that broke SecondaryNav: 844 is above the md breakpoint, so
+  // the *desktop* sidebar renders into 390px of height, and with
+  // `min-h-0 flex-1` the secondary list resolved to zero height and took
+  // every secondary destination with it. A short-and-wide stop is the
+  // only thing in this matrix that can catch that class of defect.
+  { id: "844x390", width: 844, height: 390 },
 ];
 const THEMES = ["dark", "light"];
 

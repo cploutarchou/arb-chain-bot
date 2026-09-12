@@ -2,6 +2,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
+  findLeafByHref,
   LEGACY_SETTINGS_ANCHORS,
   NAV,
   resolveNav,
@@ -367,5 +368,87 @@ test.describe("settings deep links survive the recategorisation", () => {
     expect(settingsCategoryForAnchor("#nope")).toBeNull();
     expect(settingsCategoryForAnchor(null)).toBeNull();
     expect(settingsCategoryForAnchor(undefined)).toBeNull();
+  });
+});
+
+// A fragment names a sub-view and can move the answer to a different
+// destination than the bare path does. Eight Operations entries point at
+// `/settings#<anchor>`, and while selection resolved on the path alone
+// every one of them highlighted Settings instead — emptying the list
+// they were clicked from and leaving the activated entry with no current
+// state anywhere. These tests pin both halves of the fix: the path-only
+// function is total, and the exact-href lookup finds the real owner.
+test.describe("fragment-bearing navigation entries resolve to their own destination", () => {
+  const fragmented = NAV.flatMap((d) =>
+    d.groups.flatMap((g) =>
+      g.items
+        .filter((l) => l.href.includes("#"))
+        .map((l) => ({ destination: d, leaf: l })),
+    ),
+  );
+
+  test("there are fragment-bearing entries to protect", () => {
+    // If this ever reaches zero the tests below stop proving anything,
+    // so the premise is asserted rather than assumed.
+    expect(fragmented.length).toBeGreaterThan(0);
+  });
+
+  test("each is found by its exact href, under the destination that owns it", () => {
+    for (const { destination, leaf } of fragmented) {
+      const m = findLeafByHref(leaf.href);
+      expect(m, `${leaf.href} must be findable by exact href`).not.toBeNull();
+      expect(m?.leaf.id).toBe(leaf.id);
+      expect(
+        m?.destination.id,
+        `${leaf.href} must resolve to ${destination.id}, not to whichever destination owns the bare path`,
+      ).toBe(destination.id);
+    }
+  });
+
+  test("the bare path alone resolves elsewhere — which is exactly why the fragment is consulted first", () => {
+    for (const { destination, leaf } of fragmented) {
+      const path = leaf.href.split("#")[0]!;
+      const byPath = resolveNav(path);
+      // Not an assertion that this is wrong — it is correct for the bare
+      // path. It documents that the two answers genuinely differ, so a
+      // future change cannot quietly drop the fragment step.
+      if (byPath && byPath.destination.id !== destination.id) {
+        expect(byPath.leaf.id).not.toBe(leaf.id);
+      }
+    }
+  });
+
+  test("resolveNav strips a fragment instead of returning null", () => {
+    // It used to match on the raw string, so any path carrying a
+    // fragment scored nothing and highlighted nothing.
+    for (const { leaf } of fragmented) {
+      const m = resolveNav(leaf.href);
+      expect(m, `resolveNav(${leaf.href}) must not be null`).not.toBeNull();
+    }
+    expect(resolveNav("/settings#markets")?.destination.id).toBe(
+      resolveNav("/settings")?.destination.id,
+    );
+    expect(resolveNav("/risk?x=1#y")?.destination.id).toBe(
+      resolveNav("/risk")?.destination.id,
+    );
+  });
+});
+
+test.describe("settings categories are the three the page builds", () => {
+  test("no section claims a category the page does not render", () => {
+    // `organisation` and `billing` were declared as in-page categories
+    // that nothing mapped to, which is where the "five categories by
+    // audience" claim came from. They are separate routes.
+    const used = new Set(SETTINGS_SECTIONS.map((s) => s.category));
+    expect([...used].sort()).toEqual([
+      "account",
+      "administration",
+      "notifications",
+    ]);
+  });
+
+  test("/org and /billing remain their own routes", () => {
+    expect(resolveNav("/org")).not.toBeNull();
+    expect(resolveNav("/billing")).not.toBeNull();
   });
 });

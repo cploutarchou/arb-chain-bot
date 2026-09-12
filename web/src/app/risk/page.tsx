@@ -19,6 +19,7 @@ import { useAuth, can } from "@/lib/auth";
 import { useToast } from "@/components/Toast";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { Await, Badge, Button, PageTitle, Section, Stat, Table, fmtTime, ChipGroup} from "@/components/ui";
+import { presentPercentFromFraction } from "@/lib/decimal";
 
 const WINDOWS = [24, 72, 168, 720] as const;
 
@@ -269,7 +270,13 @@ function RiskTopStrip({
   const r = risk.kind === "ready" || risk.kind === "error" ? risk.data : undefined;
   const limits = r?.limits ?? {};
   const maxDailyLoss = String(limits["max_daily_loss"] ?? "");
-  const maxDrawdownPct = limits["max_drawdown"] !== undefined ? `${Number(limits["max_drawdown"]) * 100}%` : "";
+  // Exact decimal shift, not `Number(x) * 100`. max_drawdown is a
+  // fraction; pushing it through a float to build a label is the same
+  // shortcut decimal.ts exists to remove, and it is a risk limit.
+  const maxDrawdownPct =
+    limits["max_drawdown"] !== undefined
+      ? presentPercentFromFraction(String(limits["max_drawdown"])).text
+      : "";
   const open = (r?.breakers ?? []).filter((b) => b.State === "OPEN");
 
   const p = portfolio.kind === "ready" || portfolio.kind === "error" ? portfolio.data : undefined;
@@ -282,7 +289,10 @@ function RiskTopStrip({
     .map((a) => `${a.daily_loss} ${a.asset}`);
   const drawdown = (x?.assets ?? [])
     .filter((a) => a.drawdown && a.drawdown !== "0")
-    .map((a) => `${(Number(a.drawdown) * 100).toFixed(1)}% ${a.asset}`);
+    // Same reason, and this one also used toFixed on the float result.
+    // drawdown is "worst fraction from peak" (internal/portfolio), so
+    // the conversion is a decimal point shift.
+    .map((a) => `${presentPercentFromFraction(a.drawdown).text} ${a.asset}`);
 
   return (
     <Section title="At a glance">

@@ -47,7 +47,14 @@
      RowDrawer hard-coded rgba(0,0,0,.25) for both themes, which reads
      as a black smear against a white panel in light mode; --overlay is
      a 60% modal scrim and far too heavy for an edge shadow, and
-     --border is opaque and deliberately decorative. */
+     --border is opaque and deliberately decorative.
+
+     Dark keeps rgba(0,0,0,.25) — the value design-system.md §4.3
+     specifies and the one the hardcoded shadow already used — so
+     tokenising this changes nothing in dark mode and fixes only the
+     light-mode smear it was introduced for. It briefly shipped at .45
+     here, an 80% heavier shadow than the spec, justified by a comment
+     that only ever described the light change. */
   --shadow-color: rgba(23, 26, 33, 0.12);
   --opacity-disabled: 0.4;
   --opacity-stale: 0.8;
@@ -84,7 +91,7 @@
   --heat-p4: #f0b04e;
   --heat-ink: #0b0e14;
   --overlay: rgba(0, 0, 0, 0.6);
-  --shadow-color: rgba(0, 0, 0, 0.45);
+  --shadow-color: rgba(0, 0, 0, 0.25);
   --opacity-disabled: 0.4;
   --opacity-stale: 0.8;
   color-scheme: dark;
@@ -121,7 +128,7 @@
     --heat-p4: #f0b04e;
     --heat-ink: #0b0e14;
     --overlay: rgba(0, 0, 0, 0.6);
-    --shadow-color: rgba(0, 0, 0, 0.45);
+    --shadow-color: rgba(0, 0, 0, 0.25);
     --opacity-disabled: 0.4;
     --opacity-stale: 0.8;
     color-scheme: dark;
@@ -154,15 +161,15 @@ textarea:focus-visible,
 summary::-webkit-details-marker {
   display: none;
 }
-details > summary > span > span[aria-hidden] {
+details > summary > * > span[aria-hidden] {
   display: inline-block;
   transition: transform 120ms ease;
 }
-details[open] > summary > span > span[aria-hidden] {
+details[open] > summary > * > span[aria-hidden] {
   transform: rotate(90deg);
 }
 @media (prefers-reduced-motion: reduce) {
-  details > summary > span > span[aria-hidden] {
+  details > summary > * > span[aria-hidden] {
     transition: none;
   }
 }

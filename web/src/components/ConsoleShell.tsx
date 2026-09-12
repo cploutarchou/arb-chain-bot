@@ -10,6 +10,11 @@ import {
   type SystemStatus,
 } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
+import {
+  MOBILE_OVERLAY_QUERY,
+  useFocusTrap,
+  useMediaQuery,
+} from "@/lib/a11y";
 import { connectHub, type HubMessage } from "@/lib/ws";
 import { useAuth, can } from "@/lib/auth";
 import { Button, ConfirmDialog } from "@/components/ui";
@@ -430,6 +435,26 @@ export function ConsoleShell({
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLElement>(null);
+  // The sheet only exists below md (its container is `md:hidden`), so
+  // whenever it is open it is the full-screen-over-a-scrim presentation
+  // and is modal. Containment is real here: without it Tab left the
+  // sheet and walked the sidebar and page behind the scrim, which a
+  // sighted keyboard user cannot see and a screen-reader user is not
+  // told about.
+  const mobileWidth = useMediaQuery(MOBILE_OVERLAY_QUERY);
+  useFocusTrap(sheetRef, mobileOpen);
+  // A sheet left open while the viewport grows past md would otherwise
+  // become a focus trap inside a `display:none` subtree.
+  useEffect(() => {
+    if (mobileOpen && !mobileWidth) setMobileOpen(false);
+  }, [mobileOpen, mobileWidth]);
+  // Focus moves into the sheet on open. Without this the trap had
+  // nothing to contain: focus stayed on the hamburger, which is outside
+  // the sheet, so neither Tab boundary ever matched.
+  useEffect(() => {
+    if (mobileOpen) sheetRef.current?.focus();
+  }, [mobileOpen]);
   // Escape closes the mobile nav overlay and focus returns to the
   // hamburger that opened it — a keyboard user otherwise had no way out.
   useEffect(() => {
@@ -498,7 +523,16 @@ export function ConsoleShell({
             onClick={() => setMobileOpen(false)}
             aria-hidden
           />
-          <aside className="relative z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4">
+          {/* role/aria-modal belong on the sheet, not on the wrapper —
+              the wrapper also contains the aria-hidden scrim. */}
+          <aside
+            ref={sheetRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation"
+            tabIndex={-1}
+            className="relative z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 outline-none"
+          >
             <div className="mb-2 px-2 text-sm font-semibold tracking-wide text-[var(--text)]">
               ARB CONSOLE
             </div>

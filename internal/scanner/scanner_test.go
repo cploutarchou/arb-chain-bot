@@ -336,14 +336,38 @@ func TestEvaluationStatsPartitionEveryTriangle(t *testing.T) {
 				s.Stats.Qualified.Load() + s.Stats.Rejected.Load()
 	}
 
-	// Each case drives evaluateTriangle down a different exit.
+	// stageOf names the four counters so a case can assert *which* exit it
+	// took, not merely that the total adds up. Without this the test was
+	// weaker than its own promise: if a change made the corrupted-book
+	// case start exiting through NoViableSize instead of SkippedBooks the
+	// sum would still balance and this test would still pass — while
+	// Overview, which gives each stage its own explanation and its own
+	// next step, silently started telling operators the wrong thing.
+	stageOf := map[string]func(*Scanner) int64{
+		"skipped_books":  func(s *Scanner) int64 { return s.Stats.SkippedBooks.Load() },
+		"no_viable_size": func(s *Scanner) int64 { return s.Stats.NoViableSize.Load() },
+		"qualified":      func(s *Scanner) int64 { return s.Stats.Qualified.Load() },
+		"rejected":       func(s *Scanner) int64 { return s.Stats.Rejected.Load() },
+	}
+
+	// Each case drives evaluateTriangle down a different exit, and names
+	// the counter that exit must advance.
 	cases := []struct {
 		name string
-		run  func(t *testing.T) *Scanner
+		// wantStage must be non-zero after run; every other stage that is
+		// not listed in alsoAllowed must be zero.
+		wantStage   string
+		alsoAllowed []string
+		run         func(t *testing.T) *Scanner
 	}{
 		{
 			// Qualified and rejected: the healthy path, both gate outcomes.
-			name: "healthy books reach the risk gate",
+			// Which of the two a triangle lands on depends on the risk
+			// policy, so both are permitted here — but nothing may leak
+			// into the two pre-gate counters.
+			name:        "healthy books reach the risk gate",
+			wantStage:   "qualified",
+			alsoAllowed: []string{"rejected"},
 			run: func(t *testing.T) *Scanner {
 				s, _ := harness(t)
 				s.EvaluateMarket(exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"})
@@ -352,7 +376,8 @@ func TestEvaluationStatsPartitionEveryTriangle(t *testing.T) {
 		},
 		{
 			// SkippedBooks: a corrupted leg exits before the gate.
-			name: "corrupted leg book",
+			name:      "corrupted leg book",
+			wantStage: "skipped_books",
 			run: func(t *testing.T) *Scanner {
 				s, books := harness(t)
 				b, _ := books.Get(exchange.MarketID{Exchange: "binance", Symbol: "ETHBTC"})
@@ -363,7 +388,9 @@ func TestEvaluationStatsPartitionEveryTriangle(t *testing.T) {
 		},
 		{
 			// NoViableSize: depth too thin for MinInput, also before the gate.
-			name: "dust depth",
+			name:        "dust depth",
+			wantStage:   "no_viable_size",
+			alsoAllowed: []string{"skipped_books"},
 			run: func(t *testing.T) *Scanner {
 				s, books := harness(t)
 				id := exchange.MarketID{Exchange: "binance", Symbol: exchange.Symbol("BTCUSDT")}
@@ -381,7 +408,8 @@ func TestEvaluationStatsPartitionEveryTriangle(t *testing.T) {
 		},
 		{
 			// Rejected via an open breaker: the gate refuses every triangle.
-			name: "breaker open",
+			name:      "breaker open",
+			wantStage: "rejected",
 			run: func(t *testing.T) *Scanner {
 				s, _ := harness(t)
 				s.Breakers.Trip("ws_unstable", "exchange:binance", "storm", t0)
@@ -405,6 +433,27 @@ func TestEvaluationStatsPartitionEveryTriangle(t *testing.T) {
 					evals, accounted,
 					s.Stats.SkippedBooks.Load(), s.Stats.NoViableSize.Load(),
 					s.Stats.Qualified.Load(), s.Stats.Rejected.Load())
+			}
+			// The sum balancing is not enough: assert the attribution.
+			if got := stageOf[tc.wantStage](s); got == 0 {
+				t.Fatalf("expected this case to advance %s, but it is zero "+
+					"(skipped=%d no_viable_size=%d qualified=%d rejected=%d) — "+
+					"the exit path moved, so Overview attributes this outcome "+
+					"to the wrong stage and offers the wrong next step",
+					tc.wantStage,
+					s.Stats.SkippedBooks.Load(), s.Stats.NoViableSize.Load(),
+					s.Stats.Qualified.Load(), s.Stats.Rejected.Load())
+			}
+			allowed := map[string]bool{tc.wantStage: true}
+			for _, a := range tc.alsoAllowed {
+				allowed[a] = true
+			}
+			for stage, load := range stageOf {
+				if !allowed[stage] && load(s) != 0 {
+					t.Fatalf("case %q advanced %s (=%d), which it must not: "+
+						"an evaluation is being counted at a stage it did not reach",
+						tc.name, stage, load(s))
+				}
 			}
 		})
 	}

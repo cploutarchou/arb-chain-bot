@@ -28,7 +28,15 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-export type StatusTone = "ok" | "warn" | "bad" | "unknown";
+// "absent" and "unknown" are deliberately different answers:
+//   * unknown — we could not read this. A failed poll, a source that is
+//     down. The reader should not trust the strip on this point.
+//   * absent  — we read it fine, and the thing is knowably not part of
+//     this deployment (no paper engine configured, a feed never
+//     started). That is a *known* state, and rolling it up as platform
+//     ignorance made a correctly-configured deployment report
+//     "4 UNKNOWN" when nothing at all was wrong.
+export type StatusTone = "ok" | "warn" | "bad" | "unknown" | "absent";
 
 export interface StatusSegment {
   // label: short and stable — this is the row header, not a sentence.
@@ -58,6 +66,8 @@ function toneColor(tone: StatusTone): string {
       return "var(--critical)";
     case "unknown":
       return "var(--text-dim)";
+    case "absent":
+      return "var(--text-dim)";
   }
 }
 
@@ -70,6 +80,9 @@ function Dot({ tone }: { tone: StatusTone }) {
       aria-hidden
       className="inline-block h-2 w-2 shrink-0 rounded-full"
       style={
+        // Hollow means "not known". `absent` IS known, so it keeps a
+        // filled dot in the dim colour — the shape difference stays
+        // reserved for genuine ignorance.
         tone === "unknown"
           ? { border: `1.5px solid ${color}`, background: "transparent" }
           : { background: color }
@@ -120,10 +133,19 @@ function rollUp(segments: StatusSegment[]): { text: string; tone: StatusTone } {
   if (settled.length === 0) return { text: "CHECKING", tone: "unknown" };
   const bad = settled.filter((s) => s.tone === "bad").length;
   const warn = settled.filter((s) => s.tone === "warn").length;
+  // `absent` is excluded: a component this deployment does not run is
+  // not a thing the platform is ignorant about. Counting those as
+  // UNKNOWN meant a healthy deployment led with a roll-up implying the
+  // console could not see its own state.
   const unknown = settled.filter((s) => s.tone === "unknown").length;
+  const absent = settled.filter((s) => s.tone === "absent").length;
   if (bad > 0) return { text: `${bad} CRITICAL`, tone: "bad" };
   if (warn > 0) return { text: `${warn} DEGRADED`, tone: "warn" };
   if (unknown > 0) return { text: `${unknown} UNKNOWN`, tone: "unknown" };
+  // Still "ALL OK", but it says what is simply not running, so the
+  // phrase cannot be read as "everything is switched on and fine".
+  if (absent > 0)
+    return { text: `ALL OK · ${absent} not running`, tone: "ok" };
   return { text: "ALL OK", tone: "ok" };
 }
 
@@ -137,10 +159,6 @@ export function StatusStrip({
   label: string;
 }) {
   const summary = rollUp(segments);
-  const spoken = segments
-    .filter((s) => !s.loading)
-    .map((s) => `${s.label}: ${s.word ?? "unknown"}${s.detail ? `, ${s.detail}` : ""}`)
-    .join(". ");
 
   return (
     <div
@@ -148,9 +166,13 @@ export function StatusStrip({
       aria-label={label}
       className="mb-4 rounded border border-[var(--border)] bg-[var(--bg-panel)]"
     >
-      {/* The summary sentence, announced before the individual segments. */}
+      {/* The roll-up only. It used to repeat every segment's label, word
+          and detail as well — but the visible segments are ordinary text
+          and are not aria-hidden, so assistive technology read the whole
+          strip twice: once as this paragraph and again as the grid. The
+          answer-first intent is served by the summary alone. */}
       <p className="sr-only">
-        {label}: {summary.text}. {spoken}
+        {label}: {summary.text}.
       </p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 px-3 py-2 sm:grid-cols-3 lg:flex lg:items-start lg:gap-6">
         <div className="min-w-0">
