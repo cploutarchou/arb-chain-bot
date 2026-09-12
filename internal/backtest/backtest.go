@@ -99,6 +99,14 @@ type Options struct {
 	Scenario Scenario
 }
 
+// Pre-gate rejection buckets synthesised from scanner counters (T-062):
+// these two exits reject a triangle before any event is emitted, so
+// they carry no risk reason code to histogram from the event stream.
+const (
+	ReasonSkippedBook  = "SKIPPED_UNHEALTHY_BOOK"
+	ReasonNoViableSize = "NO_VIABLE_SIZE"
+)
+
 // CycleRecord is one settled cycle's §80 evidence.
 type CycleRecord struct {
 	CycleID       string          `json:"cycle_id"`
@@ -129,6 +137,13 @@ type Result struct {
 	Qualified   int64 `json:"qualified"`
 	Rejected    int64 `json:"rejected"`
 	SkippedBook int64 `json:"skipped_unhealthy"`
+
+	// RejectionReasons histograms WHY nothing (or not more) qualified
+	// (T-062): risk-gate reason codes from rejected events, plus the two
+	// pre-gate exits that emit no event, synthesised from scanner
+	// counters (ReasonSkippedBook, ReasonNoViableSize). A "no qualified
+	// opportunities" verdict can then say why instead of guessing.
+	RejectionReasons map[string]int64 `json:"rejection_reasons,omitempty"`
 
 	Cycles []CycleRecord `json:"cycles"`
 
@@ -258,6 +273,7 @@ func Run(opts Options) (Result, error) {
 		NetPnL: map[string]string{}, FeesPaid: map[string]string{},
 		MaxDrawdown: map[string]string{}, Turnover: map[string]string{},
 	}
+	rejections := map[string]int64{}
 	maxDD := map[exchange.Asset]decimal.Decimal{}
 	turnover := map[exchange.Asset]decimal.Decimal{}
 
@@ -333,6 +349,8 @@ func Run(opts Options) (Result, error) {
 				}
 				if ev.Opportunity.Status == opportunity.StatusQualified {
 					runCycle(ev)
+				} else if ev.Opportunity.Status == opportunity.StatusRejected && ev.Decision.ReasonCode != "" {
+					rejections[ev.Decision.ReasonCode]++
 				}
 			}
 		}
@@ -345,6 +363,18 @@ func Run(opts Options) (Result, error) {
 	res.Qualified = scn.Stats.Qualified.Load()
 	res.Rejected = scn.Stats.Rejected.Load()
 	res.SkippedBook = scn.Stats.SkippedBooks.Load()
+	// The two pre-gate exits emit no events; fold their counters in so
+	// the histogram explains every evaluation that did not qualify.
+	// Zero counts stay out: an empty histogram means "nothing rejected".
+	if n := scn.Stats.SkippedBooks.Load(); n > 0 {
+		rejections[ReasonSkippedBook] += n
+	}
+	if n := scn.Stats.NoViableSize.Load(); n > 0 {
+		rejections[ReasonNoViableSize] += n
+	}
+	if len(rejections) > 0 {
+		res.RejectionReasons = rejections
+	}
 	for _, a := range opts.StartingAssets {
 		res.NetPnL[string(a)] = port.Realized(a).String()
 		res.FeesPaid[string(a)] = port.FeesPaid(a).String()

@@ -99,7 +99,8 @@ no mempool, no bridging.
 - **T-094** Load/soak tests at target scale (venues × pairs × tenants).
 
 ### Smaller open items
-- **T-062** Campaign rejection-reason histogram in `backtest.Result` and the §80 report, so a "no qualified opportunities" verdict says why.
+
+- _(empty — T-062, the campaign rejection-reason histogram, closed 2026-09-12)_
 
 ---
 
