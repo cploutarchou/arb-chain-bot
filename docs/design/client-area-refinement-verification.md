@@ -18,30 +18,35 @@ produce a different "before", not a better one.
 | Go formatting | `gofmt -l internal cmd` | clean (no output) |
 | Go build | `go build ./...` | pass |
 | Go vet | `go vet ./...` | pass |
-| Go tests for changed packages | — | **not run: no Go package changed.** `git status` shows zero `.go` files modified; the change is confined to `web/` and `docs/`. The three checks above were still run to prove it rather than assert it. |
+| Go tests for changed packages | `go test -race -count=1 ./internal/scanner/` | pass. One **test-only** Go file changed: `internal/scanner/scanner_test.go` gains `TestEvaluationStatsPartitionEveryTriangle`, which asserts the counter identity Overview's four-stage explanation depends on. No non-test Go file differs from master. |
 | Console lint | `cd web && npm run lint` | pass (ESLint clean + 54/54 contrast assertions) |
 | Console typecheck | `cd web && npm run typecheck` | pass |
-| Console build | `cd web && npm run build` | *to be re-run — see note below* |
-| Console unit suite | `cd web && npm run test:unit` | pass |
-| `golangci-lint run ./...` | — | *pending* |
-| Playwright e2e | `scripts/e2e.sh` | *pending* |
+| Console build | `cd web && npm run build` | pass — clean `rm -rf .next` build on the merged tree, all 37 routes |
+| Console unit suite (this branch) | `cd web && npm run test:unit` | pass — 63 tests |
+| Console unit suite (master's, PR #30) | `cd web && npm test` | pass — 10 tests |
+| `golangci-lint run ./...` | `golangci-lint run ./...` | pass — **0 issues** (v2.13.1) on the merged tree |
+| Playwright e2e | `scripts/e2e.sh` | *assigned — in progress* |
 | GitHub Actions CI | — | **unverified, environment blocked.** `docs/PENDING.md` §0 records repo-wide Actions failure since 2026-08-31 with no runner assigned and no logs, on every branch including `master`. "CI-equivalent" here means the local suite above. |
 
-**On the build row.** `npm run build` passed after the shell and
-navigation work, and then a further nine files changed. Lint and
-`tsc --noEmit` have been green throughout, but they do not catch what
-`next build` catches — notably the framework's own export-shape check on
-page files, which this change tripped once already (a helper exported
-from `overview/page.tsx`). The row above stays marked pending until the
-build is re-run against the final tree, rather than carrying forward a
-result that was true earlier.
+**On the Go row.** No `.go` file is modified by this branch's own
+commits; the merge brought master's Go changes in, and gofmt, build and
+vet were re-run on the merged tree and are clean. The three checks are
+recorded as run rather than skipped, so "no Go changed" is proved
+instead of asserted.
+
+**On the two unit suites.** Master's PR #30 landed a `node --test`
+runner over `src/lib/*.test.ts` with a CI step that invokes it. This
+branch's suite uses the Playwright runner already in devDependencies.
+Both are kept and both pass; the merge commit explains why neither was
+collapsed into the other.
 
 ### What the unit suite does and does not cover
 
-54 tests pass, and it is worth being exact about what that means: they
+63 tests pass, and it is worth being exact about what that means: they
 cover **pure logic** — `lib/decimal.ts`'s presentation rules,
-`lib/nav.ts`'s route resolution and access metadata, and the Settings
-page's anchor set read out of its source. **Nothing renders a
+`lib/nav.ts`'s route resolution and access metadata, `lib/auth.tsx`'s
+permission matrix checked against `internal/auth/rbac.go`, and the
+Settings page's anchor set read out of its source. **Nothing renders a
 component.** `ConsoleNav`, `StatusStrip`, `SettingsCategories` and the
 rewritten pages have no unit coverage; the navigation *data* is proven,
 the navigation *component* is not. The e2e suite is what exercises the
@@ -136,6 +141,31 @@ without it a deep link would scroll without moving focus.
 This closes a real gap: the earlier test proved only that the metadata
 table *claimed* nine anchors, which the page could have contradicted.
 
+## 3b. Float-shortcut audit across `web/src`
+
+Grepped for `parseFloat`, `toFixed` and `Number(` outside tests, then
+classified every hit. **Nothing this change introduces is a float
+shortcut on a money value.**
+
+| Hit | Verdict |
+| --- | --- |
+| `lib/decimal.ts:270` `Number(expRaw)` | the **integer exponent** of a decimal string (`1.5e3` → `3`), bounded by an explicit `Math.abs(exp) > 10000` guard and used only to shift the point on the digit string. Not a value. |
+| `lib/format.ts`, `lib/feedState.ts` `toFixed` | byte counts and elapsed seconds. Not money. |
+| `app/onboarding`, `app/settings`, `app/scanner-alerts` `Number(cooldownS)` etc. | integer configuration fields (seconds, hours) whose API types are numbers. Legitimate. |
+
+Two **pre-existing** hits are on value-ish paths, were not introduced
+here, and are **left unfixed as out of scope** — recorded so they are
+not mistaken for clean:
+
+| Location | What it does |
+| --- | --- |
+| `app/billing/page.tsx:184` | `(Number(line.payout.refund_rate_90d) * 100).toFixed(1)` — renders a backend decimal rate as a percentage through a float |
+| `app/triangles/[id]/page.tsx:72,75` | `Number(leg.fee_rate ?? 0)` for a comparison and a `Math.max` across legs |
+
+Neither is a ledger or a persisted value, and neither is on a surface
+this task was asked to change. They are the obvious next candidates if
+the pattern is to be eliminated repo-wide.
+
 ## 4. Defects found by review and fixed
 
 | Defect | Location | Evidence it is fixed |
@@ -157,7 +187,106 @@ for the file:line evidence.
 | Stated scope | none | visible text: rule-based automatic paper execution keeps running and has no pause control |
 | Dialog | in-flight cycles settle | in-flight cycles settle **+** triangular engine only **+** shared across the deployment, not per organisation |
 
-## 6. Pages converted to bounded presentation
+## 6. Responsive, theme and zoom matrix — measured
+
+`web/scripts/capture-after.mjs` drives the seven audited workflows
+across the acceptance matrix and records
+`documentElement.scrollWidth` against `clientWidth` at every stop.
+Screenshots land in `client-area-refinement-after/`; the numbers land in
+`client-area-refinement-after/overflow-report.json`. The script exits
+non-zero if any stop has page-level horizontal overflow.
+
+```
+61 stops captured, 0 with page-level horizontal overflow, 0 prepare errors
+```
+
+| Dimension | Covered |
+| --- | --- |
+| States | the same seven the audit captured, in its order |
+| Viewports | 1440×900, 1024×768, 768×1024, 390×844 |
+| Themes | dark and light (emulated `prefers-color-scheme`, with the stored theme choice cleared so the media query is authoritative) |
+| Zoom | 200% at the primary desktop stop, emulated as a halved CSS viewport rather than a scaled image |
+
+The measurement is the point: a clipped page and a fitting page look
+identical in a viewport-sized screenshot. Which is why the first run
+mattered — it failed.
+
+### What the first run found
+
+**Eight of 61 stops overflowed**, all on the screener at 768px and
+below, and the cause was in this change:
+
+`DecimalValue` renders the exact value in a `sr-only` sibling.
+Tailwind's `sr-only` is `position: absolute`, so with no positioned
+ancestor the hidden text resolves against the **initial containing
+block** at its static position — which, inside a horizontally scrolled
+table, is far to the right of the viewport. Because the scroll container
+was not its containing block, the scroller did not clip it, and it
+extended `documentElement`'s scrollable overflow. Measured: `html`
+scrollWidth 677 against a body and viewport of 390.
+
+Adding `relative` to the `DecimalValue` wrapper makes it the containing
+block. All 61 stops now measure zero.
+
+Two further defects surfaced in the same pass:
+
+| Defect | Consequence | Fix |
+| --- | --- | --- |
+| The screener's spread table had no accessible name on its scroll region | at ≤1024px the seven columns need internal scrolling; the region was focusable but unnamed, so a screen-reader user tabbing into it learned nothing | `label="Cross-exchange spreads"` |
+| The same table had no stable row identity | React keyed rows by array index, so a 5 s poll that reordered rows reused a DOM row for a different pair, moving focus and the open drawer's anchor onto a candidate the user never selected | `rowKeys` from the existing `rowKey(r)` |
+| The Calculator's venue `<select>` offered six hard-coded names while the screener covers every venue the status endpoint reports | a `<select>` whose value is absent from its options renders the **first** option, so arriving from a `binance → kucoin` row showed `binance → binance` and Calculate would have priced a different trade than the row clicked | options sourced from `/screener/status`, unioned with whatever the hand-off asked for |
+
+### Verified by hand in a browser
+
+Against the disposable backend, not the research session:
+
+| Behaviour | Result |
+| --- | --- |
+| Drawer opens → focus moves to the close button | pass |
+| Escape closes the drawer | pass |
+| Focus returns to the originating row's Detail button | pass |
+| Screener scroll region is named, focusable and actually overflows at 1024px, with zero document overflow | pass |
+| Calculator hand-off keeps a non-listed venue (`kucoin`) selected | pass after the fix above |
+| Status strip's accessible roll-up is announced before the segments | pass — read back as "Platform status: 1 UNKNOWN. Mode: PAPER, no live orders, ever. Market feed: CONNECTED, all 6 books healthy. …" |
+
+These are hand checks, recorded as such. The e2e suite is what turns
+them into assertions, and that work is assigned.
+
+### One capture is stale
+
+`07-settings--*` was taken before the Settings sidebar was corrected.
+It shows the sidebar listing Account / Notifications / Organisation /
+Billing **and** the tablist listing Account / Organisation / Billing /
+Notifications / Administration — two controls for one choice, in
+different orders, which is the duplicate affordance the icon rail was
+removed for. Fixed: the tablist owns the in-page categories (Account,
+Notifications, Administration) and the sidebar lists only the genuinely
+separate routes (`/org`, `/billing`).
+
+That fix exposed a second defect, now also fixed and regression-tested:
+with no leaf owning the bare `/settings` path, the route resolved to the
+first entry that strips to it — Operations' "Operating mode", whose href
+is `/settings#operating-mode` — so a normal user opening Settings saw
+the **Operations** destination highlighted and a breadcrumb reading
+"Operations / Operating mode".
+
+The Settings captures are to be retaken once the e2e run releases the
+dev server; the numbers in `overflow-report.json` are unaffected, since
+neither change alters layout width.
+
+### An honest limitation of the "after" captures
+
+The "before" screenshots come from the operator's live research session,
+with a populated engine. The "after" captures come from a **disposable
+in-memory backend**, so several states are legitimately emptier —
+`/auto-paper` has no rules, `/paper` no settled cycles, results are
+zero. The comparison is therefore sound for **structure, density,
+responsiveness, theming and overflow**, and is *not* a like-for-like
+comparison of populated data. The audit README makes the same point
+about its own captures: the values differ between runs, and neither set
+is performance evidence.
+
+## 7. Pages converted to bounded presentation
 
 Every money, bps, price and quantity cell on these routes now goes
 through `DecimalValue` with a named preset, keeping the exact string
@@ -179,7 +308,7 @@ economics beside them.
 Tables on these routes also gained `rowKeys` (stable row identity under
 a poll) and a `label` on the scroll region (keyboard reachability).
 
-## 7. Risk discoverability
+## 8. Risk discoverability
 
 The brief requires risk status and the risk destination to stay
 immediately discoverable from Overview **and** Paper Trading.
@@ -193,7 +322,7 @@ immediately discoverable from Overview **and** Paper Trading.
 A failed risk poll says it could not be read, which is explicitly not
 the same as nothing being wrong.
 
-## 8. Outstanding
+## 9. Outstanding
 
 | Item | State |
 | --- | --- |

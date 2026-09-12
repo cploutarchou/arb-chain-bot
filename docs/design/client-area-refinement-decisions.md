@@ -184,7 +184,7 @@ real defects in shared code, fixed here rather than filed:
 | Defect | Was | Now |
 | --- | --- | --- |
 | `signTone("0")` returned `"ok"`, so an exactly-zero result rendered in the positive colour and a flat session read as a winning one | `decimal.ts:98-101` | zero in any spelling returns `"dim"`; `isZeroDecimalStr` added; regression-tested including `-0`, `0e-9` and a tiny nonzero loss |
-| `Table`/`VirtualTable` keyed rows by array index, so a 5s poll or a re-sort reused a DOM row for a different record, moving focus and selection silently | `ui.tsx:323`, `ui.tsx:419` | optional `rowKeys` threaded through both; required for any polled or sortable table |
+| `Table`/`VirtualTable` keyed rows by array index, so a 5s poll or a re-sort reused a DOM row for a different record, moving focus and selection silently | `ui.tsx:323`, `ui.tsx:419` | the shared component now **supports** stable keys (`rowKeys`, both branches) and the tables on the surfaces this task touched pass them. **Roughly fifteen polled tables on untouched pages still key by index** — `/alerts`, `/audit`, `/opportunities`, `/triangles`, `/scanner`, `/exchanges`, `/funding`, `/strategies`, `/scanner-alerts`, `/replay`, `/reports`. Fixed where this task looked, not repo-wide. |
 | the `overflow-x-auto` wrapper had no `tabIndex`/`role`/`aria-label`, so Screener's off-screen freshness and action columns were unreachable by keyboard (WCAG 2.1.1) | `ui.tsx` | focusable scroll region with an optional accessible name |
 
 Still open and assigned, not silently dropped: the mobile drawer and
@@ -192,15 +192,29 @@ mobile nav sheet render a scrim without `aria-modal` or focus
 containment (they are correctly non-modal on desktop, but full-screen
 with a scrim on mobile, where modal semantics are right).
 
-## D11. Screener filters move into the URL
+## D11. Screener filters and the URL — partially done, and the gap is real
 
-The UX spec found that `screener/page.tsx` holds its filters in
-component state with no `useSearchParams`/`router.replace`, so the
-Calculator hand-off loses them on Back — and that `console-v2.md` §6.1
-already required URL sync and never got it. Implementing it satisfies an
-existing requirement, is not a URL change (bare `/screener` still
-resolves to defaults), and is what makes "return to discovery with
-filters intact" possible at all.
+The UX spec found that `screener/page.tsx` holds its filters in component
+state, so the Calculator hand-off loses them on Back, and that
+`console-v2.md` §6.1 already required URL sync and never got it.
+
+**What shipped is narrower than an earlier draft of this section
+claimed.** `useSearchParams` is read at mount for `base`, `quote`,
+`buy_venue` and `sell_venue`, and the Calculator's `backToScreenerHref`
+carries the same four back — that hand-off works in both directions. But
+there is **no `router.replace`**: the screener never writes its own
+filter state to the URL, so six filters travel in neither direction —
+
+`min_spread_bps`, `min_liquidity`, `min_lifetime_s`, `bases_deny`,
+`include_suspect`, `include_unknown_liquidity`.
+
+Set a 25 bps threshold and a 5,000 liquidity floor, open a row in the
+Calculator, press Back: both thresholds are gone. That is the exact
+failure this section claimed to have fixed, and `console-v2.md` §6.1
+remains unmet. Recorded as remaining work rather than described as done.
+
+No safety regression: the two opt-ins resetting to OFF is the safe
+direction, and the page preserves that default.
 
 ## D12. Out of scope, explicitly
 
@@ -265,3 +279,47 @@ place of the second, a sentence saying platform configuration is
 operated by platform staff and pointing at their own Organisation page.
 Nothing they could previously change becomes unavailable — the backend
 already refused all of it with `platform_admin_required`.
+
+## D14. Parallel work on the same problem, and how this branch relates to it
+
+Recorded because a later reader will otherwise find two implementations
+of the same navigation and no explanation.
+
+While this branch was being built from `8a6ff63`, master moved three
+commits ahead and a second effort started in the main checkout:
+
+| Where | What |
+| --- | --- |
+| `master` `a0e1c26` (PR #30) | "bounded exact-decimal display and calculator feasibility first" — a smaller implementation of this task's Phase 1, plus a `node --test` runner and a CI step |
+| `client-area-navigation` (uncommitted, main checkout) | the same six-destination navigation redesign, route-based selection, `IconRail` deleted, `active` removed from ~35 pages, and `web/e2e/console.spec.ts` already updated |
+
+Master's PR #30 is **merged into this branch** (see the merge commit) with
+nothing discarded: `fmtDecimal` and its ten-case suite stay exactly as
+they are and its CI step still passes, while `presentDecimal` and the
+presets sit alongside as the richer API the components use. The two
+agree on master's `"< 0.01"` less-than spelling.
+
+`client-area-navigation` is **not** merged and was not touched. Its
+architecture and this branch's agree on the essentials — six
+destinations, route-based selection rather than label matching, the icon
+rail removed — and differ in two ways worth stating:
+
+1. It keeps the navigation definition inside `ConsoleShell.tsx`; this
+   branch moved it to `web/src/lib/nav.ts`, which is what allows the
+   route-coverage, access-gating and anchor-contract assertions in
+   `web/unit/nav.spec.ts` to exist at all.
+2. It removes the `active` prop from every page; this branch made the
+   prop optional, so no page needed editing and the three pages that
+   previously highlighted nothing were fixed without a 35-file pass.
+
+Only this branch carries the status strip and attention list, the
+Overview priority rebuild and its four-stage zero-qualified
+explanation, the Paper/Auto-Paper restructure, the Settings categories
+with the nine preserved anchors, the `platform_admin` gating of platform
+settings, the pause-scope correction, the generated route map and the
+capture/overflow harness. Only `client-area-navigation` carries the e2e
+updates.
+
+**The reconciliation is the operator's call** and has been referred to
+them. `web/e2e/console.spec.ts` is the one file both sides must touch,
+so it is where a conflict is certain.

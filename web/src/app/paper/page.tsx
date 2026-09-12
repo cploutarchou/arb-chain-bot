@@ -260,17 +260,30 @@ export default function PaperPage() {
               rows={(c.cycles ?? []).map((row) => [
                 fmtTime(row.started_at),
                 <OutcomeBadge key="o" code={row.outcome} />,
+                // The breakdown rides on the figure's own title rather
+                // than a wrapper: DecimalValue sets title="Exactly …"
+                // when it rounds, and an inner title wins on hover — so a
+                // wrapper title disappeared precisely when the value was
+                // abbreviated and the breakdown mattered most.
                 row.realized_pnl !== undefined ? (
-                  <span key="pnl" title={`marked total ${row.pnl_amount ?? "—"} (realized ${row.realized_pnl ?? "—"} + exposure mark ${row.exposure_mark ?? "—"})`}>
+                  <span key="pnl">
                     <DecimalValue
-                      d={presentSignedQuote(row.realized_pnl, row.pnl_asset ?? "")}
+                      d={
+                        row.pnl_asset
+                          ? presentSignedQuote(row.realized_pnl, row.pnl_asset)
+                          : presentDecimal(null)
+                      }
                       tone="sign"
                     />
                   </span>
                 ) : (
-                  <span key="pnl" title={`marked total ${row.pnl_amount ?? "—"}`}>
+                  <span key="pnl">
                     <DecimalValue
-                      d={presentSignedQuote(row.pnl_amount, row.pnl_asset ?? "")}
+                      d={
+                        row.pnl_asset
+                          ? presentSignedQuote(row.pnl_amount, row.pnl_asset)
+                          : presentDecimal(null)
+                      }
                       tone="sign"
                     />
                   </span>

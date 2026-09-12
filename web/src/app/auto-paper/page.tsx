@@ -32,7 +32,7 @@
 import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
-import { presentSignedQuote } from "@/lib/decimal";
+import { presentDecimal, presentSignedQuote } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
   ScreenerAwait,
@@ -236,7 +236,11 @@ export default function AutoPaperPage() {
                 // colour, so a flat position rendered as a loss.
                 <DecimalValue
                   key="pnl"
-                  d={presentSignedQuote(p.net_pnl_quote, p.quote ?? "")}
+                  d={
+                    p.quote
+                      ? presentSignedQuote(p.net_pnl_quote, p.quote)
+                      : presentDecimal(null)
+                  }
                   tone="sign"
                 />,
                 <span

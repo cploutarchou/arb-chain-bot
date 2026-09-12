@@ -99,6 +99,51 @@ test.describe("every route the app serves still resolves", () => {
     expect(resolveNav("/orders/?venue=binance")?.leaf.id).toBe("orders");
   });
 
+  test("/settings resolves to Settings, not to a hash-sibling in another destination", () => {
+    // Eight Operations entries have hrefs like "/settings#markets",
+    // which strip to "/settings" for route matching. Without a leaf in
+    // the Settings destination owning the bare path, /settings resolved
+    // to Operations' "Operating mode" — so a normal user opening
+    // Settings saw the Operations destination highlighted and a
+    // breadcrumb reading "Operations / Operating mode".
+    const m = resolveNav("/settings");
+    expect(m?.destination.id).toBe("settings");
+    expect(m?.leaf.id).toBe("settings-home");
+  });
+
+  test("every declared platform settings section has a navigation entry", () => {
+    // #venues was declared and documented but had no entry, so it was
+    // reachable only by typing the fragment.
+    const leafHrefs = new Set(
+      NAV.flatMap((d) => d.groups.flatMap((g) => g.items)).map((l) => l.href),
+    );
+    const unreachable = SETTINGS_SECTIONS.filter(
+      (sec) => sec.platform && !leafHrefs.has(`/settings#${sec.anchor}`),
+    ).map((sec) => sec.anchor);
+    expect(
+      unreachable,
+      `platform settings sections with no nav entry: ${unreachable.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  test("the Settings destination lists routes, not in-page categories", () => {
+    // The page's own tablist selects Account / Notifications /
+    // Administration. Listing them in the sidebar as well is two
+    // controls for one choice — the duplicate affordance the icon rail
+    // was removed for. Only genuinely separate routes belong here.
+    const settings = NAV.find((d) => d.id === "settings");
+    const standing = settings!.groups
+      .flatMap((g) => g.items)
+      .filter((l) => !l.contextual)
+      .map((l) => l.id);
+    expect(standing).toEqual(["org", "billing"]);
+    // And no standing Settings entry is a bare fragment link.
+    for (const id of standing) {
+      const leaf = settings!.groups.flatMap((g) => g.items).find((l) => l.id === id);
+      expect(leaf?.href.includes("#"), `${id} must be a route, not a fragment`).toBe(false);
+    }
+  });
+
   test("an unknown route resolves to nothing rather than guessing", () => {
     expect(resolveNav("/does-not-exist")).toBeNull();
     expect(resolveNav("/screenerish")).toBeNull();
@@ -169,6 +214,7 @@ test.describe("primary navigation stays small and labelled", () => {
     const configIds = [
       "settings-operating-mode",
       "settings-markets",
+      "settings-venues",
       "settings-ai",
       "settings-logging",
       "settings-users",

@@ -47,7 +47,13 @@ import {
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
 import { bookAgeStaleMs, bookAgeText } from "@/lib/format";
-import { presentBps, presentPrice, presentQty, presentQuote } from "@/lib/decimal";
+import {
+  presentBps,
+  presentFeeBps,
+  presentPrice,
+  presentQty,
+  presentQuote,
+} from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
   NO_TRANSFER_NOTE,
@@ -841,7 +847,7 @@ function ScreenerPageInner() {
               </dd>
               <dt className="text-[var(--text-dim)]">Taker fee</dt>
               <dd className="min-w-0 break-words text-right">
-                <DecimalValue d={presentBps(expandedRow.buy_fee_bps)} />
+                <DecimalValue d={presentFeeBps(expandedRow.buy_fee_bps)} />
               </dd>
               <dt className="text-[var(--text-dim)]">Age</dt>
               <dd className="min-w-0 break-words text-right">
@@ -868,7 +874,7 @@ function ScreenerPageInner() {
               </dd>
               <dt className="text-[var(--text-dim)]">Taker fee</dt>
               <dd className="min-w-0 break-words text-right">
-                <DecimalValue d={presentBps(expandedRow.sell_fee_bps)} />
+                <DecimalValue d={presentFeeBps(expandedRow.sell_fee_bps)} />
               </dd>
               <dt className="text-[var(--text-dim)]">Age</dt>
               <dd className="min-w-0 break-words text-right">

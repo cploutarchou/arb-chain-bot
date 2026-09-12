@@ -4,6 +4,8 @@ import {
   isZeroDecimalStr,
   presentBps,
   presentDecimal,
+  presentFeeBps,
+  presentPercentFromFraction,
   presentPrice,
   presentQuote,
   presentQty,
@@ -275,5 +277,81 @@ test.describe("signTone — a flat result is not a winning one", () => {
     for (const v of ["0.01", "-0.0001", "1", "", null, undefined, "abc", "."]) {
       expect(isZeroDecimalStr(v as string | null | undefined), `input ${v}`).toBe(false);
     }
+  });
+});
+
+test.describe("presentPercentFromFraction — a ratio is not an amount", () => {
+  test("converts a fraction to a percentage exactly", () => {
+    // internal/portfolio/portfolio.go computes drawdown as
+    // peak.Sub(equity).Div(peak) — a dimensionless fraction, emitted at
+    // StringFixed(4). It was being rendered through presentSignedQuote
+    // with the start asset as its unit, so a 5.23% drawdown displayed as
+    // "+0.05 USDC": a fabricated currency unit and, on a 10,000 USDC
+    // peak, a ~200x understatement of a risk figure.
+    expect(presentPercentFromFraction("0.0523").text).toBe("5.23%");
+    expect(presentPercentFromFraction("0.0040").text).toBe("0.40%");
+    expect(presentPercentFromFraction("0.1234").text).toBe("12.34%");
+    expect(presentPercentFromFraction("1.0000").text).toBe("100.00%");
+  });
+
+  test("small drawdowns stay distinguishable instead of collapsing", () => {
+    // Reading the 4-dp field at 2 dp put every drawdown below 0.5% into
+    // the same "< 0.01" bucket, so 0.40% and 0.01% looked identical.
+    const a = presentPercentFromFraction("0.0040");
+    const b = presentPercentFromFraction("0.0001");
+    expect(a.text).not.toBe(b.text);
+    expect(a.text).toBe("0.40%");
+    expect(b.text).toBe("0.01%");
+  });
+
+  test("the conversion is exact, never a float multiply", () => {
+    // Number("0.0007") * 100 is 0.06999999999999999.
+    expect(presentPercentFromFraction("0.0007").text).toBe("0.07%");
+    expect(presentPercentFromFraction("0.0029").text).toBe("0.29%");
+  });
+
+  test("zero and unknown are still distinguishable", () => {
+    expect(presentPercentFromFraction("0.0000").text).toBe("0.00%");
+    expect(presentPercentFromFraction("0.0000").zero).toBe(true);
+    for (const v of [null, undefined, ""]) {
+      const d = presentPercentFromFraction(v as string | null | undefined);
+      expect(d.text).toBe("—");
+      expect(d.valid).toBe(false);
+    }
+  });
+
+  test("the exact backend fraction survives for disclosure", () => {
+    // `exact` carries the converted percentage string, which is what the
+    // reader is being shown; the original fraction is one shift away and
+    // is never lost to a float.
+    expect(presentPercentFromFraction("0.0523").exact).toBe("5.23");
+  });
+
+  test("the percent sign sits against the number, units keep their space", () => {
+    expect(presentPercentFromFraction("0.0523").text).toBe("5.23%");
+    expect(presentQuote("1", "USDC").text).toBe("1.00 USDC");
+    expect(presentBps("1").text).toBe("+1.00 bps");
+    // Spoken form always keeps the space so it reads as words.
+    expect(presentPercentFromFraction("0.0523").srText).toContain(" %");
+  });
+});
+
+test.describe("costs and fee rates are unsigned", () => {
+  test("a fee rate does not render as a credit", () => {
+    // presentBps sets signed, which rendered a 10 bps taker fee as
+    // "+10.00 bps".
+    expect(presentFeeBps("10").text).toBe("10.00 bps");
+    expect(presentBps("10").text).toBe("+10.00 bps");
+  });
+
+  test("a cost amount does not render as a credit", () => {
+    // fees_marked / fees / daily_loss are all >= 0 from the backend.
+    expect(presentQuote("45", "USDC").text).toBe("45.00 USDC");
+    expect(presentSignedQuote("45", "USDC").text).toBe("+45.00 USDC");
+  });
+
+  test("a real result still carries its sign", () => {
+    expect(presentSignedQuote("-45", "USDC").text).toBe("-45.00 USDC");
+    expect(presentSignedQuote("45", "USDC").text).toBe("+45.00 USDC");
   });
 });

@@ -87,7 +87,7 @@ no mempool, no bridging.
 - **T-080** Evidence dashboard: per-strategy net PnL after fees, hit rate, drawdown, sample size against the production-gate thresholds.
 
 ### Phase 25 — SaaS
-- **T-087** Client console re-skin.
+- **T-087** Client console re-skin — **IN_PROGRESS**, not TODO. Implemented on `t087-client-area-refinement` (not pushed): navigation, decimal presentation, Overview, Paper/Auto-Paper, Settings categories, and the pause-scope correction, with local checks green and a measured responsive/theme/zoom matrix. Remaining before DONE: the e2e suite update and the independent diff review. See `docs/design/client-area-refinement-handover.md` for the limits, including two open operator questions and the duplicate `client-area-navigation` work in the main checkout.
 - **T-088** White-label option (later phase).
 
 ### Phase 26 — production infrastructure

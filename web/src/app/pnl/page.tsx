@@ -120,6 +120,22 @@ export default function PnLAnalyticsPage() {
                     ),
                   ])}
                 />
+                {res.by !== "asset" && (
+                  <p className="mt-2 max-w-3xl text-[11px] text-[var(--text-dim)]">
+                    <strong className="text-[var(--warn)]">
+                      Mixed start assets:
+                    </strong>{" "}
+                    grouped by {res.by}, this figure adds together every start
+                    asset&apos;s own profit and loss within each group — the
+                    backend does not partition by asset for this dimension. Use{" "}
+                    <em>By: Asset</em> above to compare like with like, or read
+                    the per-asset figures on{" "}
+                    <Link href="/portfolio" className="text-[var(--accent)] underline">
+                      Balances
+                    </Link>
+                    .
+                  </p>
+                )}
                 <p className="mt-2 text-[11px] text-[var(--text-dim)]">
                   n = {res.n} cycles considered
                   {typeof res.unattributed === "number" && res.unattributed > 0

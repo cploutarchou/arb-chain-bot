@@ -237,6 +237,10 @@ export interface PresentOptions {
   // figure and spoken in srText. Never defaulted — an unlabelled money
   // figure is how two different assets end up compared by eye.
   unit?: string;
+  // unitTight: render the unit with no separating space ("5.23%" rather
+  // than "5.23 %"). For percent signs only; asset and bps labels keep
+  // the space.
+  unitTight?: boolean;
   // signed: always show an explicit + on positive values (the sign is on
   // the number, never left to colour alone — design-system.md §1.8).
   signed?: boolean;
@@ -342,7 +346,13 @@ export function presentDecimal(
   opts: PresentOptions = {},
 ): DecimalDisplay {
   const dash = opts.dash ?? "—";
-  const unitSuffix = opts.unit ? ` ${opts.unit}` : "";
+  const unitSuffix = opts.unit
+    ? opts.unitTight
+      ? opts.unit
+      : ` ${opts.unit}`
+    : "";
+  // Spoken form always keeps the space: "5.23 percent" reads, "5.23%"
+  // does not.
   const unitSpoken = opts.unit ? ` ${opts.unit}` : "";
   const invalid: DecimalDisplay = {
     text: dash,
@@ -455,6 +465,13 @@ export function presentQuote(
   return presentDecimal(raw, { maxFrac: 2, minFrac: 2, unit: asset });
 }
 
+// presentFeeBps: a fee RATE in basis points. Unsigned, because a fee is a
+// magnitude, not a result — presentBps sets `signed`, which rendered a
+// 10 bps taker fee as "+10.00 bps", reading as a credit.
+export function presentFeeBps(raw: string | null | undefined): DecimalDisplay {
+  return presentDecimal(raw, { maxFrac: 2, minFrac: 2, unit: "bps" });
+}
+
 // presentSignedQuote: presentQuote for a result figure, where the sign is
 // the point (net PnL, drawdown, realized/marked results).
 export function presentSignedQuote(
@@ -466,6 +483,37 @@ export function presentSignedQuote(
     minFrac: 2,
     unit: asset,
     signed: true,
+  });
+}
+
+// presentPercentFromFraction: for a backend field that is a dimensionless
+// RATIO, rendered as a percentage.
+//
+// This preset exists because of a real defect it now prevents. The
+// portfolio's `drawdown` is documented as "worst fraction from peak"
+// (internal/portfolio/portfolio.go:50) and computed as
+// `peak.Sub(equity).Div(peak)` — a ratio, not money. It was being
+// rendered through presentSignedQuote with the start asset as its unit,
+// so a 5.23% peak-to-trough drawdown displayed as "+0.05 USDC": a
+// fabricated currency unit and, on a 10,000 USDC peak, a ~200x
+// understatement of a risk figure. Two decimals of a fraction also
+// collapsed every drawdown below 0.5% into the same "< 0.01" bucket.
+//
+// The conversion is an exact decimal-point shift (fractionToPercentStr),
+// never `Number(x) * 100` — which is what the risk page still does.
+// Taking the fraction as the argument is deliberate: a call site cannot
+// forget to convert, because converting is what this function is.
+export function presentPercentFromFraction(
+  raw: string | null | undefined,
+): DecimalDisplay {
+  if (raw === null || raw === undefined || raw.trim() === "") {
+    return presentDecimal(null);
+  }
+  return presentDecimal(fractionToPercentStr(raw), {
+    maxFrac: 2,
+    minFrac: 2,
+    unit: "%",
+    unitTight: true,
   });
 }
 
@@ -485,6 +533,19 @@ export function presentQty(
   return presentDecimal(raw, { maxFrac: 4, sigFigs: 4, unit: asset });
 }
 
+// NOTE (T-087): `fmtDecimal` currently has NO call sites in web/src —
+// every former caller (9 in calculator/page.tsx, 12 in screener/page.tsx)
+// now goes through a `presentDecimal` preset and the <DecimalValue>
+// component, which carry the exact value, the rounded flag and a spoken
+// form. It is retained because master's `npm test` suite and a CI step
+// exercise it, and because its contract is a useful reference. If you are
+// choosing between the two, use `presentDecimal`.
+//
+// They agree on the less-than SPELLING ("< 0.01") but NOT on the
+// threshold: this function defaults to maxFrac 6, so its tiny form is
+// "< 0.000001", while presentBps/presentQuote floor at "< 0.01". Do not
+// mix them in one view.
+//
 // fmtDecimal: bounded, grouped display form for an exact backend
 // decimal string (client-area audit 2026-09-12: gross/net bps cells
 // rendered twenty-plus fractional digits, which made the screener

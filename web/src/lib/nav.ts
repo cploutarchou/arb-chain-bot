@@ -372,18 +372,31 @@ export const NAV: NavDestination[] = [
     description: "Your account, your organisation, and how you are billed",
     groups: [
       {
+        // Only the genuinely separate *routes* are listed here.
+        //
+        // Account, Notifications and Administration are in-page
+        // categories of /settings, and the page's own tablist is what
+        // selects them. Listing them here as well produced two controls
+        // for one choice — in two different orders — which is precisely
+        // the duplicate affordance the icon rail was removed for. One
+        // control per choice: the tabs own categories, the sidebar owns
+        // routes.
         items: [
           {
-            id: "settings-account",
-            label: "Account",
-            href: "/settings#account",
-            description: "Your sign-in, password and session",
-          },
-          {
-            id: "settings-notifications",
-            label: "Notifications",
-            href: "/settings#notifications",
-            description: "How and when you are notified",
+            // Owns the /settings route itself. Contextual, so it adds no
+            // standing link — the page's tablist is the category
+            // control — but without it /settings has no leaf in this
+            // destination and resolves instead to the first entry that
+            // strips to the same path: Operations' "Operating mode"
+            // (its href is /settings#operating-mode). A normal user
+            // opening Settings would have seen the Operations
+            // destination highlighted and a breadcrumb reading
+            // "Operations / Operating mode".
+            id: "settings-home",
+            label: "Settings",
+            href: "/settings",
+            description: "Your sign-in, notifications, and administration",
+            contextual: true,
           },
           {
             id: "org",
@@ -494,6 +507,12 @@ export const NAV: NavDestination[] = [
               perm: "screener:config",
               minRoleLabel: "Requires ADMIN",
             },
+          },
+          {
+            id: "settings-venues",
+            label: "Venues & fees",
+            href: "/settings#venues",
+            access: { kind: "platform" },
           },
           {
             id: "settings-ai",

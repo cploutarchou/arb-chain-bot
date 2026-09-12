@@ -11,7 +11,13 @@ import {
   Stat,
   Table,
 } from "@/components/ui";
-import { presentDecimal, presentQty, presentSignedQuote } from "@/lib/decimal";
+import {
+  presentDecimal,
+  presentPercentFromFraction,
+  presentQuote,
+  presentQty,
+  presentSignedQuote,
+} from "@/lib/decimal";
 
 export default function PortfolioPage() {
   const portfolio = usePoll(() => api.portfolio(), 5000);
@@ -93,9 +99,12 @@ export default function PortfolioPage() {
               rows={x.assets.map((a) => [
                 a.asset,
                 <DecimalValue key="r" d={presentSignedQuote(a.realized, a.asset)} tone="sign" />,
-                <DecimalValue key="f" d={presentSignedQuote(a.fees, a.asset)} />,
-                <DecimalValue key="d" d={presentSignedQuote(a.daily_loss, a.asset)} />,
-                <DecimalValue key="dd" d={presentSignedQuote(a.drawdown, a.asset)} />,
+                // Costs and loss magnitudes are unsigned — both are
+                // already >= 0 from the backend, so a "+" reads as a credit.
+                <DecimalValue key="f" d={presentQuote(a.fees, a.asset)} />,
+                <DecimalValue key="d" d={presentQuote(a.daily_loss, a.asset)} />,
+                // Ratio, not money — see presentPercentFromFraction.
+                <DecimalValue key="dd" d={presentPercentFromFraction(a.drawdown)} />,
               ])}
             />
           )}

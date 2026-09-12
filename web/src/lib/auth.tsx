@@ -119,24 +119,42 @@ export function useAuth(): AuthContextValue {
 
 // can mirrors the backend RBAC matrix for showing/hiding controls; the
 // backend remains the actual gate (ADMIN holds every permission).
+//
+// VIEWER is enumerated rather than matched on a `view:` prefix. The
+// prefix was wrong: `internal/auth/rbac.go:46-50` grants RoleViewer
+// PermViewDashboard, PermViewOpportunity, PermViewPortfolio,
+// PermViewRisk, PermViewSystem, PermReportView and PermScreenerView —
+// but NOT PermViewAudit, which is OPERATOR+ only (rbac.go:53,60). So
+// `can("VIEWER", "view:audit")` returned true while the backend returns
+// 403. The previous shell papered over it by special-casing the "Audit
+// Log" label; keying navigation on routes instead of labels removed that
+// patch and exposed the underlying bug, which is fixed here at the root.
+const VIEWER_PERMS = new Set([
+  "view:dashboard",
+  "view:opportunities",
+  "view:portfolio",
+  "view:risk",
+  "view:system",
+  "reports:view",
+  "screener:view",
+]);
+
+const OPERATOR_PERMS = new Set([
+  ...VIEWER_PERMS,
+  "view:audit",
+  "paper:control",
+  "scanner:config",
+  "ai:approve",
+  "alerts:ack",
+  "recordings:control",
+  "campaigns:run",
+  "reports:generate",
+]);
+
 export function can(role: string | undefined, perm: string): boolean {
-  const operator = new Set([
-    "paper:control",
-    "scanner:config",
-    "ai:approve",
-    "alerts:ack",
-    "view:audit",
-    "recordings:control",
-    "campaigns:run",
-    "reports:generate",
-  ]);
   if (role === "ADMIN") return true;
-  if (role === "OPERATOR")
-    return (
-      operator.has(perm) || perm.startsWith("view:") || perm === "reports:view"
-    );
-  if (role === "VIEWER")
-    return perm.startsWith("view:") || perm === "reports:view";
+  if (role === "OPERATOR") return OPERATOR_PERMS.has(perm);
+  if (role === "VIEWER") return VIEWER_PERMS.has(perm);
   return false;
 }
 

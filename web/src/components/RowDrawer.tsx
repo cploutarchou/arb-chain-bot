@@ -81,10 +81,11 @@ export function RowDrawer({
         {/* min-w-0 + overflow-x-hidden: the audit's overflow came from a
             fixed label/value grid holding an unbounded decimal string
             (design-system.md §4.3) — bounded presentation (DecimalValue)
-            removes the long strings at the source, this is defense in
-            depth so no future child can push the panel wider than its
-            own box. */}
-        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4">
+            removes the long strings at the source. Wrapping rather than
+            `overflow-x-hidden`: hiding silently clipped anything wider
+            than the panel — a verbatim backend reason, a long identifier
+            — with no way to scroll to it. */}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 [overflow-wrap:anywhere]">
           {children}
         </div>
         {footer && (

@@ -216,10 +216,17 @@ export interface AttentionItem {
 export function AttentionList({
   items,
   loading,
+  complete,
   emptyAction,
 }: {
   items: AttentionItem[];
   loading?: boolean;
+  // complete: every source that feeds this list actually answered. The
+  // empty state claims "nothing needs attention", which is a statement
+  // about the world — it may only be made when the checks behind it
+  // succeeded. When a source failed, say that instead of asserting an
+  // all-clear the data cannot support.
+  complete?: boolean;
   emptyAction?: ReactNode;
 }) {
   if (loading && items.length === 0) {
@@ -230,11 +237,16 @@ export function AttentionList({
     );
   }
   if (items.length === 0) {
+    const canAssert = complete !== false;
     return (
       <div className="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 text-[13px]">
         <span className="flex items-center gap-1.5">
-          <Dot tone="ok" />
-          <span className="text-[var(--text)]">Nothing needs attention.</span>
+          <Dot tone={canAssert ? "ok" : "unknown"} />
+          <span className="text-[var(--text)]">
+            {canAssert
+              ? "Nothing needs attention."
+              : "Nothing to report from the checks that answered — others could not be read."}
+          </span>
         </span>
         {emptyAction}
       </div>

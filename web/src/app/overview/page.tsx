@@ -35,9 +35,15 @@
 import Link from "next/link";
 import { api, type PnLAssetRow, type ScannerStatus } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
+import { useAuth } from "@/lib/auth";
 import { worstVerdict } from "@/lib/campaignVerdict";
 import { feedState } from "@/lib/feedState";
-import { presentDecimal, presentSignedQuote } from "@/lib/decimal";
+import {
+  presentDecimal,
+  presentPercentFromFraction,
+  presentQuote,
+  presentSignedQuote,
+} from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
   Await,
@@ -143,13 +149,16 @@ function ResultRow({ row }: { row: PnLAssetRow }) {
         <div className="flex items-baseline justify-between gap-3">
           <dt className="text-[var(--text-dim)]">Drawdown (peak to trough)</dt>
           <dd>
-            <DecimalValue d={presentSignedQuote(row.drawdown, row.asset)} />
+            {/* A ratio, not an amount: rendering it with the asset as
+                its unit understated a 5.23% drawdown as "+0.05 USDC". */}
+            <DecimalValue d={presentPercentFromFraction(row.drawdown)} />
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-3">
           <dt className="text-[var(--text-dim)]">Fees paid</dt>
           <dd>
-            <DecimalValue d={presentSignedQuote(row.fees_marked, row.asset)} />
+            {/* A cost, not a result: a leading "+" would read as a credit. */}
+            <DecimalValue d={presentQuote(row.fees_marked, row.asset)} />
           </dd>
         </div>
       </dl>
@@ -175,7 +184,19 @@ function ResultRow({ row }: { row: PnLAssetRow }) {
 // gate publishes `reject_reason_counts` on /api/v1/risk. The two
 // pre-gate stages have counts and no reason dimension anywhere, which is
 // said plainly rather than glossed over.
-function PipelineExplainer({ s }: { s: ScannerStatus }) {
+function PipelineExplainer({
+  s,
+  platformAdmin,
+}: {
+  s: ScannerStatus;
+  // platformAdmin decides where the "no viable size" stage sends someone.
+  // Market floors live in the platform settings document, which only
+  // platform staff can open: pointing everyone at /settings#markets left
+  // a VIEWER on Settings > Account with no markets section and no
+  // explanation, inside the one place the brief most requires honesty
+  // about what a user can act on.
+  platformAdmin: boolean;
+}) {
   const stages = [
     {
       key: "skipped",
@@ -189,9 +210,11 @@ function PipelineExplainer({ s }: { s: ScannerStatus }) {
       key: "no-size",
       label: "No viable size",
       value: s.no_viable_size,
-      note: "Every candidate size fell below the dust or minimum-notional floor. Counted only; no reason breakdown exists.",
-      href: "/settings#markets",
-      action: "Review markets & assets",
+      note: platformAdmin
+        ? "Every candidate size fell below the dust or minimum-notional floor. Counted only; no reason breakdown exists."
+        : "Every candidate size fell below the dust or minimum-notional floor. Counted only; no reason breakdown exists. Those floors are set per market by platform staff.",
+      href: platformAdmin ? "/settings#markets" : "/exchanges",
+      action: platformAdmin ? "Review markets & assets" : "See venue capabilities",
     },
     {
       key: "rejected",
@@ -277,6 +300,9 @@ function PipelineExplainer({ s }: { s: ScannerStatus }) {
 }
 
 export default function OverviewPage() {
+  const { state: auth } = useAuth();
+  const platformAdmin =
+    auth.kind === "authenticated" && auth.me.platform_admin === true;
   const status = usePoll(() => api.system.status(), 10000);
   const scanner = usePoll(() => api.scanner.status(), 5000);
   const recordings = usePoll(() => api.recordings.list(), 5000);
@@ -437,6 +463,29 @@ export default function OverviewPage() {
   // so it is composed here from signals that each already exist, and
   // every item names where it came from and where to go.
   const attention: AttentionItem[] = [];
+  // A source that could not be read is itself an attention item. Without
+  // this, a failing /risk poll contributed nothing, the list came back
+  // empty, and Overview rendered a green "Nothing needs attention." while
+  // a circuit breaker was open — a failure presented as an all-clear on
+  // the safety surface. `usePoll` reports kind "error" separately from a
+  // successful empty result, so the two are distinguishable here.
+  const unreadable: { id: string; what: string; href: string; label: string }[] = [];
+  if (activeAlerts.kind === "error")
+    unreadable.push({ id: "alerts", what: "Unresolved alerts", href: "/alerts", label: "Open alerts" });
+  if (risk.kind === "error")
+    unreadable.push({ id: "risk", what: "Circuit breaker state", href: "/risk", label: "Open risk centre" });
+  if (health.kind === "error")
+    unreadable.push({ id: "health", what: "Feed, clock and queue health", href: "/system", label: "Open system health" });
+  for (const u of unreadable) {
+    attention.push({
+      id: `unreadable-${u.id}`,
+      text: `${u.what} could not be read.`,
+      detail:
+        "That is not the same as nothing being wrong — this check is unavailable, so anything it would have reported is unknown right now.",
+      tone: "warn",
+      action: { href: u.href, label: u.label },
+    });
+  }
   if (activeAlerts.kind === "ready" && activeAlerts.data.active > 0) {
     attention.push({
       id: "alerts",
@@ -510,6 +559,13 @@ export default function OverviewPage() {
     activeAlerts.kind === "loading" ||
     risk.kind === "loading" ||
     health.kind === "loading";
+  // Only assert an all-clear when all three sources answered. An error
+  // now produces an item above, so this is belt-and-braces for any future
+  // source added without one.
+  const attentionComplete =
+    activeAlerts.kind === "ready" &&
+    risk.kind === "ready" &&
+    health.kind === "ready";
 
   return (
     <ConsoleShell>
@@ -528,6 +584,7 @@ export default function OverviewPage() {
         <AttentionList
           items={attention}
           loading={attentionLoading}
+          complete={attentionComplete}
           emptyAction={
             <Link
               href="/screener"
@@ -596,7 +653,7 @@ export default function OverviewPage() {
                   value={s.paper?.completed ?? "—"}
                 />
               </div>
-              <PipelineExplainer s={s} />
+              <PipelineExplainer s={s} platformAdmin={platformAdmin} />
             </>
           )}
         </Await>

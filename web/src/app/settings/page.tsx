@@ -929,39 +929,6 @@ export default function SettingsPage() {
       ),
     },
     {
-      id: "organisation",
-      label: "Organisation",
-      description:
-        "Members, roles and seats. This is your organisation — it is not the platform itself.",
-      content: (
-        <Section title="Organisation">
-          <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
-            Members, their roles and your seat usage are managed on the
-            organisation page.{" "}
-            <Link href="/org" className="text-[var(--accent)] underline">
-              Open Organisation →
-            </Link>
-          </p>
-        </Section>
-      ),
-    },
-    {
-      id: "billing",
-      label: "Billing",
-      description: "Your package, invoices and payment details.",
-      content: (
-        <Section title="Billing">
-          <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
-            Your current package, what it includes, invoices and payment
-            details.{" "}
-            <Link href="/billing" className="text-[var(--accent)] underline">
-              Open Billing →
-            </Link>
-          </p>
-        </Section>
-      ),
-    },
-    {
       id: "notifications",
       label: "Notifications",
       description: "How and when this platform contacts you.",

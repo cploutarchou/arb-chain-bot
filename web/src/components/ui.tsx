@@ -453,11 +453,19 @@ export function Table({
     <div
       className="overflow-x-auto rounded border border-[var(--border)]"
       style={maxHeight ? { maxHeight, overflowY: "auto" } : undefined}
-      // Focusable so the horizontal scroll is operable from the
-      // keyboard (WCAG 2.1.1): the audit found Screener's later
-      // freshness/action columns off-screen with no way to scroll to
-      // them without a pointer.
-      tabIndex={0}
+      // Focusable so the horizontal scroll is operable from the keyboard
+      // (WCAG 2.1.1): the audit found Screener's later freshness/action
+      // columns off-screen with no way to scroll to them without a
+      // pointer.
+      //
+      // Tied to `label`, not unconditional. Making every table focusable
+      // added a tab stop before all ~30 of them — seven on /reports
+      // alone — and, without a name, that stop lands on an element with
+      // an implicit `generic` role that tells a screen-reader user
+      // nothing. Opting a table into keyboard scrolling and naming it is
+      // one decision, so a wide table gets a named region and a narrow
+      // one that never overflows costs nobody a keystroke.
+      tabIndex={label ? 0 : undefined}
       role={label ? "region" : undefined}
       aria-label={label}
     >
@@ -561,7 +569,12 @@ export function VirtualTable({
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       tabIndex={0}
       role="region"
-      aria-label={label ? `${label}, ${rows.length} rows` : `${rows.length} rows`}
+      // A row count alone is a poor name ("324 rows" says nothing about
+      // what they are), so callers should pass `label`; the count is
+      // appended because it is genuinely useful for a windowed table.
+      aria-label={
+        label ? `${label}, ${rows.length} rows` : `Table, ${rows.length} rows`
+      }
     >
       <table className="w-full border-collapse text-[13px] [font-variant-numeric:tabular-nums_slashed-zero]">
         <thead className="sticky top-0 z-10">

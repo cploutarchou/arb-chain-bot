@@ -310,3 +310,102 @@ func TestNoViableSizeCounted(t *testing.T) {
 		t.Fatalf("events = %d, want 0 (no event is emitted for this exit)", len(evs))
 	}
 }
+
+// TestEvaluationStatsPartitionEveryTriangle asserts the counter identity
+// the console depends on:
+//
+//	Evaluations = SkippedBooks + NoViableSize + Qualified + Rejected
+//
+// Overview explains "nothing qualified" by showing those four as four
+// distinct stages of one total, and it does so precisely because
+// `detected - rejected` is NOT `qualified` — SkippedBooks and
+// NoViableSize both exit before the risk gate is ever reached. That is a
+// statement about this function's control flow, and until now nothing
+// checked it: the existing tests assert individual counters are non-zero,
+// never that they account for the whole.
+//
+// Every path from the Evaluations.Add(1) at the top of evaluateTriangle
+// must terminate in exactly one of the four. A new early return that
+// forgets its counter shows up here as a shortfall, which is the bug this
+// guards against — a triangle that vanishes from the explanation and
+// makes the console's arithmetic silently wrong.
+func TestEvaluationStatsPartitionEveryTriangle(t *testing.T) {
+	sum := func(s *Scanner) (int64, int64) {
+		return s.Stats.Evaluations.Load(),
+			s.Stats.SkippedBooks.Load() + s.Stats.NoViableSize.Load() +
+				s.Stats.Qualified.Load() + s.Stats.Rejected.Load()
+	}
+
+	// Each case drives evaluateTriangle down a different exit.
+	cases := []struct {
+		name string
+		run  func(t *testing.T) *Scanner
+	}{
+		{
+			// Qualified and rejected: the healthy path, both gate outcomes.
+			name: "healthy books reach the risk gate",
+			run: func(t *testing.T) *Scanner {
+				s, _ := harness(t)
+				s.EvaluateMarket(exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"})
+				return s
+			},
+		},
+		{
+			// SkippedBooks: a corrupted leg exits before the gate.
+			name: "corrupted leg book",
+			run: func(t *testing.T) *Scanner {
+				s, books := harness(t)
+				b, _ := books.Get(exchange.MarketID{Exchange: "binance", Symbol: "ETHBTC"})
+				b.MarkCorrupted("test gap")
+				s.EvaluateMarket(exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"})
+				return s
+			},
+		},
+		{
+			// NoViableSize: depth too thin for MinInput, also before the gate.
+			name: "dust depth",
+			run: func(t *testing.T) *Scanner {
+				s, books := harness(t)
+				id := exchange.MarketID{Exchange: "binance", Symbol: exchange.Symbol("BTCUSDT")}
+				dust := orderbook.New(id, 0)
+				dust.ApplySnapshot(orderbook.DepthEvent{
+					Market: id, IsSnapshot: true, FinalUpdateID: 9,
+					Bids:        []orderbook.Level{lv("99.9", "0.001")},
+					Asks:        []orderbook.Level{lv("100", "0.001")},
+					ReceiveTime: t0,
+				})
+				books.Add(dust)
+				s.EvaluateMarket(id)
+				return s
+			},
+		},
+		{
+			// Rejected via an open breaker: the gate refuses every triangle.
+			name: "breaker open",
+			run: func(t *testing.T) *Scanner {
+				s, _ := harness(t)
+				s.Breakers.Trip("ws_unstable", "exchange:binance", "storm", t0)
+				s.EvaluateMarket(exchange.MarketID{Exchange: "binance", Symbol: "BTCUSDT"})
+				return s
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := tc.run(t)
+			evals, accounted := sum(s)
+			if evals == 0 {
+				t.Fatalf("no triangle was evaluated; the case drives nothing")
+			}
+			if accounted != evals {
+				t.Fatalf("counters do not partition evaluations: evaluations=%d accounted=%d "+
+					"(skipped=%d no_viable_size=%d qualified=%d rejected=%d) — "+
+					"an exit path is not counted, so Overview's four-stage split is wrong",
+					evals, accounted,
+					s.Stats.SkippedBooks.Load(), s.Stats.NoViableSize.Load(),
+					s.Stats.Qualified.Load(), s.Stats.Rejected.Load())
+			}
+		})
+	}
+}
