@@ -59,7 +59,7 @@ const OLD_LOCATION = {
   "/funding": "Scanner Suite › Funding",
   "/calculator": "Scanner Suite › Calculator",
   "/scanner-alerts": "Scanner Suite › Alert Rules",
-  "/screener-reports": "Scanner Suite › Evidence — Screener Reports",
+  "/screener-reports": "Scanner Suite › Evidence — Screener Reports (its active=\"Screener Reports\" matched no label, so it highlighted nothing)",
   "/screener-reports/[id]": "(no nav entry — detail page, highlighted nothing)",
   "/auto-paper": "Scanner Suite › Auto-Paper",
   "/settings": "footer › Settings",
@@ -162,7 +162,7 @@ lines.push(
 );
 lines.push(`| Navigation entries defined | 32 | ${standing} standing + ${contextual} contextual |`);
 lines.push(`| Pages served | ${routes.length} | ${routes.length} (unchanged) |`);
-lines.push("| Pages highlighting no nav entry | 3 | 0 |");
+lines.push("| Pages highlighting no nav entry | 4 | 0 |");
 lines.push("");
 lines.push("Secondary entries per destination:");
 lines.push("");

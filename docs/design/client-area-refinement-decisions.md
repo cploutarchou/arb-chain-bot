@@ -191,8 +191,9 @@ real defects in shared code, fixed here rather than filed:
 
 An earlier version of this decision stopped at the surfaces this task
 looked at and recorded "roughly fifteen polled tables on untouched pages
-still key by index". They are done now: **33 tables across 24 files**
-carry a stable `rowKeys` and an accessible `label`, keyed on what
+still key by index". They are done now: **55 tables across 31 files**
+carry a stable `rowKeys` and an accessible `label` (plus the internal
+`VirtualTable` → `Table` forward in `ui.tsx:562`), keyed on what
 actually identifies a row —
 
 | Kind of key | Examples |
@@ -202,10 +203,13 @@ actually identifies a row —
 | An explicit composite, where the wire carries no id | `/scanner` live events (`triangle_id` + `detected_at`, because one triangle can appear repeatedly), `/scanner-alerts` events (opened-at + pair + both venues), `/ai` (parameter + created-at), `/reports` incidents, `/cycles` fills |
 
 Three tables still key by index, and that is **correct** for them rather
-than unfinished: `screener-reports/[id]`'s statistics block and
-`system`'s literal queue rows are fixed-order literal arrays, and
+than unfinished: `screener-reports/[id]`'s gate checklist and the shared
+`DiffTable` in `ui.tsx`, which renders one dialog's parameter diff and is
+neither polled nor re-sortable, are fixed-order literal arrays; and
 `opportunities/[id]`'s legs are a fixed ordered list from a single
 payload. Index is a stable key when position *is* the identity.
+`system`'s queue rows are **not** among them — they key on the queue
+name, for the reason below.
 
 The one that mattered most was not on the original list:
 `/system`'s queue table filters its rows on presence
@@ -213,10 +217,14 @@ The one that mattered most was not on the original list:
 stops reporting shifts every row below it — an index key would then show
 one queue's depth and drop-count under another queue's name.
 
-Still open and assigned, not silently dropped: the mobile drawer and
-mobile nav sheet render a scrim without `aria-modal` or focus
-containment (they are correctly non-modal on desktop, but full-screen
-with a scrim on mobile, where modal semantics are right).
+Closed since this was written (`d7c8fd1`): below `md` both overlays now
+carry `role="dialog"`, `aria-modal` and focus containment — `RowDrawer`
+via `useFocusTrap(panelRef, isModal)`, the nav sheet via
+`useFocusTrap(sheetRef, mobileOpen)` with focus moved into it on open,
+both built on the shared primitives in `web/src/lib/a11y.ts`. The row
+drawer stays deliberately non-modal at `≥ md`, where the table beside it
+must remain interactive; the nav sheet has no desktop state at all — it
+is force-closed once the viewport grows past `md`.
 
 ## D11. Screener filters and the URL
 
@@ -367,33 +375,49 @@ commits ahead and a second effort started in the main checkout:
 | `master` `a0e1c26` (PR #30) | "bounded exact-decimal display and calculator feasibility first" — a smaller implementation of this task's Phase 1, plus a `node --test` runner and a CI step |
 | `client-area-navigation` (uncommitted, main checkout) | the same six-destination navigation redesign, route-based selection, `IconRail` deleted, `active` removed from ~35 pages, and `web/e2e/console.spec.ts` already updated |
 
-Master's PR #30 is **merged into this branch** (see the merge commit) with
-nothing discarded: `fmtDecimal` and its ten-case suite stay exactly as
-they are and its CI step still passes, while `presentDecimal` and the
-presets sit alongside as the richer API the components use. The two
-agree on master's `"< 0.01"` less-than spelling.
+Master's decimal work is **merged into this branch** with nothing
+discarded: `fmtDecimal` and its ten-case suite stay exactly as they are
+and its CI step still passes, while `presentDecimal` and the presets sit
+alongside as the richer API the components use. The two agree on
+master's `"< 0.01"` less-than spelling.
 
-`client-area-navigation` is **not** merged and was not touched. Its
-architecture and this branch's agree on the essentials — six
-destinations, route-based selection rather than label matching, the icon
-rail removed — and differ in two ways worth stating:
+**Both efforts have since been reconciled, and the table above now
+describes history rather than the present.** Master squashed its
+client-area work — the decimal commit, the navigation redesign, the
+overview rebuild, T-062 and T-084 — into a single commit `a8657a7`, so
+PRs #30/#31/#32 no longer exist separately and the merge base moved to
+`b1faf6d`. That master is merged into this branch at `2f9edb9`.
 
-1. It keeps the navigation definition inside `ConsoleShell.tsx`; this
-   branch moved it to `web/src/lib/nav.ts`, which is what allows the
-   route-coverage, access-gating and anchor-contract assertions in
-   `web/unit/nav.spec.ts` to exist at all.
-2. It removes the `active` prop from every page; this branch made the
-   prop optional, so no page needed editing and the three pages that
-   previously highlighted nothing were fixed without a 35-file pass.
+Where the two implementations overlapped, this branch's was kept, and
+kept only after checking master's side for anything it alone held:
+
+1. Master keeps the navigation definition inside `ConsoleShell.tsx` (788
+   lines); this branch moved it to `web/src/lib/nav.ts`, which is what
+   allows the route-coverage, access-gating and anchor-contract
+   assertions in `web/unit/nav.spec.ts` to exist at all. Master's inline
+   definition holds 31 nav hrefs against `lib/nav.ts`'s 41, with an
+   empty set-difference — nothing reachable on master became unreachable
+   here.
+2. Master removes the `active` prop from every page; this branch made
+   the prop optional, so no page needed editing and the **four** pages
+   that previously highlighted nothing (`/onboarding`, `/cycles/[id]`,
+   `/screener-reports` and `/screener-reports/[id]`, whose `active`
+   values matched no nav label) were fixed without a 35-file pass. The
+   merged tree carries no `active=` prop on any page, master's removal
+   having applied cleanly to the 27 files it touched.
 
 Only this branch carries the status strip and attention list, the
 Overview priority rebuild and its four-stage zero-qualified
 explanation, the Paper/Auto-Paper restructure, the Settings categories
 with the nine preserved anchors, the `platform_admin` gating of platform
 settings, the pause-scope correction, the generated route map and the
-capture/overflow harness. Only `client-area-navigation` carries the e2e
-updates.
+capture/overflow harness — all of which survived the merge intact.
 
-**The reconciliation is the operator's call** and has been referred to
-them. `web/e2e/console.spec.ts` is the one file both sides must touch,
-so it is where a conflict is certain.
+`web/e2e/console.spec.ts` was, as predicted, the file both sides had to
+touch and where conflict was certain: it conflicted in eight places.
+This branch's suite was kept, because master's assertions describe
+master's wording and its hidden-`/risk` behaviour; master's one genuine
+improvement (scoping an assertion to `#operating-mode` instead of
+`.first()`) was kept, and its test *rename* was reverted because the new
+title asserted the opposite of what the body checks. The suite is 68/68
+on the merged tree.

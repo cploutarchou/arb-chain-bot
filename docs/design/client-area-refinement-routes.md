@@ -20,7 +20,7 @@ checked claim rather than an assertion.
 | Links visible at once (worst case) | 32 | 20 = 7 primary + 13 secondary |
 | Navigation entries defined | 32 | 38 standing + 3 contextual |
 | Pages served | 37 | 37 (unchanged) |
-| Pages highlighting no nav entry | 3 | 0 |
+| Pages highlighting no nav entry | 4 | 0 |
 
 Secondary entries per destination:
 
@@ -67,7 +67,7 @@ Secondary entries per destination:
 | `/scanner` | Operate › Scanner | Discover | Discover › Triangular scanner | 2 |
 | `/scanner-alerts` | Scanner Suite › Alert Rules | Alerts & Rules | Alerts & Rules › Alert rules | 2 |
 | `/screener` | Scanner Suite › Screener | Discover | Discover › Spot screener | 1 |
-| `/screener-reports` | Scanner Suite › Evidence — Screener Reports | Research & Results | Research & Results › Screener evidence | 2 |
+| `/screener-reports` | Scanner Suite › Evidence — Screener Reports (its active="Screener Reports" matched no label, so it highlighted nothing) | Research & Results | Research & Results › Screener evidence | 2 |
 | `/screener-reports/[id]` | (no nav entry — detail page, highlighted nothing) | Research & Results | Research & Results › Screener evidence | 2 |
 | `/settings` | footer › Settings | Settings | Settings › Settings | 1 |
 | `/strategies` | Control › Strategies | Alerts & Rules | Alerts & Rules › Strategies | 2 |

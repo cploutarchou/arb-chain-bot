@@ -71,7 +71,7 @@ seven. `capture-after.mjs` exits non-zero on a prepare failure, so
 | Console lint | `cd web && npm run lint` | pass (ESLint clean + 54/54 contrast assertions) |
 | Console typecheck | `cd web && npm run typecheck` | pass |
 | Console build | `cd web && npm run build` | pass — clean `rm -rf .next` build on the merged tree, all 37 routes |
-| Console unit suite (this branch) | `cd web && npm run test:unit` | pass — 63 tests |
+| Console unit suite (this branch) | `cd web && npm run test:unit` | pass — 82 tests |
 | Console unit suite (master's, PR #30) | `cd web && npm test` | pass — 10 tests |
 | `golangci-lint run ./...` | `golangci-lint run ./...` | pass — **0 issues** (v2.13.1) on the merged tree |
 | Playwright e2e | `scripts/e2e.sh` | **68 of 68 pass** (`EXIT=0`). The one long-standing failure is diagnosed and fixed — see §3a |
@@ -91,7 +91,7 @@ collapsed into the other.
 
 ### What the unit suite does and does not cover
 
-63 tests pass, and it is worth being exact about what that means: they
+82 tests pass, and it is worth being exact about what that means: they
 cover **pure logic** — `lib/decimal.ts`'s presentation rules,
 `lib/nav.ts`'s route resolution and access metadata, `lib/auth.tsx`'s
 permission matrix checked against `internal/auth/rbac.go`, and the
@@ -100,7 +100,7 @@ component.** `ConsoleNav`, `StatusStrip`, `SettingsCategories` and the
 rewritten pages have no unit coverage; the navigation *data* is proven,
 the navigation *component* is not. The e2e suite is what exercises the
 shell in a browser, and the responsive, keyboard and focus checks below
-are what exercise the rest. "54 passed" should not be read as component
+are what exercise the rest. "82 passed" should not be read as component
 coverage.
 
 ### Unit suite added by this change
@@ -210,7 +210,7 @@ than only that the feature exists:
 
 ## 3d. Row identity across every table that can reorder (D10)
 
-33 tables in 24 files now pass `rowKeys` and `label`. The mechanical
+55 tables in 31 files now pass `rowKeys` and `label`. The mechanical
 check that none was missed:
 
 ```
@@ -230,7 +230,7 @@ them by a fabricated composite would be worse, not better.
 
 ## 3a. The one failing e2e test — diagnosed, then fixed
 
-`console.spec.ts:134` — *structured config edit applies as a new version
+`console.spec.ts` — *structured config edit applies as a new version end to end* — *structured config edit applies as a new version
 end to end* — failed inside the full suite while passing in isolation in
 2.1s. It was pre-existing: it failed once for the QA pass too, on a tree
 without this branch's fixes, and `/strategies` is not in this branch's
@@ -329,7 +329,7 @@ non-zero if any stop has page-level horizontal overflow.
 
 ```
 61 stops captured, 0 with page-level horizontal overflow, 0 prepare errors
-(the first run; see the re-measured 75-stop table below)
+(the first run; see the re-measured 77-stop table below)
 ```
 
 | Dimension | Covered |
@@ -358,7 +358,7 @@ extended `documentElement`'s scrollable overflow. Measured: `html`
 scrollWidth 677 against a body and viewport of 390.
 
 Adding `relative` to the `DecimalValue` wrapper makes it the containing
-block. All 61 stops then measured zero, and the re-run below measures zero across all 75.
+block. All 61 stops then measured zero, and the re-run below measures zero across all 77.
 
 Two further defects surfaced in the same pass:
 
@@ -384,10 +384,10 @@ Against the disposable backend, not the research session:
 These are hand checks, recorded as such. The e2e suite is what turns
 them into assertions, and that work is assigned.
 
-### One capture is stale
+### A defect an earlier capture exposed
 
-`07-settings--*` was taken before the Settings sidebar was corrected.
-It shows the sidebar listing Account / Notifications / Organisation /
+An earlier `07-settings--*` capture, taken before the Settings sidebar
+was corrected, showed the sidebar listing Account / Notifications / Organisation /
 Billing **and** the tablist listing Account / Organisation / Billing /
 Notifications / Administration — two controls for one choice, in
 different orders, which is the duplicate affordance the icon rail was
@@ -402,8 +402,10 @@ is `/settings#operating-mode` — so a normal user opening Settings saw
 the **Operations** destination highlighted and a breadcrumb reading
 "Operations / Operating mode".
 
-The Settings captures are to be retaken once the e2e run releases the
-dev server.
+The Settings captures were retaken: `e4ddad6` regenerated all eleven
+`07-settings--*` files, and the post-merge sweep recorded in §0 re-shot
+and re-measured them again, so every `07-settings--*` stop in
+`overflow-report.json` reflects the corrected page.
 
 **Re-run against HEAD.** An earlier version of this section disclosed
 that the report predated the scroll-region naming; an independent audit

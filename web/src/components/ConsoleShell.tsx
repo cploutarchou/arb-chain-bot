@@ -425,10 +425,14 @@ export function ConsoleShell({
   // active: retained only as a breadcrumb fallback for a route that
   // lib/nav.ts does not know. It is no longer how selection works —
   // `resolveNav(pathname)` decides that — so a page may omit it, and
-  // renaming a label can no longer break a highlight. Three pages
+  // renaming a label can no longer break a highlight. Four pages
   // passed a value matching no navigation label before this change
-  // (/cycles/[id], /screener-reports/*, /onboarding) and highlighted
-  // nothing at all; none of the 35 call sites had to change to fix that.
+  // (/onboarding; /cycles/[id], which sent "Paper" against the label
+  // "Paper Trading"; and both /screener-reports and
+  // /screener-reports/[id], which sent "Screener Reports" against
+  // "Evidence — Screener Reports") and highlighted nothing at all —
+  // three distinct mismatches across four pages. None of the 35 call
+  // sites had to change to fix that.
   active?: string;
 }) {
   const { state: auth } = useAuth();

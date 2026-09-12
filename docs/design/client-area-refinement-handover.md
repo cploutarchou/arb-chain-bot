@@ -74,13 +74,7 @@ every row is checkable with `git show master:<file>`.
 
 | | master (PR #31) | this branch |
 | --- | --- | --- |
-| Where the nav lives | inline in `ConsoleShell.tsx`, 788 lines | `lib/nav.ts` (data) + `components/ConsoleNav.tsx` (render); shell is 552 lines |
-
-*Line counts in this table are as measured when the comparison was made,*
-*against master's `a8657a7` (still 788) and this branch at `6d5c039`. After*
-*the merge the shell is **586** lines — the resolution kept the extracted*
-*structure, and the growth is master's non-nav shell content merging in.*
-*The split is now `nav.ts` 689 + `ConsoleNav.tsx` 379 beside it.*
+| Where the nav lives | inline in `ConsoleShell.tsx`, 788 lines | `lib/nav.ts` (data) + `components/ConsoleNav.tsx` (render); shell is 586 lines |
 | Primary links | 6 destinations | 6 + an explicit **Operations** destination = 7 |
 | Selection | route prefixes against stable **destination** ids | same, plus stable ids on **every leaf** (`data-nav-id`, used by the tests) |
 | Operator routes | flat `ADMIN_LINKS`, shown when `role === "OPERATOR" \|\| role === "ADMIN"` | entries inside Operations, each gated on the permission the backend actually checks |
@@ -89,10 +83,17 @@ every row is checkable with `git show master:<file>`.
 | `/settings#markets` in the nav | present in `ADMIN_LINKS`; its own comment notes "usePathname never carries a hash, so /settings#markets matches /settings" — i.e. the same highlight defect this branch fixed, documented as behaviour | fragment-aware resolution: the entry highlights itself and keeps its siblings on screen |
 | Entitlement gating in nav | no | `NavAccess` has an `entitlement` kind; gated entries render an honest upgrade note |
 | Settings | Organisation, Billing and Telegram as secondary links | in-page categories by audience, nine legacy anchors preserved and focused, plus those routes |
-| Tests | none for navigation | 82 unit assertions + 65 e2e, including a 37-route sweep asserting `resolveNav()` against the live DOM |
+| Tests | none for navigation | 82 unit assertions + 68 e2e, including a 37-route sweep asserting `resolveNav()` against the live DOM |
 | Orphan protection | none | `gen-route-map.mjs` exits non-zero if any page resolves to no entry |
 | `IconRail.tsx` | deleted | deleted |
 | `active=` prop | removed from all 27 pages | made optional with a breadcrumb fallback (no racy 35-file pass) |
+
+*Line counts are measured on the current tree: master's `a8657a7` shell is*
+*788 lines, this branch's is 586 with `nav.ts` (689) and `ConsoleNav.tsx`*
+*(379) beside it. The shell reached 586 at `d7c8fd1`, when the mobile*
+*overlays gained modal semantics — before master was merged. The merge left*
+*`ConsoleShell.tsx` byte-identical to the pre-merge tip `6d5c039`, which is*
+*itself evidence the five conflict hunks there were resolved correctly.*
 
 Both restructure the navigation to the same shape, so this is not "which
 idea is right" — it is which implementation to keep. The two substantive
@@ -247,26 +248,33 @@ by its own verification:
 
 ## Remaining limits, stated plainly
 
-1. **Master has diverged, and the overlap is this change's own subject.**
-   The branch merged master at `15f82d2` (PR #30). Master has since taken
-   **PR #31 `client-area-navigation`** and **PR #32
-   `client-area-overview`** — a task-based six-destination navigation and
-   a priority-first overview, i.e. the same two features as this
-   branch's first two commits, implemented differently: master's
-   navigation lives inline in `ConsoleShell.tsx` (788 lines), this one
-   extracts it into `lib/nav.ts` + `components/ConsoleNav.tsx` (552-line
-   shell) with unit tests and a route-map generator. Both delete
-   `IconRail.tsx`.
+1. **Master had diverged on this change's own subject, and that master
+   is now merged in.** Master squashed its client-area work into
+   `a8657a7`, so PR #31 `client-area-navigation` and PR #32
+   `client-area-overview` are no longer separate commits in its history,
+   and `15f82d2` (PR #30, which this branch had merged earlier at
+   `9f8d192`) is no longer reachable from master at all. That squash
+   moved the merge base to `b1faf6d`; `a8657a7` was then merged into
+   this branch at `2f9edb9`, and `git merge-base HEAD master` now
+   returns `a8657a7`.
 
-   This is an integration decision, not a mechanical merge, so it has
-   **not** been made here: resolving `ConsoleShell.tsx` and
-   `overview/page.tsx` by keeping one side necessarily discards the
-   other's implementation of the same component. The files that overlap
-   are those two plus the `active=` prop on 27 pages. Everything else on
-   this branch — `nav.ts`, `ConsoleNav.tsx`, `StatusStrip.tsx`,
-   `SettingsCategories.tsx`, `a11y.ts`, the decimal work, the Settings,
-   Screener, Calculator, Portfolio and Auto-Paper changes, the tests,
-   the generator and these documents — does not exist on master.
+   The integration decision was taken, not deferred. Master's navigation
+   lived inline in `ConsoleShell.tsx` (788 lines); this branch's
+   `lib/nav.ts` + `components/ConsoleNav.tsx` split beside a 586-line
+   shell was kept, and so were its `overview`, `screener`, `calculator`
+   and `console.spec.ts` implementations — each checked against master's
+   side for anything only master held, with the evidence file by file in
+   "The merge, as resolved". Both scanner tests survive, and so do both
+   decimal APIs and both test runners. One drop was deliberate: master's
+   Overview `reject_reason_counts` histogram, whose scope cannot be
+   reconciled with the session count this page reports.
+
+   Integration into `master` followed on 2026-09-13: `master` was an
+   ancestor of the branch tip, so it fast-forwarded with no second merge
+   commit, and `t087-client-area-refinement` was deleted once `master`
+   held the work. What remains is **publication only** — `origin/master`
+   is still at `a8657a7`, nothing has been pushed, and no pull request
+   is open.
 2. **The unit suites cover pure logic only.** 92 tests across the two
    runners exercise `decimal.ts`, `nav.ts`, the RBAC matrix against
    `rbac.go`, and the Settings anchor contract. **No component is
@@ -312,17 +320,24 @@ by its own verification:
    the comment on the focus effect in `SettingsCategories.tsx` first.
 
    E2E: **68 of 68 pass.** That includes the one long-standing failure
-   (`console.spec.ts:134`, a `/strategies` config apply), which is now
+   (`console.spec.ts` — *structured config edit applies as a new
+   version end to end*, a `/strategies` config apply), which is now
    diagnosed and fixed. The first diagnosis — fixture isolation — was
    wrong, and checking it disproved it: no test before that one applies a
    config version. The cause was load; the test five places earlier
    visits every page in the app, leaving `next dev` compiling. It now
    waits on the apply response and asserts its status, which strengthens
    the test rather than relaxing it. See verification.md §3a.
-7. **The row-identity and table-naming pass went repo-wide.** 33 tables
-   across 24 files now carry a stable `rowKeys` and an accessible
-   `label`. Three still key by index, correctly: two are fixed-order
-   literal arrays and one is an ordered leg list from a single payload,
+7. **The row-identity and table-naming pass went repo-wide.** 55
+   `<Table>`/`<VirtualTable>` call sites across 31 files now carry a
+   stable `rowKeys` and an accessible `label` (plus the internal
+   `VirtualTable` → `Table` forward in `ui.tsx:562`, which passes both
+   through) — counted by parsing every opening tag rather than grepping
+   lines, and identical at `6d5c039` and on the merged tree, so the
+   merge changed none of it. Three still key by index, correctly: two
+   are fixed-order literal arrays (the parameter diff inside `ui.tsx`
+   and the gate checklist on `/screener-reports/[id]`) and one is an
+   ordered leg list from a single payload (`/opportunities/[id]`),
    where position *is* the identity. See D10.
 8. **Two open questions for the operator**, neither a security finding
    and neither reopening any existing audit conclusion:
@@ -338,10 +353,41 @@ by its own verification:
 9. **GitHub Actions cannot be used to verify anything.**
    `docs/PENDING.md` §0 records repo-wide failure since 2026-08-31 with
    no runner assigned. "CI-equivalent" here means the local suite.
-10. **Parallel work exists and has now landed on master.** See D14 and
-    limit 1: what was an uncommitted `client-area-navigation` branch when
-    this work started is merged into master as PR #31, with PR #32
-    adding the overview half. Reconciliation is the operator's call.
+10. **Parallel work landed on master and has now been reconciled, and the
+    result is merged back into master.** What
+    was an uncommitted `client-area-navigation` branch when this work
+    started was squashed into master's `a8657a7`, so PRs #30/#31/#32 are
+    no longer separate commits in master's history. That master is merged
+    into this branch at `2f9edb9`; see "The merge, as resolved" for the
+    14 conflict resolutions and the one deliberate drop. Reconciliation
+    is complete, and `master` was fast-forwarded onto the result on
+    2026-09-13. Nothing is pushed: `origin/master` is still `a8657a7`.
+
+## Attribution scan, and the three references left in place
+
+The git surface is clean: **0** matches for AI-assistant attribution across
+commit subjects, bodies, authors and the branch name, for every commit from
+the merge base `b1faf6d` to `2f9edb9`. One line in
+`client-area-refinement-baseline.md` that named the assistant behind the
+browser tooling was reworded to name the browser instead.
+
+Three categories of the string remain in tracked files, deliberately, because
+removing them breaks something real rather than removing attribution:
+
+1. **`.claude/` filesystem paths** in `MASTER_PLAN.md` (`.claude/skills/…`,
+   `.claude/agents/…`, `.claude/commands/refine-client-area.md`). These are
+   paths that must resolve; rewriting them makes the references wrong.
+2. **`ARB_AI_MODEL=claude-sonnet-5`** in `.env.example` — product
+   configuration for the AI advisor's Anthropic provider, not attribution.
+   Removing it breaks a documented setting.
+3. **Six prose mentions** in
+   `client-area-audit-2026-09-12/README.md`, which documents how to *run*
+   the implementation command. Stripping the tool's name leaves instructions
+   that cannot be followed.
+
+None is an authorship claim. If they should go anyway, that is a one-pass
+edit, but it is a decision about breaking paths, config and a runnable
+document — so it is recorded here rather than taken unilaterally.
 
 ## What was deliberately not changed
 
