@@ -13,17 +13,49 @@ import { useState } from "react";
 import { api, ApiError, type CycleRow, type OrderRow } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
-import { subtractDecimalStr } from "@/lib/decimal";
+import {
+  presentDecimal,
+  presentQty,
+  presentSignedQuote,
+  subtractDecimalStr,
+} from "@/lib/decimal";
 import { fmtDurationMs } from "@/lib/feedState";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { PaperControl } from "@/components/PaperControl";
 import { OutcomeBadge } from "@/components/OutcomeBadge";
 import { ActiveCycles } from "@/components/ActiveCycles";
-import { Await, Badge, Button, ConfirmDialog, PageTitle, Section, Stat, Table, fmtTime } from "@/components/ui";
+import {
+  Await,
+  Badge,
+  Button,
+  Collapsible,
+  ConfirmDialog,
+  DecimalValue,
+  PageTitle,
+  Section,
+  Stat,
+  Table,
+  fmtTime,
+} from "@/components/ui";
 
-function feesCell(cycle: CycleRow): string {
-  const fees = cycle.fees ?? {};
-  const parts = Object.entries(fees).map(([asset, v]) => `${v} ${asset}`);
+// feesCell lists the fee paid in each asset, bounded for display and
+// never combined: a cycle can pay fees in more than one asset, and
+// adding them would be adding different monies.
+function FeesCell({ cycle }: { cycle: CycleRow }) {
+  const entries = Object.entries(cycle.fees ?? {});
+  if (entries.length === 0) return <span className="text-[var(--text-dim)]">—</span>;
+  return (
+    <span className="inline-flex flex-col items-end gap-0.5">
+      {entries.map(([asset, v]) => (
+        <DecimalValue key={asset} d={presentDecimal(v, { maxFrac: 2, minFrac: 2, unit: asset })} />
+      ))}
+    </span>
+  );
+}
+
+// feesExact is the same list at full precision, for the row tooltip.
+function feesExact(cycle: CycleRow): string {
+  const parts = Object.entries(cycle.fees ?? {}).map(([asset, v]) => `${v} ${asset}`);
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
@@ -41,6 +73,14 @@ export default function PaperPage() {
   const systemStatus = usePoll(() => api.system.status(), 10000);
   const [cyclesRefresh, setCyclesRefresh] = useState(0);
   const cycles = usePoll(() => api.paper.cycles(50), 8000, [cyclesRefresh]);
+  // Whether persistence is configured at all. The history empty state
+  // used to claim "Persistence needs a database connection" regardless,
+  // which contradicted Overview reporting the database as connected
+  // (audit §5). This distinguishes a healthy-but-empty history from an
+  // unconfigured deployment; a configured-but-failing database is not
+  // representable in this boolean, so the failing request reports itself
+  // through its own error state rather than this sentence.
+  const recordings = usePoll(() => api.recordings.list(), 30000);
   // ordersCycle/ordersState split the same way usePoll does (loading/
   // error/ready) so a failed fetch renders ErrorBox instead of the empty
   // state a swallowed exception used to produce (audit F7) — a settled
@@ -107,7 +147,7 @@ export default function PaperPage() {
   return (
     <ConsoleShell active="Paper Trading">
       <PageTitle>Paper Trading</PageTitle>
-      <Section title="Engine">
+      <Section title="Triangular simulation engine">
         <Await state={status} what="paper status">
           {(s) =>
             s.paper ? (
@@ -142,59 +182,52 @@ export default function PaperPage() {
           }
         </Await>
       </Section>
-      <Section title="Live cycles (in flight)">
-        <ActiveCycles running={paperRunning} activeCount={status.kind === "ready" ? status.data.paper?.active_simulations : undefined} />
+      <Section title="Running now">
+        <ActiveCycles running={paperRunning} />
       </Section>
-      {mayReset && (
-        <Section title="Danger zone">
-          <div className="max-w-4xl rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-3">
-            <p className="mb-2 text-[13px] text-[var(--text-dim)]">
-              Reset clears the running paper session (active simulations and in-memory counters) and
-              starts a fresh one. Historical cycles already persisted are not deleted. ADMIN only, and
-              only while the engine is paused.
-            </p>
-            <Button onClick={openReset} disabled={resetButtonDisabled} danger>
-              Reset paper session…
-            </Button>
-            {!paperPresent ? (
-              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
-                paper engine not running in this profile
-              </span>
-            ) : paperRunning !== false ? (
-              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
-                pause the engine before resetting
-              </span>
-            ) : null}
-            {resetMsg && (
-              <p className={`mt-2 text-[12px] ${resetMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
-                {resetMsg.text}
-              </p>
-            )}
-          </div>
-        </Section>
-      )}
-      <Section title="Cycles (persisted)">
-        <Await state={cycles} what="paper cycles">
+      <Section title="Simulation history">
+        <Await state={cycles} what="simulation history">
           {(c) => (
             <Table
               head={["Started", "Outcome", "Realized PnL", "Fees", "Slip bps", "Duration", "Reason", "Cycle", ""]}
-              empty="persisted cycles yet. Persistence needs a database connection — see docs/deployment.md if this deployment doesn't have one configured"
+              label="Simulation history"
+              rowKeys={(c.cycles ?? []).map((row) => row.id)}
+              // The empty state reports the deployment's actual
+              // persistence state instead of always blaming the
+              // database: a healthy, configured deployment that simply
+              // has not settled a cycle yet says exactly that.
+              empty={
+                recordings.kind === "ready" && !recordings.data.persistence
+                  ? "simulated cycles — this deployment has no database configured, so nothing is kept between restarts. See docs/deployment.md"
+                  : recordings.kind === "error"
+                    ? "simulated cycles to show. Whether history is being kept could not be checked just now"
+                    : "simulated cycles yet. Settled cycles appear here as the engine completes them"
+              }
               rows={(c.cycles ?? []).map((row) => [
                 fmtTime(row.started_at),
                 <OutcomeBadge key="o" code={row.outcome} />,
                 row.realized_pnl !== undefined ? (
                   <span key="pnl" title={`marked total ${row.pnl_amount ?? "—"} (realized ${row.realized_pnl ?? "—"} + exposure mark ${row.exposure_mark ?? "—"})`}>
-                    {row.realized_pnl} {row.pnl_asset ?? ""}
+                    <DecimalValue
+                      d={presentSignedQuote(row.realized_pnl, row.pnl_asset ?? "")}
+                      tone="sign"
+                    />
                   </span>
                 ) : (
                   <span key="pnl" title={`marked total ${row.pnl_amount ?? "—"}`}>
-                    {row.pnl_amount ?? "—"} {row.pnl_asset ?? ""}
+                    <DecimalValue
+                      d={presentSignedQuote(row.pnl_amount, row.pnl_asset ?? "")}
+                      tone="sign"
+                    />
                   </span>
                 ),
-                <span key="f" title={feesCell(row)}>
-                  {feesCell(row)}
+                <span key="f" title={feesExact(row)}>
+                  <FeesCell cycle={row} />
                 </span>,
-                row.slippage_bps ?? "—",
+                <DecimalValue
+                  key="slip"
+                  d={presentDecimal(row.slippage_bps, { maxFrac: 2, minFrac: 2, unit: "bps" })}
+                />,
                 durationCell(row),
                 row.reason ? (
                   <span key="r" className="block max-w-xs truncate text-[12px] text-[var(--text-dim)]" title={row.reason}>
@@ -203,7 +236,18 @@ export default function PaperPage() {
                 ) : (
                   "—"
                 ),
-                <span key="id" className="text-[var(--text-dim)]">{row.id}</span>,
+                // The full identifier stays available for inspection —
+                // it is what an operator quotes in a bug report — but it
+                // is not the row's headline: the first segment plus a
+                // title carrying the whole value reads as an identifier
+                // rather than competing with the economics beside it.
+                <span
+                  key="id"
+                  className="font-mono text-[11px] text-[var(--text-dim)]"
+                  title={row.id}
+                >
+                  {row.id.length > 10 ? `${row.id.slice(0, 10)}…` : row.id}
+                </span>,
                 <span key="act" className="flex items-center gap-2 whitespace-nowrap">
                   <Button
                     onClick={() => showOrders(row.id)}
@@ -239,22 +283,65 @@ export default function PaperPage() {
               <Table
                 head={["Order ID", "Leg", "Market", "Side", "Status", "Requested", "Filled", "Remaining", "Avg price", "Fee"]}
                 empty="orders for this cycle"
+                label={`Orders for cycle ${ordersCycle}`}
+                rowKeys={rows.map((o) => o.id)}
                 rows={rows.map((o) => [
                   <span key="oid" className="font-mono text-[11px] text-[var(--text-dim)]">{o.id}</span>,
                   o.leg_no,
                   o.market_id,
                   o.side,
                   <Badge key="s" tone={o.status === "FILLED" ? "ok" : "dim"}>{o.status}</Badge>,
-                  o.qty ?? "—",
-                  o.filled_qty ?? "—",
-                  subtractDecimalStr(o.qty, o.filled_qty) ?? "—",
-                  o.avg_price ?? "—",
-                  o.fee ? `${o.fee} ${o.fee_asset ?? ""}` : "—",
+                  <DecimalValue key="q" d={presentQty(o.qty)} />,
+                  <DecimalValue key="fq" d={presentQty(o.filled_qty)} />,
+                  <DecimalValue key="rq" d={presentQty(subtractDecimalStr(o.qty, o.filled_qty))} />,
+                  <DecimalValue key="ap" d={presentQty(o.avg_price)} />,
+                  <DecimalValue
+                    key="fee"
+                    d={presentDecimal(o.fee, { maxFrac: 2, minFrac: 2, unit: o.fee_asset ?? undefined })}
+                  />,
                 ])}
               />
             )}
           </Await>
         </Section>
+      )}
+      {mayReset && (
+        // Session reset moves below the normal work and starts closed.
+        // It was a prominent red panel sitting between the live monitor
+        // and the history (audit §5), so the most destructive control on
+        // the page had the strongest visual pull. Every safeguard is
+        // unchanged: ADMIN only, the engine must be paused first,
+        // type-to-confirm RESET, and the backend enforces all three.
+        <Collapsible
+          title="Reset this simulation session"
+          note="clears the running session — ADMIN only, engine must be paused"
+        >
+          <div className="max-w-4xl rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-3">
+            <p className="mb-2 text-[13px] text-[var(--text-dim)]">
+              Reset clears the running paper session (active simulations and
+              in-session counters) and starts a fresh one. Simulation history
+              already saved is not deleted. ADMIN only, and only while the
+              engine is paused.
+            </p>
+            <Button onClick={openReset} disabled={resetButtonDisabled} danger>
+              Reset paper session…
+            </Button>
+            {!paperPresent ? (
+              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
+                paper engine not running in this profile
+              </span>
+            ) : paperRunning !== false ? (
+              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
+                pause the engine before resetting
+              </span>
+            ) : null}
+            {resetMsg && (
+              <p className={`mt-2 text-[12px] ${resetMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
+                {resetMsg.text}
+              </p>
+            )}
+          </div>
+        </Collapsible>
       )}
       {resetOpen && (
         <ConfirmDialog

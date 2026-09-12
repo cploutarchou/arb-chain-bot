@@ -15,7 +15,7 @@
 import { useEffect, useState } from "react";
 import { api, type PaperActiveCycle } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
-import { Badge, Stat, fmtTime, type Tone } from "@/components/ui";
+import { Badge, fmtTime, type Tone } from "@/components/ui";
 import { fmtDurationMs } from "@/lib/feedState";
 
 const STAGE_TONE: Record<string, Tone> = {
@@ -90,10 +90,8 @@ function CycleRow({ cycle, now }: { cycle: PaperActiveCycle; now: number }) {
 
 export function ActiveCycles({
   running,
-  activeCount,
 }: {
   running: boolean | undefined;
-  activeCount: number | undefined;
 }) {
   const state = usePoll(() => api.paper.active(), 1000);
   const [now, setNow] = useState(() => Date.now());
@@ -109,25 +107,15 @@ export function ActiveCycles({
 
   const cycles = state.kind === "ready" ? state.data.cycles ?? [] : [];
 
+  // The three summary stats that used to sit here ("In flight",
+  // "Engine", "Active sims (engine count)") are gone: the page's engine
+  // section directly above already reports the engine state and the
+  // active-simulation count, and the in-flight count is the length of
+  // the list immediately below. Three cells restating their neighbours
+  // is the duplication the audit flagged on this page (§5), not extra
+  // information. The `activeCount` prop went with them.
   return (
     <div>
-      <div className="mb-3 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-3">
-        <Stat
-          label="In flight"
-          value={state.kind === "ready" ? cycles.length : "…"}
-          tone={
-            state.kind === "ready" && cycles.length === 0
-              ? "dim"
-              : undefined
-          }
-        />
-        <Stat
-          label="Engine"
-          value={state.kind === "ready" ? (state.data.running ? "RUNNING" : "PAUSED") : "…"}
-          tone={state.kind === "ready" && !state.data.running ? "warn" : "ok"}
-        />
-        <Stat label="Active sims (engine count)" value={activeCount ?? "—"} />
-      </div>
       {state.kind === "loading" && (
         <p className="text-sm text-[var(--text-dim)]">Loading live cycles…</p>
       )}

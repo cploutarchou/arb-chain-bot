@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { PollState } from "@/lib/usePoll";
 import type { Distribution } from "@/lib/api/client";
+import type { DecimalDisplay } from "@/lib/decimal";
 
 export type Tone = "ok" | "warn" | "high" | "bad" | "dim";
 
@@ -28,6 +29,48 @@ export function Section({
       </h2>
       {children}
     </section>
+  );
+}
+
+// Collapsible is the secondary-section wrapper (T-087). The audit found
+// operational counters, frame totals, resyncs and internal diagnostics
+// competing with user outcomes for the top of the page; those move in
+// here, so observability is retained rather than removed — one click
+// away and labelled, not deleted.
+//
+// Built on <details>/<summary> deliberately: the open/close state, the
+// disclosure semantics, keyboard operation and find-in-page expansion
+// all come from the element, and there is no ARIA to get wrong.
+export function Collapsible({
+  title,
+  note,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  // note: what is inside, so someone can decide whether to open it
+  // without opening it.
+  note?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="mb-4 rounded border border-[var(--border)] bg-[var(--bg-panel)]" open={defaultOpen}>
+      <summary className="cursor-pointer list-none px-3 py-2 text-[13px] font-semibold text-[var(--text)] marker:content-none">
+        <span className="inline-flex items-center gap-2">
+          <span aria-hidden className="text-[var(--text-dim)]">
+            ▸
+          </span>
+          {title}
+          {note && (
+            <span className="font-normal text-[11px] text-[var(--text-dim)]">
+              {note}
+            </span>
+          )}
+        </span>
+      </summary>
+      <div className="border-t border-[var(--border)] px-3 py-3">{children}</div>
+    </details>
   );
 }
 
@@ -60,6 +103,76 @@ export function Stat({
         {value}
       </div>
     </div>
+  );
+}
+
+// DecimalValue renders one exact backend decimal at bounded presentation
+// precision while keeping the exact value reachable — the single
+// component every money, bps, price and quantity cell goes through
+// (T-087; docs/design/client-area-audit-2026-09-12 §2/§3/§4, where
+// twenty-digit cells overflowed the table and clipped the Calculator).
+//
+// Take the `d` argument from a `presentDecimal`/`presentBps`/
+// `presentQuote`/`presentPrice` call in lib/decimal.ts. This component
+// deliberately does not accept a raw string: choosing the precision is a
+// per-column decision that belongs at the call site with the preset, not
+// a default hidden in a leaf component.
+//
+// Accessibility: the visible text ("-<0.01 USDC", "+1,078.65 bps") is
+// aria-hidden and an sr-only sibling carries `srText`, which spells out
+// the sign, the unit, and — when the figure is abbreviated — the exact
+// value. A screen-reader user therefore gets the full precision that a
+// sighted user gets from the tooltip, rather than hearing a punctuation
+// soup that cannot be interpreted.
+export function DecimalValue({
+  d,
+  tone,
+  block,
+}: {
+  d: DecimalDisplay;
+  // tone: "sign" colours by the value's own sign (negative → critical,
+  // positive → ok, zero/unknown → neutral). An explicit Tone overrides
+  // it. Colour is never the only carrier: the sign character is always
+  // in the text (design-system.md §1.8).
+  tone?: Tone | "sign";
+  // block: render as a block so a wide figure in a narrow card wraps
+  // within its own box rather than stretching the row.
+  block?: boolean;
+}) {
+  const resolved: Tone =
+    tone === "sign"
+      ? !d.valid || d.zero
+        ? "dim"
+        : d.negative
+          ? "bad"
+          : "ok"
+      : (tone ?? "dim");
+  const color =
+    tone === undefined
+      ? "text-[var(--text)]"
+      : resolved === "ok"
+        ? "text-[var(--ok)]"
+        : resolved === "warn"
+          ? "text-[var(--warn)]"
+          : resolved === "high"
+            ? "text-[var(--high)]"
+            : resolved === "bad"
+              ? "text-[var(--critical)]"
+              : "text-[var(--text-dim)]";
+  // The tooltip states the exact value only when the display is not
+  // already exact — a redundant tooltip on an exact figure trains people
+  // to ignore the ones that matter.
+  const title = d.rounded && d.exact ? `Exactly ${d.exact}` : undefined;
+  return (
+    <span
+      className={`${block ? "block" : "inline-block"} [font-variant-numeric:tabular-nums_slashed-zero] ${color}`}
+      title={title}
+      data-exact={d.exact ?? undefined}
+      data-rounded={d.rounded ? "true" : undefined}
+    >
+      <span aria-hidden>{d.text}</span>
+      <span className="sr-only">{d.srText}</span>
+    </span>
   );
 }
 
@@ -284,6 +397,8 @@ export function Table({
   sticky,
   maxHeight,
   align,
+  rowKeys,
+  label,
 }: {
   head: string[];
   rows: ReactNode[][];
@@ -297,12 +412,32 @@ export function Table({
   // or shorter than `head` — never required, so existing callers are
   // unaffected until they opt a numeric column in.
   align?: ColumnAlign[];
+  // rowKeys: a stable identity per row, in the same order as `rows`.
+  // Without it React keys by array index, which means a table refreshed
+  // by a poll (or re-sorted) reuses the DOM row for a *different*
+  // record: the focused cell, the open drawer's anchor and any
+  // selection silently move to whatever now occupies that position.
+  // Every polled or sortable table must pass this; the index fallback
+  // exists only for the static tables that predate it.
+  rowKeys?: string[];
+  // label: names the scroll region so a keyboard user can reach columns
+  // that start past the right edge. Without a name the region is
+  // focusable but unnamed, which is still reachable but less useful —
+  // pass it on any table wide enough to scroll.
+  label?: string;
 }) {
   if (rows.length === 0) return <Empty what={empty} />;
   return (
     <div
       className="overflow-x-auto rounded border border-[var(--border)]"
       style={maxHeight ? { maxHeight, overflowY: "auto" } : undefined}
+      // Focusable so the horizontal scroll is operable from the
+      // keyboard (WCAG 2.1.1): the audit found Screener's later
+      // freshness/action columns off-screen with no way to scroll to
+      // them without a pointer.
+      tabIndex={0}
+      role={label ? "region" : undefined}
+      aria-label={label}
     >
       <table className="w-full border-collapse text-[13px] [font-variant-numeric:tabular-nums_slashed-zero]">
         <thead className={sticky ? "sticky top-0 z-10" : undefined}>
@@ -321,7 +456,7 @@ export function Table({
         <tbody>
           {rows.map((cells, i) => (
             <tr
-              key={i}
+              key={rowKeys?.[i] ?? i}
               className="group border-t border-[var(--border)] hover:bg-[var(--bg-panel)]"
             >
               {cells.map((c, j) => (
@@ -359,6 +494,8 @@ export function VirtualTable({
   maxHeight = 480,
   threshold = 500,
   align,
+  rowKeys,
+  label,
 }: {
   head: string[];
   rows: ReactNode[][];
@@ -368,6 +505,11 @@ export function VirtualTable({
   // See Table's `align` — same per-column "num"/"text" option, threaded
   // through to both the direct-render and windowed-scroll branches below.
   align?: ColumnAlign[];
+  // See Table's `rowKeys` and `label`. Row identity matters more here,
+  // not less: a windowed table reuses a small pool of DOM rows, so an
+  // index key under a live poll is guaranteed to mismatch.
+  rowKeys?: string[];
+  label?: string;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   if (rows.length === 0) return <Empty what={empty} />;
@@ -380,6 +522,8 @@ export function VirtualTable({
         sticky
         maxHeight={maxHeight}
         align={align}
+        rowKeys={rowKeys}
+        label={label}
       />
     );
   }
@@ -393,7 +537,9 @@ export function VirtualTable({
       className="overflow-x-auto overflow-y-auto rounded border border-[var(--border)]"
       style={{ maxHeight }}
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-      aria-label={`${rows.length} rows, virtualized`}
+      tabIndex={0}
+      role="region"
+      aria-label={label ? `${label}, ${rows.length} rows` : `${rows.length} rows`}
     >
       <table className="w-full border-collapse text-[13px] [font-variant-numeric:tabular-nums_slashed-zero]">
         <thead className="sticky top-0 z-10">
@@ -417,7 +563,7 @@ export function VirtualTable({
           )}
           {rows.slice(startIdx, endIdx).map((cells, i) => (
             <tr
-              key={startIdx + i}
+              key={rowKeys?.[startIdx + i] ?? startIdx + i}
               className="group border-t border-[var(--border)] hover:bg-[var(--bg-panel)]"
               style={{ height: ROW_HEIGHT }}
             >
@@ -472,11 +618,18 @@ export function Button({
   danger,
   children,
   type = "button",
+  title,
 }: {
   onClick: () => void;
   disabled?: boolean;
   danger?: boolean;
   children: ReactNode;
+  // title: supplementary detail for a control whose label cannot carry
+  // all of it (PaperControl's engine scope on the narrow mobile row).
+  // Never the only place a consequence is stated — a tooltip is
+  // unreachable by touch — so anything load-bearing also appears as
+  // visible text or in the confirmation dialog.
+  title?: string;
   // Explicit "button" default: a <button> with no type attribute defaults
   // to "submit" per the HTML spec, so any Button placed inside a <form>
   // (Users & roles create form, Session password form) would otherwise
@@ -490,6 +643,7 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`rounded border px-2.5 py-1 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-[var(--opacity-disabled)] ${
         danger
           ? "border-[var(--critical)] text-[var(--critical)] hover:bg-[var(--critical)] hover:text-[var(--on-critical)]"

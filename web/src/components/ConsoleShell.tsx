@@ -11,173 +11,19 @@ import {
 } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
 import { connectHub, type HubMessage } from "@/lib/ws";
-import { useAuth, useEntitlement, can } from "@/lib/auth";
+import { useAuth, can } from "@/lib/auth";
 import { Button, ConfirmDialog } from "@/components/ui";
-import { MoonIcon, NavIcon, SunIcon } from "@/components/icons";
-import { IconRail, NavGroupHeader } from "@/components/IconRail";
-import { GatedControl } from "@/components/GatedControl";
+import { MoonIcon, SunIcon } from "@/components/icons";
+import {
+  Breadcrumbs,
+  PrimaryNav,
+  SecondaryNav,
+} from "@/components/ConsoleNav";
 import { PaperControl } from "@/components/PaperControl";
 import {
   NotificationBell,
   useNotificationItems,
 } from "@/components/NotificationBell";
-
-// Full navigation per SKILL.md §31, grouped per the UX audit's five-group
-// IA (console-ux-audit.md §2). Sections without a page yet render as
-// disabled entries — the console never pretends a page exists.
-interface NavItem {
-  label: string;
-  href?: string;
-  note?: string; // shown as the disabled entry's title/tooltip
-}
-interface NavGroup {
-  title: string;
-  items: NavItem[];
-}
-
-const GROUPS: NavGroup[] = [
-  {
-    title: "Operate",
-    items: [
-      { label: "Overview", href: "/overview" },
-      { label: "Scanner", href: "/scanner" },
-      { label: "Triangles", href: "/triangles" },
-      { label: "Opportunities", href: "/opportunities" },
-      { label: "Paper Trading", href: "/paper" },
-    ],
-  },
-  {
-    title: "Portfolio",
-    items: [
-      { label: "Portfolio & Balances", href: "/portfolio" },
-      { label: "PnL & Analytics", href: "/pnl" },
-      { label: "Orders", href: "/orders" },
-      { label: "Fills", href: "/fills" },
-    ],
-  },
-  {
-    title: "Research",
-    items: [
-      { label: "Campaigns", href: "/campaigns" },
-      { label: "Replay & Backtesting", href: "/replay" },
-      { label: "AI Advisor", href: "/ai" },
-    ],
-  },
-  {
-    title: "Control",
-    items: [
-      { label: "Strategies", href: "/strategies" },
-      { label: "Risk Center", href: "/risk" },
-      { label: "Alerts", href: "/alerts" },
-      { label: "Reports", href: "/reports" },
-    ],
-  },
-  {
-    title: "System",
-    items: [
-      { label: "Exchanges", href: "/exchanges" },
-      { label: "Markets", href: "/settings#markets" },
-      { label: "System Health", href: "/system" },
-      { label: "Audit Log", href: "/audit" },
-      { label: "Telegram", href: "/telegram" },
-      { label: "Users & Security", href: "/settings#users" },
-    ],
-  },
-  // Scanner Suite (T-065..T-072, docs/design/scanner-suite.md §5): cross-
-  // venue spot screener, perpetuals/funding monitor, spreads calculator,
-  // alert rules, automatic PAPER execution — public market data only.
-  {
-    title: "Scanner Suite",
-    items: [
-      { label: "Screener", href: "/screener" },
-      { label: "Perpetuals", href: "/perpetuals" },
-      { label: "Funding", href: "/funding" },
-      { label: "Calculator", href: "/calculator" },
-      { label: "Alert Rules", href: "/scanner-alerts" },
-      // Distinct label from the Control group's existing "Reports" item
-      // (engine daily/weekly ops reports, a different system per
-      // docs/user-guide/reports.md's "two report systems ... do not
-      // confuse them") — both GLYPHS and NavContent's activeGroupTitle
-      // lookup key off this exact string, so it must not collide.
-      // F17: console-v2 §2.2 lists an Evidence entry under Scanner
-      // Suite — the §7/§8 screener paper evidence IS this page, so the
-      // label says evidence rather than adding a dead second entry.
-      { label: "Evidence — Screener Reports", href: "/screener-reports" },
-      { label: "Auto-Paper", href: "/auto-paper" },
-    ],
-  },
-];
-
-// GROUP_STORAGE_KEY persists which nav groups are collapsed, per
-// operator browser (arbitragescanner-style icon sidebar, design §0 item
-// 6 / §5). Reading/writing localStorage is wrapped in try/catch — a
-// private-mode or quota failure degrades to "always expanded", never a
-// crash.
-const GROUP_STORAGE_KEY = "arb.nav.collapsed-groups";
-
-function loadCollapsedGroups(): Set<string> {
-  try {
-    const raw = localStorage.getItem(GROUP_STORAGE_KEY);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw) as unknown;
-    return Array.isArray(arr)
-      ? new Set(arr.filter((v): v is string => typeof v === "string"))
-      : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function saveCollapsedGroups(groups: Set<string>) {
-  try {
-    localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify([...groups]));
-  } catch {
-    // Private mode / quota exceeded — the toggle still works for this
-    // page load, it just won't persist across a reload.
-  }
-}
-
-// useCollapsedGroups: state loads from localStorage in an effect (never
-// during render — that would be a hydration mismatch between server and
-// client markup), defaults to fully expanded, and never actually
-// collapses the group containing the current page so the active link is
-// always reachable without an extra click.
-function useCollapsedGroups(activeGroupTitle: string | undefined) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    setCollapsed(loadCollapsedGroups());
-  }, []);
-  const toggle = (title: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(title)) next.delete(title);
-      else next.add(title);
-      saveCollapsedGroups(next);
-      return next;
-    });
-  };
-  // expand: used by the icon rail (UX §2.1 — a rail click expands/scrolls
-  // to its group, it does not collapse the others; there is no forced
-  // one-group-open accordion here, since that would hide every other
-  // group's links on first load, which e2e/console.spec.ts's "nav group
-  // renders and every Scanner Suite page loads" relies on staying true).
-  const expand = (title: string) => {
-    setCollapsed((prev) => {
-      if (!prev.has(title)) return prev;
-      const next = new Set(prev);
-      next.delete(title);
-      saveCollapsedGroups(next);
-      return next;
-    });
-  };
-  const isCollapsed = (title: string) =>
-    collapsed.has(title) && title !== activeGroupTitle;
-  return { isCollapsed, toggle, expand };
-}
-
-function groupDomId(title: string): string {
-  return `nav-group-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-}
 
 // useThemeToggle: light/dark persisted in localStorage as data-theme on
 // <html> (globals.css §"theme tokens" — :root is light by default,
@@ -566,238 +412,63 @@ function RestartBanner() {
   );
 }
 
-// NavContent is the sidebar's inner nav — shared between the always-
-// visible desktop sidebar and the mobile overlay (§4.7/BL-24: below md
-// the sidebar collapses to a top bar with a hamburger revealing this
-// same nav as a full-height overlay, closing on nav or outside-tap).
-// `rail`: desktop-only (UX §8 — below md the overlay always shows full
-// labels, never icon-only) — renders the IconRail (design-system.md
-// §4.1) beside the label column, sharing one collapsed-groups state.
-// Groups stay default-expanded (no forced one-open accordion — UX §2.1's
-// "an operator can pin more than one open" reads as *not* mandating a
-// single-group accordion by default, and a default accordion would hide
-// every Scanner Suite link e2e/console.spec.ts expects visible from a
-// fresh session); a rail click expands/scrolls to its group without
-// collapsing the others.
-function NavContent({
-  active,
-  role,
-  onNavigate,
-  rail,
-}: {
-  active: string;
-  role?: string;
-  onNavigate?: () => void;
-  rail?: boolean;
-}) {
-  const activeGroupTitle = GROUPS.find((g) =>
-    g.items.some((i) => i.label === active),
-  )?.title;
-  const { isCollapsed, toggle, expand } = useCollapsedGroups(activeGroupTitle);
-  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  // Auto-Paper is the UX spec's own package-gating example (console-v2.md
-  // §2.1: "Auto-Paper 🔒Pro") — Watch's auto_paper.strategies is empty
-  // (packages.md §2 "none (manual paper only)"), so an organisation on
-  // Watch sees the nav item as package-gated rather than a plain link.
-  // undefined (auth still loading, or anonymous) never gates optimistically.
-  const autoPaperStrategies = useEntitlement("auto_paper.strategies");
-  const autoPaperGated =
-    autoPaperStrategies !== undefined && autoPaperStrategies.length === 0;
-
-  const labelColumn = (
-    <>
-      <nav
-        className="flex-1 space-y-3 overflow-y-auto text-[13px]"
-        aria-label="Primary"
-      >
-        {GROUPS.map((group) => {
-          const collapsedNow = isCollapsed(group.title);
-          const domId = groupDomId(group.title);
-          return (
-            <div
-              key={group.title}
-              ref={(el) => {
-                groupRefs.current[group.title] = el;
-              }}
-            >
-              <NavGroupHeader
-                title={group.title}
-                collapsed={collapsedNow}
-                onToggle={() => toggle(group.title)}
-                controlsId={domId}
-              />
-              {!collapsedNow && (
-                <div id={domId} className="space-y-0.5">
-                  {group.items.map((item) => {
-                    // Audit Log is visible to OPERATOR/ADMIN only (backend
-                    // PermViewAudit); annotate rather than silently 403 a
-                    // VIEWER who clicks through.
-                    const restrictedForViewer =
-                      item.label === "Audit Log" && role === "VIEWER";
-                    const packageGated =
-                      item.label === "Auto-Paper" && autoPaperGated;
-                    if (item.href && !restrictedForViewer && !packageGated) {
-                      return (
-                        <Link
-                          key={item.label}
-                          href={item.href}
-                          onClick={onNavigate}
-                          className={`flex items-center gap-2 rounded px-2 py-1 ${
-                            active === item.label
-                              ? "bg-[var(--bg-raised)] text-[var(--text)]"
-                              : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-                          }`}
-                        >
-                          <NavIcon label={item.label} />
-                          {item.label}
-                        </Link>
-                      );
-                    }
-                    if (packageGated) {
-                      return (
-                        <GatedControl
-                          key={item.label}
-                          as="nav"
-                          state="package"
-                          reason=""
-                          icon={<NavIcon label={item.label} />}
-                          upgradeHref="/billing"
-                          packageName="Signal"
-                        >
-                          {item.label}
-                        </GatedControl>
-                      );
-                    }
-                    return (
-                      <GatedControl
-                        key={item.label}
-                        as="nav"
-                        state={restrictedForViewer ? "role" : "unbuilt"}
-                        reason={
-                          restrictedForViewer
-                            ? "Requires OPERATOR or ADMIN"
-                            : (item.note ?? "Not implemented yet")
-                        }
-                        icon={<NavIcon label={item.label} />}
-                      >
-                        {item.label}
-                      </GatedControl>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </nav>
-      {/* Organisation and Billing (T-081/T-083): pinned like Settings, not
-          inside a Scanner Suite/Operate group — this is the tenancy/
-          account surface, reachable regardless of which product group is
-          collapsed. Always shown to any authenticated account: /org is
-          member-readable, /billing subscription is member-readable, and
-          both routes' own pages gate mutation controls on OWNER/ADMIN. */}
-      {["Organisation", "Billing"].map((label) => {
-        const href = label === "Organisation" ? "/org" : "/billing";
-        return (
-          <Link
-            key={label}
-            href={href}
-            onClick={onNavigate}
-            className={`mt-1 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
-              active === label
-                ? "bg-[var(--bg-raised)] text-[var(--text)]"
-                : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-            }`}
-          >
-            <NavIcon label={label} />
-            {label}
-          </Link>
-        );
-      })}
-      <Link
-        href="/settings"
-        onClick={onNavigate}
-        className={`mt-1 flex items-center gap-2 rounded px-2 py-1 text-[13px] ${
-          active === "Settings"
-            ? "bg-[var(--bg-raised)] text-[var(--text)]"
-            : "text-[var(--text-dim)] hover:bg-[var(--bg-raised)] hover:text-[var(--text)]"
-        }`}
-      >
-        <NavIcon label="Settings" />
-        Settings
-      </Link>
-    </>
-  );
-
-  if (!rail) return labelColumn;
-
-  return (
-    <div className="flex min-h-0 flex-1 gap-2">
-      <IconRail
-        groups={GROUPS.map((g) => g.title)}
-        activeGroupTitle={activeGroupTitle}
-        onSelect={(title) => {
-          expand(title);
-          groupRefs.current[title]?.scrollIntoView({
-            behavior: "smooth",
-            block: "nearest",
-          });
-        }}
-      />
-      <div className="flex min-w-0 flex-1 flex-col">{labelColumn}</div>
-    </div>
-  );
-}
-
 export function ConsoleShell({
   children,
   active,
 }: {
   children: ReactNode;
-  active: string;
+  // active: retained only as a breadcrumb fallback for a route that
+  // lib/nav.ts does not know. It is no longer how selection works —
+  // `resolveNav(pathname)` decides that — so a page may omit it, and
+  // renaming a label can no longer break a highlight. Three pages
+  // passed a value matching no navigation label before this change
+  // (/cycles/[id], /screener-reports/*, /onboarding) and highlighted
+  // nothing at all; none of the 35 call sites had to change to fix that.
+  active?: string;
 }) {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
-  // F15: Escape closes the mobile nav overlay, and focus returns to the
-  // hamburger that opened it — the overlay was closable only by tapping
-  // outside or navigating, and a keyboard user had no way out.
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  // Escape closes the mobile nav overlay and focus returns to the
+  // hamburger that opened it — a keyboard user otherwise had no way out.
   useEffect(() => {
     if (!mobileOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMobileOpen(false);
+      if (e.key === "Escape") {
+        setMobileOpen(false);
+        menuButtonRef.current?.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [mobileOpen]);
   const modeState = useModeState();
-  // Hoisted once for the whole shell, same reasoning as modeState above:
-  // the mobile top bar, the mobile overlay and the desktop sidebar each
-  // mount their own PaperControl (CSS shows/hides them per breakpoint,
-  // all three exist in the tree at once), and must not each open a
-  // separate poll of the same endpoint.
+  // Hoisted once for the whole shell: the mobile top bar, the mobile
+  // overlay and the desktop sidebar each mount their own PaperControl
+  // (CSS shows/hides them per breakpoint, all three are in the tree at
+  // once) and must not each open a separate poll of the same endpoint.
   const paperStatus = usePoll<ScannerStatus>(() => api.scanner.status(), 5000);
-  // One alerts+rule-events poll for the whole shell (see
-  // useNotificationItems' own comment) — shared by both bell mounts
-  // below, same pattern as modeState feeding both ModeBanner mounts.
+  // One alerts+rule-events poll for the whole shell, shared by both bell
+  // mounts — same reasoning as modeState feeding both ModeBanner mounts.
   const notificationItems = useNotificationItems();
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      {/* Mobile top bar (< md): hamburger reveals the full nav as an
-          overlay; the desktop sidebar below is hidden at this width. A
-          second row keeps the mode and the paper pause/resume control
-          visible on every page at every width (F1/F2) — neither waits
-          for the hamburger menu to open. */}
+      {/* Mobile top bar (< md): the hamburger reveals the same
+          navigation definition as an overlay. The second row keeps the
+          operating mode and the paper pause/resume control on every page
+          at every width — neither waits for the menu to be opened. */}
       <div className="border-b border-[var(--border)] bg-[var(--bg-panel)] px-3 py-2 md:hidden">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-semibold tracking-wide text-[var(--text)]">
             ARB CONSOLE
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <NotificationBell items={notificationItems} />
             <ThemeToggle />
             <button
+              ref={menuButtonRef}
               type="button"
               aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
               aria-expanded={mobileOpen}
@@ -808,7 +479,10 @@ export function ConsoleShell({
             </button>
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        {/* flex-wrap, not a scroller: the mode and the pause control drop
+            onto a second line on a narrow phone rather than requiring a
+            horizontal scroll to reach the safety control. */}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <ModeBanner
             status={modeState.status}
             configured={modeState.configured}
@@ -835,36 +509,42 @@ export function ConsoleShell({
               />
               <PaperControl status={paperStatus} role={role} />
             </div>
-            <NavContent
-              active={active}
-              role={role}
-              onNavigate={() => setMobileOpen(false)}
-            />
+            {/* One navigation definition serves both widths; the overlay
+                always shows full labels. */}
+            <PrimaryNav onNavigate={() => setMobileOpen(false)} />
+            <SecondaryNav onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
       )}
 
-      <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 md:flex">
-        <div className="mb-2 flex items-center justify-between px-2">
-          <span className="text-sm font-semibold tracking-wide text-[var(--text)]">
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-x-hidden border-r border-[var(--border)] bg-[var(--bg-panel)] px-3 py-4 md:flex">
+        <div className="mb-2 flex items-center justify-between gap-1 px-2">
+          <span className="min-w-0 truncate text-sm font-semibold tracking-wide text-[var(--text)]">
             ARB CONSOLE
           </span>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <NotificationBell items={notificationItems} />
             <ThemeToggle />
           </div>
         </div>
-        <div className="px-2">
+        <div className="shrink-0 px-2">
           <ModeBanner
             status={modeState.status}
             configured={modeState.configured}
           />
           <PaperControl status={paperStatus} role={role} />
         </div>
-        <NavContent active={active} role={role} rail />
+        {/* PrimaryNav is shrink-0 and SecondaryNav owns the only scroll
+            region, so the primary destinations are always visible
+            without scrolling. The old sidebar scrolled the whole link
+            column beside a second icon rail, which is what put later
+            entries out of reach. */}
+        <PrimaryNav />
+        <SecondaryNav />
       </aside>
       <main className="min-w-0 flex-1 p-4 md:p-6">
         <RestartBanner />
+        <Breadcrumbs fallbackLabel={active} />
         {children}
       </main>
     </div>

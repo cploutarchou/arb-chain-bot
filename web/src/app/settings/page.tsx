@@ -12,6 +12,11 @@ import {
 } from "@/lib/api/client";
 import { usePoll } from "@/lib/usePoll";
 import { useAuth, can } from "@/lib/auth";
+import {
+  SettingsAnchor,
+  SettingsCategories,
+  type SettingsCategoryDef,
+} from "@/components/SettingsCategories";
 import { cloneParams, setPath, validateCooldown } from "@/lib/strategyFields";
 import { diffParams, effectFor, type DiffRow } from "@/lib/diff";
 import { ConsoleShell } from "@/components/ConsoleShell";
@@ -851,68 +856,193 @@ function NotificationsSection() {
 }
 
 export default function SettingsPage() {
+  const { state: auth } = useAuth();
+  const role = auth.kind === "authenticated" ? auth.me.role : undefined;
+  // platform_admin, never the ADMIN display role. A tenant's console
+  // role can equal ADMIN while `platform_admin` is false; the backend
+  // refuses every platform-settings route in that case with
+  // `platform_admin_required` (internal/api/auth.go:535-548), and until
+  // now the console showed those forms anyway. Hiding them is the
+  // presentation catching up with a gate that already exists — nothing
+  // is being loosened, and nothing a tenant admin could previously
+  // *change* becomes unavailable.
+  const platformAdmin =
+    auth.kind === "authenticated" && auth.me.platform_admin === true;
+  // Scanner Suite settings and Strategy & risk are a different tier:
+  // the backend gates them on the global role rather than on
+  // platform_admin — PermScreenerConfig and PermRiskConfig, both ADMIN
+  // only (internal/auth/rbac.go:59-67). Note this is `screener:config`,
+  // the Scanner Suite mutation permission, NOT `scanner:config`, which
+  // gates triangular *strategy* config and which OPERATOR also holds
+  // (rbac.go:37-39 spells the two apart). Using the latter here would
+  // show an OPERATOR forms the backend then refuses.
+  const mayConfigure =
+    can(role, "screener:config") || can(role, "risk:config");
+
+  const categories: SettingsCategoryDef[] = [
+    {
+      id: "account",
+      label: "Account",
+      description: "Your sign-in, your password and this session.",
+      content: (
+        <>
+          <SettingsAnchor anchor="account">
+            <SessionSection />
+          </SettingsAnchor>
+          <Section title="Getting set up">
+            <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+              Pick venues, set simulated paper balances and create a rule in
+              three short steps.{" "}
+              <Link href="/onboarding" className="text-[var(--accent)] underline">
+                Run the setup wizard →
+              </Link>
+            </p>
+          </Section>
+          <Section title="How this platform keeps you safe">
+            {/* Plain language, same guarantees. The previous copy named
+                LiveExecutor, ErrLiveTradingDisabled, CSRF and a task id,
+                which told an ordinary reader nothing about what is
+                actually protected. The engineering detail lives in
+                docs/security.md, not in an account settings page. */}
+            <ul className="max-w-2xl list-inside list-disc space-y-1 text-[13px] text-[var(--text-dim)]">
+              <li>
+                This platform never places a real order. Live trading is
+                disabled in the code itself, not by a setting anyone can
+                switch.
+              </li>
+              <li>
+                Exchange access is read-only public market data. No key with
+                permission to trade, withdraw or transfer exists anywhere in
+                this system.
+              </li>
+              <li>
+                Your session lives on the server and can be revoked, and every
+                change you make is checked against your role by the backend —
+                not merely hidden in the interface.
+              </li>
+              <li>
+                Two-factor sign-in is planned but not yet available.
+              </li>
+            </ul>
+          </Section>
+        </>
+      ),
+    },
+    {
+      id: "organisation",
+      label: "Organisation",
+      description:
+        "Members, roles and seats. This is your organisation — it is not the platform itself.",
+      content: (
+        <Section title="Organisation">
+          <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+            Members, their roles and your seat usage are managed on the
+            organisation page.{" "}
+            <Link href="/org" className="text-[var(--accent)] underline">
+              Open Organisation →
+            </Link>
+          </p>
+        </Section>
+      ),
+    },
+    {
+      id: "billing",
+      label: "Billing",
+      description: "Your package, invoices and payment details.",
+      content: (
+        <Section title="Billing">
+          <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+            Your current package, what it includes, invoices and payment
+            details.{" "}
+            <Link href="/billing" className="text-[var(--accent)] underline">
+              Open Billing →
+            </Link>
+          </p>
+        </Section>
+      ),
+    },
+    {
+      id: "notifications",
+      label: "Notifications",
+      description: "How and when this platform contacts you.",
+      content: (
+        <SettingsAnchor anchor="notifications">
+          <NotificationsSection />
+        </SettingsAnchor>
+      ),
+    },
+  ];
+
+  // Administration appears only for someone who can configure something.
+  if (mayConfigure || platformAdmin) {
+    categories.push({
+      id: "administration",
+      label: "Administration",
+      description: platformAdmin
+        ? "Platform-wide configuration. Changes here affect every organisation on this deployment, and most apply on the next engine restart."
+        : "Trading configuration for this deployment. Platform-wide settings are operated by platform staff and are not shown here.",
+      content: (
+        <>
+          {mayConfigure && (
+            <>
+              <SettingsAnchor anchor="scanner-suite">
+                <ScreenerSettingsSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="strategy-risk">
+                <StrategyRiskSection />
+              </SettingsAnchor>
+            </>
+          )}
+          {platformAdmin ? (
+            <>
+              <SettingsAnchor anchor="operating-mode">
+                <OperatingModeSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="markets">
+                <MarketsSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="venues">
+                <VenuesSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="ai">
+                <AIAdvisorSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="logging">
+                <LoggingAccessSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="users">
+                <UsersSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="security">
+                <SecretsSection />
+              </SettingsAnchor>
+              <SettingsAnchor anchor="platform-versions">
+                <PlatformVersionHistorySection />
+              </SettingsAnchor>
+            </>
+          ) : (
+            <Section title="Platform configuration">
+              <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
+                Operating mode, markets and assets, venues and fees, AI
+                settings, logging, platform users and the credential vault are
+                operated by platform staff for the whole deployment. Your
+                organisation&apos;s own members and roles are under{" "}
+                <Link href="/org" className="text-[var(--accent)] underline">
+                  Organisation
+                </Link>
+                .
+              </p>
+            </Section>
+          )}
+        </>
+      ),
+    });
+  }
+
   return (
-    <ConsoleShell active="Settings">
+    <ConsoleShell>
       <PageTitle>Settings</PageTitle>
-      <Section title="Setup wizard">
-        <p className="max-w-2xl text-[13px] text-[var(--text-dim)]">
-          Pick venues, set simulated paper balances and create a rule in three
-          short steps.{" "}
-          <Link href="/onboarding" className="text-[var(--accent)] underline">
-            Run the setup wizard →
-          </Link>
-        </p>
-      </Section>
-      <SessionSection />
-      <div id="operating-mode">
-        <OperatingModeSection />
-      </div>
-      <div id="markets">
-        <MarketsSection />
-      </div>
-      <VenuesSection />
-      <div id="scanner-suite">
-        <ScreenerSettingsSection />
-      </div>
-      <div id="logging">
-        <LoggingAccessSection />
-      </div>
-      <div id="ai">
-        <AIAdvisorSection />
-      </div>
-      <div id="platform-versions">
-        <PlatformVersionHistorySection />
-      </div>
-      <div id="users">
-        <UsersSection />
-      </div>
-      <StrategyRiskSection />
-      <div id="notifications">
-        <NotificationsSection />
-      </div>
-      <div id="security">
-        <SecretsSection />
-      </div>
-      <Section title="Security posture">
-        <ul className="max-w-2xl list-inside list-disc space-y-1 text-[13px] text-[var(--text-dim)]">
-          <li>
-            Live trading is permanently disabled by design (LiveExecutor returns
-            ErrLiveTradingDisabled).
-          </li>
-          <li>
-            Sessions are server-side and revocable; CSRF required on every state
-            change; RBAC enforced in the backend.
-          </li>
-          <li>
-            Exchange access is public market data only — no API keys with trade,
-            withdrawal, or transfer permissions exist anywhere in this system.
-          </li>
-          <li>
-            MFA (TOTP) enrollment is reserved in the auth flow but not yet
-            implemented (MASTER_PLAN T-052).
-          </li>
-        </ul>
-      </Section>
+      <SettingsCategories categories={categories} />
     </ConsoleShell>
   );
 }

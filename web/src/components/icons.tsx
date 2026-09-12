@@ -226,64 +226,9 @@ const GLYPHS: Record<string, ReactNode> = {
     </>
   ),
 };
-
-// Rail group glyphs (design-system.md §3): one per nav *group*, drawn at
-// 20px in IconRail. Kept in a separate map from the per-page GLYPHS above
-// since a rail button represents a whole group, not a single page.
-const GROUP_GLYPHS: Record<string, ReactNode> = {
-  Operate: (
-    <rect
-      x="2"
-      y="2"
-      width="12"
-      height="12"
-      rx="1.2"
-      fill="currentColor"
-      stroke="none"
-    />
-  ),
-  "Scanner Suite": (
-    <>
-      <circle cx="8" cy="8" r="6.3" />
-      <polygon
-        points="9,3.5 5.2,8.6 7.8,8.6 7,12.5 10.8,7.4 8.2,7.4"
-        fill="currentColor"
-        stroke="none"
-      />
-    </>
-  ),
-  Portfolio: (
-    <>
-      <rect x="2" y="2" width="12" height="12" rx="1.2" />
-      <rect
-        x="8"
-        y="2"
-        width="6"
-        height="12"
-        fill="currentColor"
-        stroke="none"
-      />
-    </>
-  ),
-  Research: (
-    <>
-      <line x1="4" y1="4" x2="12" y2="4" />
-      <line x1="4" y1="4" x2="8" y2="12" />
-      <line x1="12" y1="4" x2="8" y2="12" />
-      <circle cx="4" cy="4" r="1.6" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="4" r="1.6" fill="currentColor" stroke="none" />
-      <circle cx="8" cy="12" r="1.6" fill="currentColor" stroke="none" />
-    </>
-  ),
-  Control: <polygon points="8,1.8 14.2,8 8,14.2 1.8,8" />,
-  System: <polygon points="8,1.8 13.4,4.9 13.4,11.1 8,14.2 2.6,11.1 2.6,4.9" />,
-};
-
-// Non-nav glyphs (design-system.md §3): chevron/close/lock/etc, used by
-// the shell's new components (IconRail, GatedControl, RowDrawer,
-// NotificationBell/Panel, FilterCard). Rendered via the dedicated
-// exports below rather than NavIcon's label lookup, since these are not
-// per-page nav glyphs.
+// The glyphs below are addressed by their own named exports rather than
+// through NavIcon's key lookup, since they are chrome (chevron, bell,
+// lock, close, external link) rather than per-page navigation glyphs.
 const GLYPH_CHEVRON = <polyline points="4.5,6 8,9.5 11.5,6" />;
 const GLYPH_BELL = (
   <>
@@ -347,29 +292,6 @@ export function NavIcon({ label }: { label: string }) {
       className="shrink-0"
     >
       {GLYPHS[label] ?? DEFAULT_GLYPH}
-    </svg>
-  );
-}
-
-// GroupIcon: the 20px icon-rail glyph for a nav group (design-system.md
-// §3/§4.1) — falls back to the same dot DEFAULT_GLYPH as NavIcon for any
-// group name that hasn't been drawn yet, so a new group never renders a
-// blank rail button.
-export function GroupIcon({ group }: { group: string }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="shrink-0"
-    >
-      {GROUP_GLYPHS[group] ?? DEFAULT_GLYPH}
     </svg>
   );
 }
