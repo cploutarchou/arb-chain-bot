@@ -19,10 +19,12 @@ UNVERIFIED). Planned collector: internal/screener/venue/lbank.go.
   top-of-book source, **per symbol**. Arrays sorted best-first.
   **VERIFIED** (live)
 - Consequence (design): LBank needs a bounded per-symbol depth sweep
-  ranked by the bulk ticker's `turnover` (the sweep stays fresh and
-  inside the rate gate — see §5); symbols outside the sweep window are
-  reported by the collector with `LiquidityUnknown`/omitted, never
-  fabricated from `latest`.
+  under the rate gate (see §5); the collector sweeps
+  BooksPerPoll pairs round-robin and carries every other pair's
+  last-known quote with its own timestamp (the Coinbase pattern) —
+  untouched pairs age out through the normal data-age gates, never
+  fabricated from `latest`. A turnover-ranked sweep would starve dust
+  pairs forever; round-robin covers everything on a slower cycle.
 
 ## 2. Spot instruments / constraints
 - `GET /v2/currencyPairs.do` → `["btc_usdt", …]` (lowercase

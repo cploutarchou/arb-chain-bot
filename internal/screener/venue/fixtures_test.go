@@ -142,6 +142,19 @@ var fixtureRoutes = map[screener.Venue][][2]string{
 		{"/md/spot/ticker/24hr/all", "spot_tickers.json"},
 		{"/md/v3/ticker/24hr/all", "perp_tickers.json"},
 	},
+	screener.VenueUpbit: {
+		{"/v1/market/all", "market_all.json"},
+		// One recorded response for the whole kept set, served for every
+		// batch: each batch finds its own markets' rows in it.
+		{"/v1/orderbook", "orderbook.json"},
+	},
+	screener.VenueLBank: {
+		{"/v2/ticker/24hr.do?symbol=all", "ticker_all.json"},
+		{"/v2/accuracy.do", "accuracy.json"},
+		// One recorded book per pair: "{symbol}" is substituted from the
+		// request's symbol query value.
+		{"/v2/depth.do?symbol=", "depth_{symbol}.json"},
+	},
 }
 
 // fixtureServer serves testdata/<venue>/ for one venue and counts

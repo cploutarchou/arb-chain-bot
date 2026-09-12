@@ -97,6 +97,11 @@ edited; only array elements were dropped.
 | phemex | spot_tickers.json | GET https://api.phemex.com/md/spot/ticker/24hr/all |
 | phemex | perp_tickers.json | GET https://api.phemex.com/md/v3/ticker/24hr/all |
 | phemex | funding_history.json | GET https://api.phemex.com/api-data/public/data/funding-rate-history?symbol=.BTCUSDTFR8H&limit=3 |
+| upbit | market_all.json | GET https://api.upbit.com/v1/market/all |
+| upbit | orderbook.json | GET https://api.upbit.com/v1/orderbook?markets=<kept set, in batches of 40> |
+| lbank | ticker_all.json | GET https://api.lbkex.com/v2/ticker/24hr.do?symbol=all |
+| lbank | accuracy.json | GET https://api.lbkex.com/v2/accuracy.do |
+| lbank | depth_<pair>.json | GET https://api.lbkex.com/v2/depth.do?symbol=<pair>&size=1 (one per kept pair) |
 
 Tier-4 (T-075 remainder) recorded 2026-09-13 with curl/urllib under the
 same rule: real responses, no field edited, only array elements or object

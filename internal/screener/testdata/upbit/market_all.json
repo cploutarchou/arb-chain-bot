@@ -1,0 +1,187 @@
+[
+ {
+  "market": "BTC-BERA",
+  "korean_name": "\ubca0\ub77c\uccb4\uc778",
+  "english_name": "Berachain"
+ },
+ {
+  "market": "BTC-FIL",
+  "korean_name": "\ud30c\uc77c\ucf54\uc778",
+  "english_name": "Filecoin"
+ },
+ {
+  "market": "BTC-SIGN",
+  "korean_name": "\uc0ac\uc778",
+  "english_name": "Sign"
+ },
+ {
+  "market": "KRW-GEOD",
+  "korean_name": "\uc9c0\uc624\ub4dc\ub137",
+  "english_name": "GEODNET"
+ },
+ {
+  "market": "BTC-VIRTUAL",
+  "korean_name": "\ubc84\ucd94\uc5bc\ud504\ub85c\ud1a0\ucf5c",
+  "english_name": "Virtuals Protocol"
+ },
+ {
+  "market": "BTC-BAT",
+  "korean_name": "\ubca0\uc774\uc9c1\uc5b4\ud150\uc158\ud1a0\ud070",
+  "english_name": "Basic Attention Token"
+ },
+ {
+  "market": "KRW-WAXP",
+  "korean_name": "\uc641\uc2a4",
+  "english_name": "WAX"
+ },
+ {
+  "market": "USDT-PEPE",
+  "korean_name": "\ud398\ud398",
+  "english_name": "Pepe"
+ },
+ {
+  "market": "BTC-BAR",
+  "korean_name": "FC\ubc14\ub974\uc140\ub85c\ub098",
+  "english_name": "FC Barcelona Fan Token"
+ },
+ {
+  "market": "USDT-WCT",
+  "korean_name": "\uc6d4\ub81b\ucee4\ub125\ud2b8",
+  "english_name": "WalletConnect"
+ },
+ {
+  "market": "KRW-CARV",
+  "korean_name": "\uce74\ube0c",
+  "english_name": "CARV"
+ },
+ {
+  "market": "KRW-LSK",
+  "korean_name": "\ub9ac\uc2a4\ud06c",
+  "english_name": "Lisk"
+ },
+ {
+  "market": "USDT-DOGE",
+  "korean_name": "\ub3c4\uc9c0\ucf54\uc778",
+  "english_name": "Dogecoin"
+ },
+ {
+  "market": "KRW-0G",
+  "korean_name": "\uc81c\ub85c\uc9c0",
+  "english_name": "0G"
+ },
+ {
+  "market": "USDT-AXL",
+  "korean_name": "\uc5d1\uc140\ub77c",
+  "english_name": "Axelar"
+ },
+ {
+  "market": "USDT-KMNO",
+  "korean_name": "\uce74\ubbf8\ub178\ud30c\uc774\ub0b8\uc2a4",
+  "english_name": "Kamino Finance"
+ },
+ {
+  "market": "USDT-YGG",
+  "korean_name": "\uc77c\ub4dc\uae38\ub4dc\uac8c\uc784\uc988",
+  "english_name": "Yield Guild Games"
+ },
+ {
+  "market": "BTC-SCR",
+  "korean_name": "\uc2a4\ud06c\ub864",
+  "english_name": "Scroll"
+ },
+ {
+  "market": "USDT-JASMY",
+  "korean_name": "\uc7ac\uc2a4\ubbf8\ucf54\uc778",
+  "english_name": "JasmyCoin"
+ },
+ {
+  "market": "BTC-WLD",
+  "korean_name": "\uc6d4\ub4dc\ucf54\uc778",
+  "english_name": "Worldcoin"
+ },
+ {
+  "market": "KRW-WIF",
+  "korean_name": "\ub3c4\uadf8\uc704\ud504\ud587",
+  "english_name": "dogwifhat"
+ },
+ {
+  "market": "KRW-TRAC",
+  "korean_name": "\uc624\ub9ac\uc9c4\ud2b8\ub808\uc77c",
+  "english_name": "OriginTrail"
+ },
+ {
+  "market": "KRW-BORA",
+  "korean_name": "\ubcf4\ub77c",
+  "english_name": "BORA"
+ },
+ {
+  "market": "KRW-PUNDIX",
+  "korean_name": "\ud380\ub514\uc5d1\uc2a4",
+  "english_name": "Pundi X"
+ },
+ {
+  "market": "USDT-GRAM",
+  "korean_name": "\uadf8\ub7a8",
+  "english_name": "Gram"
+ },
+ {
+  "market": "KRW-PROS",
+  "korean_name": "\ud30c\ub85c\uc2a4",
+  "english_name": "Pharos"
+ },
+ {
+  "market": "USDT-WAL",
+  "korean_name": "\uc6d4\ub7ec\uc2a4",
+  "english_name": "Walrus"
+ },
+ {
+  "market": "KRW-USD1",
+  "korean_name": "\uc6d4\ub4dc\ub9ac\ubc84\ud2f0\ud30c\uc774\ub0b8\uc15c\uc720\uc5d0\uc2a4\ub514",
+  "english_name": "World Liberty Financial USD"
+ },
+ {
+  "market": "KRW-PROM",
+  "korean_name": "\ud504\ub86c",
+  "english_name": "Prom"
+ },
+ {
+  "market": "USDT-WLFI",
+  "korean_name": "\uc6d4\ub4dc\ub9ac\ubc84\ud2f0\ud30c\uc774\ub0b8\uc15c",
+  "english_name": "World Liberty Financial"
+ },
+ {
+  "market": "USDT-ZK",
+  "korean_name": "\uc9c0\ucf00\uc774\uc2f1\ud06c",
+  "english_name": "ZKsync"
+ },
+ {
+  "market": "USDT-OSMO",
+  "korean_name": "\uc624\uc2a4\ubaa8\uc2dc\uc2a4",
+  "english_name": "Osmosis"
+ },
+ {
+  "market": "KRW-USDT",
+  "korean_name": "\ud14c\ub354",
+  "english_name": "Tether"
+ },
+ {
+  "market": "KRW-ETH",
+  "korean_name": "\uc774\ub354\ub9ac\uc6c0",
+  "english_name": "Ethereum"
+ },
+ {
+  "market": "USDT-BTC",
+  "korean_name": "\ube44\ud2b8\ucf54\uc778",
+  "english_name": "Bitcoin"
+ },
+ {
+  "market": "BTC-ETH",
+  "korean_name": "\uc774\ub354\ub9ac\uc6c0",
+  "english_name": "Ethereum"
+ },
+ {
+  "market": "KRW-BTC",
+  "korean_name": "\ube44\ud2b8\ucf54\uc778",
+  "english_name": "Bitcoin"
+ }
+]

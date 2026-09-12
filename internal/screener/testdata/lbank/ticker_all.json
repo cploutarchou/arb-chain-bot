@@ -1,0 +1,344 @@
+{
+ "msg": "Success",
+ "result": "true",
+ "data": [
+  {
+   "symbol": "ava_usdt",
+   "ticker": {
+    "high": "0.1731",
+    "vol": "40585078.87",
+    "low": "0.1513",
+    "change": "9.27",
+    "turnover": "6450110.9532",
+    "latest": "0.1662"
+   },
+   "timestamp": 1789250420707
+  },
+  {
+   "symbol": "bigtime_usdt",
+   "ticker": {
+    "high": "0.00742",
+    "vol": "986397531.28",
+    "low": "0.00682",
+    "change": "6.87",
+    "turnover": "7054516.5089",
+    "latest": "0.00731"
+   },
+   "timestamp": 1789250421089
+  },
+  {
+   "symbol": "blend_usdt",
+   "ticker": {
+    "high": "0.0675",
+    "vol": "94384675.4",
+    "low": "0.06528",
+    "change": "1.96",
+    "turnover": "6289058.745",
+    "latest": "0.06714"
+   },
+   "timestamp": 1789250420819
+  },
+  {
+   "symbol": "bnb_usdt",
+   "ticker": {
+    "high": "739.88",
+    "vol": "23337.662",
+    "low": "721.89",
+    "change": "0.61",
+    "turnover": "17092629.92",
+    "latest": "726.48"
+   },
+   "timestamp": 1789250420742
+  },
+  {
+   "symbol": "btc_usdc",
+   "ticker": {
+    "high": "77496.31",
+    "vol": "513.7515",
+    "low": "76963.5",
+    "change": "0.32",
+    "turnover": "39688075.82",
+    "latest": "77249.72"
+   },
+   "timestamp": 1789250420841
+  },
+  {
+   "symbol": "btc_usdt",
+   "ticker": {
+    "high": "77504.64",
+    "vol": "2234.7221",
+    "low": "76977.1",
+    "change": "0.32",
+    "turnover": "172637937.12",
+    "latest": "77261.88"
+   },
+   "timestamp": 1789250420715
+  },
+  {
+   "symbol": "c98_usdt",
+   "ticker": {
+    "high": "0.01446",
+    "vol": "453202951",
+    "low": "0.0136",
+    "change": "3.67",
+    "turnover": "6384497.2803",
+    "latest": "0.01411"
+   },
+   "timestamp": 1789250420961
+  },
+  {
+   "symbol": "data_usdt",
+   "ticker": {
+    "high": "0.1959",
+    "vol": "34180353.61",
+    "low": "0.1899",
+    "change": "0.16",
+    "turnover": "6544406.7431",
+    "latest": "0.1921"
+   },
+   "timestamp": 1789250420246
+  },
+  {
+   "symbol": "eth_usdc",
+   "ticker": {
+    "high": "2545.73",
+    "vol": "19299.8768",
+    "low": "2506.01",
+    "change": "0.6",
+    "turnover": "48697499.73",
+    "latest": "2523.99"
+   },
+   "timestamp": 1789250420843
+  },
+  {
+   "symbol": "eth_usdt",
+   "ticker": {
+    "high": "2545.67",
+    "vol": "36694.4736",
+    "low": "2506.19",
+    "change": "0.6",
+    "turnover": "92668087.54",
+    "latest": "2524.03"
+   },
+   "timestamp": 1789250420988
+  },
+  {
+   "symbol": "kava_usdt",
+   "ticker": {
+    "high": "0.07364",
+    "vol": "103127319.2",
+    "low": "0.06578",
+    "change": "8.81",
+    "turnover": "7051261.1631",
+    "latest": "0.07167"
+   },
+   "timestamp": 1789250421132
+  },
+  {
+   "symbol": "layer_usdt",
+   "ticker": {
+    "high": "0.07038",
+    "vol": "99303759.2",
+    "low": "0.06862",
+    "change": "1.31",
+    "turnover": "6927075.9459",
+    "latest": "0.06959"
+   },
+   "timestamp": 1789250420569
+  },
+  {
+   "symbol": "near_usdt",
+   "ticker": {
+    "high": "2.45",
+    "vol": "3135642.2",
+    "low": "2.329",
+    "change": "-3.65",
+    "turnover": "7443568.858",
+    "latest": "2.348"
+   },
+   "timestamp": 1789250420930
+  },
+  {
+   "symbol": "niulai_usdt",
+   "ticker": {
+    "high": "0.14977",
+    "vol": "52070558",
+    "low": "0.115498",
+    "change": "13.9",
+    "turnover": "6802163.5747",
+    "latest": "0.13327"
+   },
+   "timestamp": 1789250420212
+  },
+  {
+   "symbol": "pbu_usdt",
+   "ticker": {
+    "high": "0.00013476",
+    "vol": "53924289091.6636",
+    "low": "0.00012989",
+    "change": "-1.81",
+    "turnover": "7090037.5152",
+    "latest": "0.00013067"
+   },
+   "timestamp": 1789250420032
+  },
+  {
+   "symbol": "rez_usdt",
+   "ticker": {
+    "high": "0.004295",
+    "vol": "2991803638",
+    "low": "0.003183",
+    "change": "26.12",
+    "turnover": "10625846.6441",
+    "latest": "0.004065"
+   },
+   "timestamp": 1789250420803
+  },
+  {
+   "symbol": "rif_usdt",
+   "ticker": {
+    "high": "0.080121",
+    "vol": "87431496",
+    "low": "0.077653",
+    "change": "1.67",
+    "turnover": "6892644.7441",
+    "latest": "0.078963"
+   },
+   "timestamp": 1789250420915
+  },
+  {
+   "symbol": "rpl_usdt",
+   "ticker": {
+    "high": "1.78",
+    "vol": "4085112.73",
+    "low": "1.681",
+    "change": "5.47",
+    "turnover": "7106647.717",
+    "latest": "1.774"
+   },
+   "timestamp": 1789250420787
+  },
+  {
+   "symbol": "skr_usdt",
+   "ticker": {
+    "high": "0.01926",
+    "vol": "335831248.44",
+    "low": "0.018031",
+    "change": "1.39",
+    "turnover": "6220835.8254",
+    "latest": "0.018293"
+   },
+   "timestamp": 1789250420569
+  },
+  {
+   "symbol": "sol_usdt",
+   "ticker": {
+    "high": "102.58",
+    "vol": "240201.181",
+    "low": "101.23",
+    "change": "-0.41",
+    "turnover": "24477111.54",
+    "latest": "101.48"
+   },
+   "timestamp": 1789250420957
+  },
+  {
+   "symbol": "stg_usdt",
+   "ticker": {
+    "high": "0.1584",
+    "vol": "42521846.1",
+    "low": "0.1545",
+    "change": "0.78",
+    "turnover": "6651668.3139",
+    "latest": "0.1557"
+   },
+   "timestamp": 1789250420754
+  },
+  {
+   "symbol": "the_usdt",
+   "ticker": {
+    "high": "0.0679",
+    "vol": "356455983",
+    "low": "0.0631",
+    "change": "5.99",
+    "turnover": "23507340.9314",
+    "latest": "0.0672"
+   },
+   "timestamp": 1789250421247
+  },
+  {
+   "symbol": "trx_usdt",
+   "ticker": {
+    "high": "0.3442",
+    "vol": "19422943.2",
+    "low": "0.3379",
+    "change": "0.47",
+    "turnover": "6619144.0903",
+    "latest": "0.3398"
+   },
+   "timestamp": 1789250421040
+  },
+  {
+   "symbol": "uni_usdt",
+   "ticker": {
+    "high": "6.564",
+    "vol": "1500028.33",
+    "low": "5.937",
+    "change": "6.47",
+    "turnover": "9421768.32",
+    "latest": "6.35"
+   },
+   "timestamp": 1789250420794
+  },
+  {
+   "symbol": "unifi_usdt",
+   "ticker": {
+    "high": "12.44",
+    "vol": "704193.77",
+    "low": "12.3641",
+    "change": "0.12",
+    "turnover": "8730282.4601",
+    "latest": "12.3851"
+   },
+   "timestamp": 1789250420823
+  },
+  {
+   "symbol": "usdc_usdt",
+   "ticker": {
+    "high": "1.00015",
+    "vol": "22686075.05",
+    "low": "0.99998",
+    "change": "0",
+    "turnover": "22687661.832",
+    "latest": "1.00007"
+   },
+   "timestamp": 1789250421126
+  },
+  {
+   "symbol": "xrp_usdt",
+   "ticker": {
+    "high": "1.3747",
+    "vol": "5981282.37",
+    "low": "1.3458",
+    "change": "0.88",
+    "turnover": "8162813.7609",
+    "latest": "1.3628"
+   },
+   "timestamp": 1789250420947
+  },
+  {
+   "symbol": "zora_usdt",
+   "ticker": {
+    "high": "0.008446",
+    "vol": "803539206.5",
+    "low": "0.008085",
+    "change": "-0.34",
+    "turnover": "6589161.2348",
+    "latest": "0.008098"
+   },
+   "timestamp": 1789250421182
+  }
+ ],
+ "error_code": 0,
+ "ts": 1789250421557
+}

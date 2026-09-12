@@ -202,6 +202,10 @@ func New(id screener.Venue, opts Options) (Collector, error) {
 		return newBithumb(opts), nil
 	case screener.VenuePhemex:
 		return newPhemex(opts), nil
+	case screener.VenueUpbit:
+		return newUpbit(opts), nil
+	case screener.VenueLBank:
+		return newLBank(opts), nil
 	}
 	return nil, fmt.Errorf("venue: unknown venue %q", id)
 }
