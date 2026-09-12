@@ -60,11 +60,14 @@ The programme-level backlog in `docs/PENDING.md` is the queue now.
 Closed from it: T-062 (PR #28, 2026-09-12 — `backtest.Result`
 rejection-reason histogram with the two pre-gate buckets, the §80
 Rejection-reasons table and a NO-CYCLES verdict that names its top
-reasons; the dust-floor exit is counted at last). Remaining
-candidates in a sensible order, none blocking another:
+reasons; the dust-floor exit is counted at last) and T-084's remainder
+(PR #29, 2026-09-12 — hourly idempotent maturation job in cmd/worker,
+the operator's payouts report with the fraud-rule-3 refund rate and
+clawback exposure over the affiliate ledger, audited payout recording
+validated against the matured balance, platform-admin API + Billing
+page section; Paddle refund events still owed with T-083's sandbox
+run). Remaining candidates in a sensible order, none blocking another:
 
-- **T-084** — affiliate payouts report (accrual ledger is done; the
-  payout report and jobs are open).
 - **T-057/059/060/061 console surfaces** — platform settings, operating
   mode, secrets vault, venue capabilities have backend depth the
   console never matched.
