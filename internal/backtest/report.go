@@ -53,6 +53,8 @@ type scenarioAgg struct {
 	slipN       int
 	latSum      time.Duration
 	latN        int
+	// rejections merges every seed's RejectionReasons (T-062).
+	rejections map[string]int64
 }
 
 func (c *Campaign) aggregate(asset string) []scenarioAgg {
@@ -69,6 +71,14 @@ func (c *Campaign) aggregate(asset string) []scenarioAgg {
 		a.netPnL = a.netPnL.Add(dec(r.NetPnL[asset]))
 		a.feesPaid = a.feesPaid.Add(dec(r.FeesPaid[asset]))
 		a.turnover = a.turnover.Add(dec(r.Turnover[asset]))
+		if len(r.RejectionReasons) > 0 {
+			if a.rejections == nil {
+				a.rejections = map[string]int64{}
+			}
+			for reason, n := range r.RejectionReasons {
+				a.rejections[reason] += n
+			}
+		}
 		if dd := dec(r.MaxDrawdown[asset]); dd.GreaterThan(a.worstDD) {
 			a.worstDD = dd
 		}
@@ -117,7 +127,12 @@ func (c *Campaign) Flags(asset string) []string {
 		return []string{"NO BASELINE SCENARIO — run the grid with a baseline before drawing any conclusion."}
 	}
 	if baseline.cycles == 0 {
-		return []string{"NO CYCLES EXECUTED in the baseline — the recording produced no qualified opportunities; no profitability statement can be made from it."}
+		why := ""
+		if top := topReasons(baseline.rejections, 3); len(top) > 0 {
+			why = " — top rejection reasons: " + strings.Join(top, ", ")
+		}
+		return []string{fmt.Sprintf(
+			"NO CYCLES EXECUTED in the baseline — the recording produced no qualified opportunities%s; no profitability statement can be made from it.", why)}
 	}
 	if !baseline.netPnL.IsPositive() {
 		flags = append(flags, fmt.Sprintf(
@@ -205,11 +220,72 @@ func (c *Campaign) Markdown(asset string) string {
 	b.WriteString("fail-rate counts executed cycles that did not settle ALL_FILLED; ")
 	b.WriteString("turnover is start-asset input deployed; capital efficiency = net PnL ÷ turnover.\n\n")
 
+	if rows := rejectionRows(c.aggregate(asset)); len(rows) > 0 {
+		b.WriteString("## Rejection reasons\n\n")
+		b.WriteString("Why evaluations did not qualify, summed across seeds: risk-gate reason codes from rejected events, ")
+		b.WriteString("plus `" + ReasonSkippedBook + "` and `" + ReasonNoViableSize + "` for the two pre-gate exits that emit no event.\n\n")
+		b.WriteString("| scenario | reason | count |\n|---|---|---|\n")
+		for _, row := range rows {
+			fmt.Fprintf(&b, "| %s | %s | %d |\n", row.scenario, row.reason, row.count)
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## Verdict\n\n")
 	for _, f := range c.Flags(asset) {
 		fmt.Fprintf(&b, "- %s\n", f)
 	}
 	return b.String()
+}
+
+// rejectionRow is one rendered histogram cell (T-062).
+type rejectionRow struct {
+	scenario string
+	reason   string
+	count    int64
+}
+
+// rejectionRows flattens the per-scenario rejection histograms into
+// report rows: scenario order preserved, reasons count desc then name
+// so the dominant cause of "nothing qualified" reads first.
+func rejectionRows(aggs []scenarioAgg) []rejectionRow {
+	var out []rejectionRow
+	for _, a := range aggs {
+		for _, reason := range sortedReasons(a.rejections) {
+			out = append(out, rejectionRow{scenario: a.name, reason: reason, count: a.rejections[reason]})
+		}
+	}
+	return out
+}
+
+// sortedReasons orders histogram keys count desc then name asc
+// (deterministic for a given map).
+func sortedReasons(m map[string]int64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if m[keys[i]] != m[keys[j]] {
+			return m[keys[i]] > m[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	return keys
+}
+
+// topReasons formats the n most frequent rejection buckets as
+// "REASON count" pairs.
+func topReasons(m map[string]int64, n int) []string {
+	keys := sortedReasons(m)
+	if len(keys) > n {
+		keys = keys[:n]
+	}
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = fmt.Sprintf("%s %d", k, m[k])
+	}
+	return out
 }
 
 func dec(s string) decimal.Decimal {

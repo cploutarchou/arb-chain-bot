@@ -145,6 +145,9 @@ type Server struct {
 	Entitlements *entitlements.Resolver
 	// Billing, when set, backs the Paddle routes (T-083). nil 503s them.
 	Billing *paddle.Service
+	// Affiliate, when set, backs the affiliate payouts report and the
+	// payout-recording route (T-084). nil 503s them.
+	Affiliate AffiliatePayoutStore
 	// RiskAckVersion is the risk-disclosure version every organisation
 	// must acknowledge before using the product (compliance review #3);
 	// "" disables the gate.
@@ -373,6 +376,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.orgRoutes(mux)
 	s.apiKeyRoutes(mux)
 	s.billingRoutes(mux)
+	s.affiliateRoutes(mux)
 	if s.MetricsHandler != nil {
 		// Same-mux dev convenience stays operator-only (audit S5:
 		// metric names and label values map the platform's internals,

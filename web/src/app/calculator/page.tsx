@@ -9,6 +9,7 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api, ApiError, type ScreenerCalculatorResult } from "@/lib/api/client";
+import { fmtDecimal } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { VENUE_OPTIONS } from "@/components/screener/ScreenerShared";
 import { Button, Loading, PageTitle, Section, Stat } from "@/components/ui";
@@ -82,7 +83,7 @@ function CalculatorPageInner() {
   };
 
   return (
-    <ConsoleShell active="Calculator">
+    <ConsoleShell>
       <PageTitle>Spreads calculator</PageTitle>
 
       <Section title="Inputs">
@@ -201,28 +202,69 @@ function CalculatorPageInner() {
 
       {state.kind === "ready" && (
         <Section title="Result">
+          {/* Feasibility before the estimate (client-area audit §4):
+              the audit saw green net figures beside a buried
+              "insufficient" liquidity card. The backend's own verdict
+              leads; the numbers are a what-if until it says yes. */}
+          {state.result.liquidity_ok ? (
+            <p className="mb-3 text-[13px] text-[var(--ok)]">
+              Liquidity sufficient for the requested size — the estimate
+              below is executable at current depth.
+            </p>
+          ) : (
+            <div className="mb-3 rounded border border-[var(--border-strong)] px-3 py-2 text-[13px] text-[var(--warn)]">
+              <strong>Liquidity insufficient</strong> for the requested
+              size. The figures below are a what-if estimate, not an
+              executable or profitable opportunity.
+            </div>
+          )}
           <div className="grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Buy ask" value={state.result.buy_ask} />
-            <Stat label="Sell bid" value={state.result.sell_bid} />
-            <Stat label="Size (base)" value={state.result.size_base} />
-            <Stat label="Gross" value={state.result.gross} />
-            <Stat label="Buy fees" value={state.result.fees_buy} />
-            <Stat label="Sell fees" value={state.result.fees_sell} />
-            <Stat label="Transfer fee" value={state.result.transfer_fee} />
+            <Stat
+              label="Buy ask"
+              value={fmtDecimal(state.result.buy_ask, { maxFrac: 8 })}
+              exact={state.result.buy_ask}
+            />
+            <Stat
+              label="Sell bid"
+              value={fmtDecimal(state.result.sell_bid, { maxFrac: 8 })}
+              exact={state.result.sell_bid}
+            />
+            <Stat
+              label="Size (base)"
+              value={fmtDecimal(state.result.size_base, { maxFrac: 8 })}
+              exact={state.result.size_base}
+            />
+            <Stat
+              label="Gross"
+              value={fmtDecimal(state.result.gross, { maxFrac: 8 })}
+              exact={state.result.gross}
+            />
+            <Stat
+              label="Buy fees"
+              value={fmtDecimal(state.result.fees_buy, { maxFrac: 8 })}
+              exact={state.result.fees_buy}
+            />
+            <Stat
+              label="Sell fees"
+              value={fmtDecimal(state.result.fees_sell, { maxFrac: 8 })}
+              exact={state.result.fees_sell}
+            />
+            <Stat
+              label="Transfer fee"
+              value={fmtDecimal(state.result.transfer_fee, { maxFrac: 8 })}
+              exact={state.result.transfer_fee}
+            />
             <Stat
               label="Net"
-              value={state.result.net}
+              value={fmtDecimal(state.result.net, { maxFrac: 8 })}
+              exact={state.result.net}
               tone={state.result.net.trim().startsWith("-") ? "bad" : "ok"}
             />
             <Stat
               label="Net bps"
-              value={state.result.net_bps}
+              value={fmtDecimal(state.result.net_bps, { maxFrac: 2 })}
+              exact={state.result.net_bps}
               tone={state.result.net_bps.trim().startsWith("-") ? "bad" : "ok"}
-            />
-            <Stat
-              label="Liquidity"
-              value={state.result.liquidity_ok ? "sufficient" : "insufficient"}
-              tone={state.result.liquidity_ok ? "ok" : "warn"}
             />
           </div>
         </Section>

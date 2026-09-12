@@ -13,6 +13,7 @@ import (
 
 	"github.com/cploutarchou/arb-chain-bot/internal/exchange"
 	"github.com/cploutarchou/arb-chain-bot/internal/marketdata"
+	"github.com/cploutarchou/arb-chain-bot/internal/strategy"
 )
 
 func d(s string) decimal.Decimal { return decimal.RequireFromString(s) }
@@ -280,4 +281,64 @@ func TestDefaultGridShape(t *testing.T) {
 		}
 	}
 	_ = fmt.Sprint(grid)
+}
+
+// T-062: when nothing qualifies the Result's rejection histogram says
+// why. With an unreachable min-edge floor no evaluation passes the gate,
+// and every evaluation lands in exactly one bucket — the histogram sums
+// to Evaluations, so nothing vanishes unexplained. (The fixture's early
+// frames genuinely exercise the pre-gate buckets: books not yet synced,
+// then a dust-sized direction.)
+func TestRejectionHistogramWhenNothingQualifies(t *testing.T) {
+	opts := baseOptions(t)
+	p := strategy.DefaultParams()
+	p.Risk.MinNetEdgeBps = decimal.NewFromInt(10_000)
+	opts.Params = p
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Qualified != 0 || len(res.Cycles) != 0 {
+		t.Fatalf("qualified=%d cycles=%d, want 0/0", res.Qualified, len(res.Cycles))
+	}
+	if res.RejectionReasons["RISK_MIN_EDGE"] == 0 {
+		t.Fatalf("want RISK_MIN_EDGE rejections under a 10_000 bps edge floor, got %v", res.RejectionReasons)
+	}
+	if got := res.RejectionReasons[ReasonSkippedBook]; got != res.SkippedBook {
+		t.Fatalf("%s = %d, want %d", ReasonSkippedBook, got, res.SkippedBook)
+	}
+	var sum int64
+	for reason, n := range res.RejectionReasons {
+		if n <= 0 {
+			t.Fatalf("bucket %s = %d: zero-valued buckets must not be emitted", reason, n)
+		}
+		sum += n
+	}
+	if sum != res.Evaluations {
+		t.Fatalf("histogram sums to %d, evaluations = %d — every evaluation must be accounted for (map %v)",
+			sum, res.Evaluations, res.RejectionReasons)
+	}
+}
+
+// T-062: the baseline histogram is consistent the same way — buckets
+// sum plus qualified equals evaluations, no zero-valued bucket.
+func TestRejectionHistogramAccountsForEveryEvaluation(t *testing.T) {
+	res, err := Run(baseOptions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Qualified == 0 {
+		t.Fatal("fixture must qualify in the baseline")
+	}
+	var sum int64
+	for reason, n := range res.RejectionReasons {
+		if n <= 0 {
+			t.Fatalf("bucket %s = %d: zero-valued buckets must not be emitted", reason, n)
+		}
+		sum += n
+	}
+	if got := sum + res.Qualified; got != res.Evaluations {
+		t.Fatalf("rejections %d + qualified %d = %d, evaluations = %d (map %v)",
+			sum, res.Qualified, got, res.Evaluations, res.RejectionReasons)
+	}
 }

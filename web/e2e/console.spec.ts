@@ -559,7 +559,9 @@ test("settings Operating mode renders the mode table from capabilities with SHAD
   );
   // Immediate for the section header's field_timing lookup would be
   // wrong here — platform.mode is restart-scoped.
-  await expect(page.getByText("On restart").first()).toBeVisible();
+  await expect(
+    page.locator("#operating-mode").getByText("On restart"),
+  ).toBeVisible();
 });
 
 test("settings AI advisor shows the fake provider running (ARB_AI_PROVIDER=fake in the harness)", async ({
@@ -860,26 +862,28 @@ async function ensureViewerAccount(page: Page) {
       timeout: 10_000,
     });
   }
+  await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
   return VIEWER_TEST;
 }
 
-test("nav gating is visible for a VIEWER (role-restricted, not just hidden)", async ({
+test("Administration navigation is hidden for a VIEWER (operator-only section, never flashed)", async ({
   page,
 }) => {
   const viewer = await ensureViewerAccount(page);
   await login(page, viewer.email, viewer.password);
   await page.goto("/overview");
   const nav = page.getByRole("navigation");
-  // Audit Log: GatedControl state="role" — grey, cursor-not-allowed,
-  // non-navigable, with the actual minimum role named in the tooltip
-  // (console-v2.md §2.4 — never a generic "restricted").
+  // The operator administration section (Risk Center, Exchanges,
+  // Markets, System Health, Audit Log) is not part of a VIEWER's
+  // navigation at all — the client-area refinement keeps platform
+  // administration to entitled operator staff, and the routes'
+  // own pages still answer 403 with a clear error if reached by URL.
+  for (const label of ["Administration", "Risk Center", "Audit Log"]) {
+    await expect(nav.getByText(label)).toHaveCount(0);
+  }
   await expect(nav.getByRole("link", { name: "Audit Log" })).toHaveCount(0);
-  const gated = nav.locator('[title="Requires OPERATOR or ADMIN"]');
-  await expect(gated).toBeVisible();
-  await expect(gated).toHaveAttribute("aria-disabled", "true");
-  await expect(gated).toContainText("Audit Log");
 });
 
 test("shell paper control shows a VIEWER the live state but never the pause/resume button (F2 RBAC)", async ({
@@ -924,6 +928,7 @@ async function ensureOperatorAccount(page: Page) {
       timeout: 10_000,
     });
   }
+  await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL("**/login");
 }
@@ -1119,9 +1124,13 @@ test("Screener include_suspect/include_unknown_liquidity toggles are off by defa
   expect(seenQueries[0]?.get("include_suspect")).toBeNull();
   expect(seenQueries[0]?.get("include_unknown_liquidity")).toBeNull();
 
-  await expect(page.getByText("Excluded: suspect")).toBeVisible();
-  await expect(page.getByText("3", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Excluded: suspect 3/)).toBeVisible();
 
+  // The unsafe-lane opt-ins live behind the Advanced disclosure
+  // (client-area audit §2): open it, then check both toggles. Scoped to
+  // the summary element — the excluded-counts line also mentions
+  // "Advanced filters" in prose.
+  await page.locator("summary", { hasText: "Advanced filters" }).click();
   await page.getByLabel("Include suspect lanes (asset-identity guard)").check();
   await page.getByLabel("Include unknown-liquidity lanes").check();
   await expect
@@ -1141,22 +1150,42 @@ test.describe("Scanner Suite", () => {
     await page.close();
   });
 
-  test("nav group renders and every Scanner Suite page loads for an OPERATOR login", async ({
+  test("six primary destinations render; every Scanner Suite page is reachable through Discover for an OPERATOR login", async ({
     page,
   }) => {
     test.setTimeout(120_000);
     await login(page, OPERATOR.email, OPERATOR.password);
     await page.goto("/overview");
     const nav = page.getByRole("navigation");
-    await expect(nav.getByText("Scanner Suite")).toBeVisible();
+    // The task-based primary navigation (client-area audit §1): six
+    // destinations fit without scrolling, replacing the 29-link group
+    // wall. Administration is an explicitly labelled operator section.
     for (const label of [
-      "Screener",
+      "Overview",
+      "Discover",
+      "Paper Trading",
+      "Research & Results",
+      "Alerts & Rules",
+      "Settings",
+    ]) {
+      await expect(
+        nav.getByRole("link", { name: label, exact: true }),
+      ).toBeVisible();
+    }
+    await expect(nav.getByText("Administration")).toBeVisible();
+
+    // Discover reveals the Scanner Suite surfaces contextually (the
+    // audit's discoverability requirement: not all links at once, but
+    // one navigation activation away).
+    await page.goto("/screener");
+    for (const label of [
+      "Screener (cross-exchange)",
+      "Scanner (triangular)",
       "Perpetuals",
       "Funding",
       "Calculator",
-      "Alert Rules",
-      "Evidence — Screener Reports",
-      "Auto-Paper",
+      "Triangles",
+      "Opportunities",
     ]) {
       await expect(
         nav.getByRole("link", { name: label, exact: true }),
@@ -1548,18 +1577,23 @@ test("overview answers PnL, breakers, feed state and clock in the status strip (
   await page.goto("/overview");
 
   // Realized PnL with the asset, toned by the backend's own sign.
-  const pnl = page.getByText("Realized PnL (session)").locator("..");
+  const pnl = page.getByText("Realized PnL", { exact: true }).locator("..");
   await expect(pnl.getByText("-12.5 USDT")).toBeVisible({ timeout: 10_000 });
-  // Breakers open, bad when > 0, with the reason one hover away.
-  const breakers = page.getByText("Breakers open").locator("..");
-  await expect(breakers.getByText("1")).toBeVisible();
+  // An open breaker is an attention item first (client-area audit §4B):
+  // the fact with the breaker named, one link from the Risk Center.
+  await expect(
+    page.getByText(/1 risk breaker open — qualification is gated \(daily_loss\)\./),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Risk Center →" }),
+  ).toBeVisible();
   // Feed cell: one STALE book of three → DEGRADED.
   const feed = page.getByText("Feed", { exact: true }).locator("..");
   await expect(feed.getByText("DEGRADED")).toBeVisible();
   // Venue clock cell.
   const clock = page.getByText("Venue clock").locator("..");
   await expect(clock.getByText("OK")).toBeVisible();
-  // Fees and drawdown cells render the backend's own strings.
+  // Fees and drawdown cells render the backend's own values.
   await expect(page.getByText("1.34 USDT").first()).toBeVisible();
   await expect(page.getByText("0.0012 USDT").first()).toBeVisible();
 });

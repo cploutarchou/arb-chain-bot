@@ -426,7 +426,8 @@ data-flow,security,risk}.md`.
   (3) the campaign output records rejection counts but not reasons —
   a per-reason histogram in `backtest.Result` is needed before a
   no-qualification verdict can be explained (why: min edge, book age,
-  depth, quality) — tracked as T-062.
+  depth, quality) — landed as T-062 (2026-09-12, `rejection_reasons`
+  + the §80 histogram).
 - next: sessions of ≥ 6 h across regimes on the fixed build (console
   Start, no compose rebuilds during a session), then campaigns per
   session; compare regimes before any claim.
@@ -506,11 +507,17 @@ data-flow,security,risk}.md`.
   wanted).
 
 ### T-062 Campaign rejection-reason histogram
-- status: TODO. `backtest.Result` and the §80 report should carry a
-  per-reason rejection histogram (the scanner already classifies
-  rejections) so a "no qualified opportunities" verdict says why —
-  minimum net edge, book age, depth exhaustion, data quality — and
-  the stress grid can show which reason dominates under each axis.
+- status: DONE (2026-09-12). `backtest.Result` now carries
+  `rejection_reasons`: risk-gate reason codes counted from rejected
+  events in the run loop, plus the two pre-gate exits that emit no
+  event, synthesised from new scanner counters — `SKIPPED_UNHEALTHY_BOOK`
+  and `NO_VIABLE_SIZE` (the dust/min-notional-floor exit was previously
+  invisible; it now also surfaces in the status API and the console's
+  scanner page). The §80 report renders a per-scenario "Rejection
+  reasons" table merged across seeds, and the NO CYCLES EXECUTED verdict
+  names the top three reasons instead of guessing. Invariant, tested:
+  histogram buckets + qualified = evaluations, so every evaluation is
+  accounted for and a no-qualification verdict says why.
 
 ### T-063 Binance REST weight gate
 - status: DONE (2026-08-27). Widening the Binance universe from 6 to 46
@@ -1342,7 +1349,7 @@ PAPER only; the vault's exchange credential group stays unread.
 - T-081 Tenancy: organisations, memberships, roles; console per tenant. DONE (2026-08-27, migration 000013; platform-admin flag gates the exchange-credential vault and system routes with tests; Organisation page). Compliance blocks (docs/compliance/review-2026-08-27.md #1, #9, #10): exchange-credential vault operator-only with a 403 test for tenant roles; Art. 30 data map + erasure by pseudonymised audit before prod; Telegram chat IDs encrypted, never logged.
 - T-082 Packages + entitlements enforced server-side. DONE (2026-08-27; schema-validated resolve with overrides that can never enable live; enforcement on rules, venues, refresh, templates, auto-paper, alerts/day; console gating + upgrade toasts).
 - T-083 Paddle billing lifecycle + webhooks + customer portal. IMPLEMENTED (2026-08-27; signature-verified idempotent webhooks, checkout/portal/cancel, Billing page; sandbox run against real Paddle still owed — needs the operator's Paddle account and catalogue per docs/design/billing.md).
-- T-084 Affiliate programme ledger + payouts report. PARTIAL (2026-08-27; decimal accrual ledger with maturation/reversal; payouts report and jobs open).
+- T-084 Affiliate programme ledger + payouts report. IMPLEMENTED (ledger 2026-08-27; payouts report, maturation job and payout recording 2026-09-12: `affiliate.MaturationJob` in cmd/worker writes `matured` rows hourly and idempotently (SQL NOT EXISTS is the single authority); `Terms.Payouts` folds the ledger per account into the operator's report — matured unpaid, payable flag at the $100 threshold, fraud-rule-3 refund rate over 90 days tripping manual review above 20 %, and paid-in-the-clawback-window exposure; `GET /api/v1/billing/affiliate/payouts` (platform admin) plus the Billing page's Affiliate payouts section render it; `POST` records a payout as an audited `paid` row validated against the matured balance, closed accounts refused. Still owed with T-083's sandbox work: Paddle refund/adjustment events do not reach the lifecycle, so reversals never fire from live data — the ledger and report handle them the moment they do; and the affiliate-facing dashboard (clicks/sign-ups/conversions) has no data source yet).
 - T-085 Marketing site (site/) with evidence-based copy and legal pages; compliance review. IN_PROGRESS (copy and legal drafts in docs/site; site scaffold with copy lint being built). Blocks (#3, #4, #5, #6): legal-page drafts, sign-up risk acknowledgement, hypothetical-performance disclaimer on every paper surface, copy lint (no %/currency figure without a docs/campaigns citation; banned words).
 - T-086 Client onboarding, alert channels, client API keys. DONE (2026-08-27): API keys (SHA-256 digest, prefix index, plaintext shown once, Bearer auth with per-key rate limit and 429 + Retry-After, org+key scope check, platform-admin never granted to a key, audited create/revoke, `api.keys_max`/`api.scopes` gated); e-mail (SMTP via the `smtp_url` secret) and HMAC-signed webhook sinks with SSRF hardening (resolve-then-dial, no redirects, private targets refused) and retry/backoff; per-channel delivery outcomes stored on `screener_events.delivered`; migration 000015. Onboarding wizard shipped with T-081's console pass.
 - T-087 Client console re-skin (ux-designer → ui-designer → frontend). TODO.

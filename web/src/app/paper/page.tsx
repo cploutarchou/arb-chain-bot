@@ -105,7 +105,7 @@ export default function PaperPage() {
   const resetButtonDisabled = !mayReset || !paperPresent || paperRunning !== false;
 
   return (
-    <ConsoleShell active="Paper Trading">
+    <ConsoleShell>
       <PageTitle>Paper Trading</PageTitle>
       <Section title="Engine">
         <Await state={status} what="paper status">
@@ -145,40 +145,12 @@ export default function PaperPage() {
       <Section title="Live cycles (in flight)">
         <ActiveCycles running={paperRunning} activeCount={status.kind === "ready" ? status.data.paper?.active_simulations : undefined} />
       </Section>
-      {mayReset && (
-        <Section title="Danger zone">
-          <div className="max-w-4xl rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-3">
-            <p className="mb-2 text-[13px] text-[var(--text-dim)]">
-              Reset clears the running paper session (active simulations and in-memory counters) and
-              starts a fresh one. Historical cycles already persisted are not deleted. ADMIN only, and
-              only while the engine is paused.
-            </p>
-            <Button onClick={openReset} disabled={resetButtonDisabled} danger>
-              Reset paper session…
-            </Button>
-            {!paperPresent ? (
-              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
-                paper engine not running in this profile
-              </span>
-            ) : paperRunning !== false ? (
-              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
-                pause the engine before resetting
-              </span>
-            ) : null}
-            {resetMsg && (
-              <p className={`mt-2 text-[12px] ${resetMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
-                {resetMsg.text}
-              </p>
-            )}
-          </div>
-        </Section>
-      )}
-      <Section title="Cycles (persisted)">
+      <Section title="Simulation history">
         <Await state={cycles} what="paper cycles">
           {(c) => (
             <Table
               head={["Started", "Outcome", "Realized PnL", "Fees", "Slip bps", "Duration", "Reason", "Cycle", ""]}
-              empty="persisted cycles yet. Persistence needs a database connection — see docs/deployment.md if this deployment doesn't have one configured"
+              empty="simulations recorded yet — completed and skipped cycles appear here as the engine runs"
               rows={(c.cycles ?? []).map((row) => [
                 fmtTime(row.started_at),
                 <OutcomeBadge key="o" code={row.outcome} />,
@@ -232,6 +204,34 @@ export default function PaperPage() {
           )}
         </Await>
       </Section>
+      {mayReset && (
+        <Section title="Danger zone">
+          <div className="max-w-4xl rounded border border-[var(--critical)] bg-[var(--bg-panel)] p-3">
+            <p className="mb-2 text-[13px] text-[var(--text-dim)]">
+              Reset clears the running paper session (active simulations and in-memory counters) and
+              starts a fresh one. Historical cycles already persisted are not deleted. ADMIN only, and
+              only while the engine is paused.
+            </p>
+            <Button onClick={openReset} disabled={resetButtonDisabled} danger>
+              Reset paper session…
+            </Button>
+            {!paperPresent ? (
+              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
+                paper engine not running in this profile
+              </span>
+            ) : paperRunning !== false ? (
+              <span className="ml-2 text-[12px] text-[var(--text-dim)]">
+                pause the engine before resetting
+              </span>
+            ) : null}
+            {resetMsg && (
+              <p className={`mt-2 text-[12px] ${resetMsg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}>
+                {resetMsg.text}
+              </p>
+            )}
+          </div>
+        </Section>
+      )}
       {ordersCycle && (
         <Section title={`Orders — cycle ${ordersCycle}`}>
           <Await state={ordersState} what={`orders for cycle ${ordersCycle}`}>

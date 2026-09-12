@@ -552,6 +552,11 @@ func BuildComponents(cfg config.Bootstrap, log *slog.Logger, p Profile) []Compon
 		apiServer.Tenancy = tenant.store
 		apiServer.Entitlements = tenant.resolver
 		apiServer.Billing = tenant.billing
+		if store != nil {
+			// T-084: the payouts report and payout recording fold the
+			// same insert-only ledger the accrual hook writes.
+			apiServer.Affiliate = store.Affiliate()
+		}
 		apiServer.RiskAckVersion = RiskDisclosureVersion
 		apiServer.APIKeys = tenant.apiKeys
 		apiServer.APIRateLimiter = tenant.apiRateLimiter

@@ -1,15 +1,16 @@
 "use client";
 
-// Real operations dashboard (console-ux-audit.md §2.1, BL-01/BL-25) that
-// passes the five-second test (audit F5): in one screen an operator
-// sees the mode, whether the market is visible (feed state, clock), the
-// engines (scanner, paper with a reason when absent, recorder), the
-// money (session realized PnL, drawdown, fees per start asset), the
-// risk (breakers open, unresolved alerts) and capital in use — then the
-// detail sections. Assembled from endpoints that already exist; each
-// section polls independently so one degraded endpoint never blanks the
-// rest, and per-cell errors render as small "unavailable" stats instead
-// of six stacked page-level failures.
+// Real operations dashboard, priority-first (client-area audit
+// 2026-09-12 §1/§4B): attention items above everything, then a compact
+// platform status strip and the session's primary results — the money
+// (realized PnL, drawdown, fees per start asset), the active work —
+// with diagnostics (session counters, feed internals, balances)
+// clearly labelled below. Zero qualified candidates is explained from
+// the engine's own rejection-reason histogram, never inferred from
+// detected − rejected. Assembled from endpoints that already exist;
+// each section polls independently so one degraded endpoint never
+// blanks the rest, and per-cell errors render as small "unavailable"
+// cells instead of six stacked page-level failures.
 
 import type { ReactNode } from "react";
 import Link from "next/link";
@@ -17,6 +18,7 @@ import { api } from "@/lib/api/client";
 import { usePoll, type PollState } from "@/lib/usePoll";
 import { worstVerdict } from "@/lib/campaignVerdict";
 import { feedState } from "@/lib/feedState";
+import { fmtDecimal } from "@/lib/decimal";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
   Await,
@@ -59,42 +61,111 @@ function FirstRunBanner() {
   );
 }
 
-// statOrError renders one status-strip cell without the shared kit's full
+// AttentionItem is one "this needs you" line: tone, the fact, and where
+// to act. Only real states produce items — loading never does (a
+// half-loaded page must not cry wolf), and errors surface through their
+// own sections rather than as fake attention.
+interface AttentionItem {
+  tone: "bad" | "warn";
+  text: string;
+  href: string;
+  link: string;
+}
+
+function AttentionRow({ item }: { item: AttentionItem }) {
+  return (
+    <li className="flex flex-wrap items-baseline gap-2">
+      <span
+        className={`inline-block h-2 w-2 shrink-0 translate-y-[-1px] rounded-full ${
+          item.tone === "bad"
+            ? "bg-[var(--critical)]"
+            : "bg-[var(--warn)]"
+        }`}
+        aria-hidden
+      />
+      <span
+        className={
+          item.tone === "bad"
+            ? "text-[var(--critical)]"
+            : "text-[var(--warn)]"
+        }
+      >
+        {item.text}
+      </span>
+      <Link
+        href={item.href}
+        className="text-[12px] text-[var(--accent)] underline"
+      >
+        {item.link} →
+      </Link>
+    </li>
+  );
+}
+
+// statCell renders one status-strip cell without the shared kit's full
 // bordered ErrorBox — many of those stacked in a grid (one per upstream
-// endpoint) would read as page-level failures instead of small stats,
+// endpoint) would read as page-level failures instead of small cells,
 // one of which happens to be unavailable right now.
-function statOrError<T>(
+function statCell<T>(
   state: PollState<T>,
   label: string,
-  pick: (data: T) => { value: ReactNode; tone?: Tone; href?: string; title?: string },
+  pick: (data: T) => { value: ReactNode; tone?: Tone; title?: string },
 ): ReactNode {
-  let stat: ReactNode;
   if (state.kind === "loading") {
-    stat = <Stat label={label} value="…" />;
-  } else if (state.kind === "error") {
-    stat = <Stat label={label} value="unavailable" tone="bad" />;
-  } else {
-    const { value, tone, href, title } = pick(state.data);
-    const el = (
-      <Stat label={label} value={<span title={title}>{value}</span>} tone={tone} />
+    return (
+      <div key={label} className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">
+          {label}
+        </div>
+        <div className="text-[13px] text-[var(--text-dim)]">…</div>
+      </div>
     );
-    stat = href ? <Link href={href}>{el}</Link> : el;
   }
-  return <div key={label}>{stat}</div>;
+  if (state.kind === "error") {
+    return (
+      <div key={label} className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">
+          {label}
+        </div>
+        <div className="text-[13px] text-[var(--critical)]">unavailable</div>
+      </div>
+    );
+  }
+  const { value, tone, title } = pick(state.data);
+  const color =
+    tone === "ok"
+      ? "text-[var(--ok)]"
+      : tone === "warn"
+        ? "text-[var(--warn)]"
+        : tone === "bad"
+          ? "text-[var(--critical)]"
+          : "text-[var(--text)]";
+  return (
+    <div key={label} className="min-w-0" title={title}>
+      <div className="text-[11px] uppercase tracking-wider text-[var(--text-dim)]">
+        {label}
+      </div>
+      <div className={`truncate text-[13px] font-medium ${color}`}>{value}</div>
+    </div>
+  );
 }
 
 // perAsset renders "value asset" per start asset joined on one line —
-// the PnL view's own per-asset decimal strings, verbatim, never summed
-// (different assets are different monies).
+// the PnL view's own per-asset decimal strings, never summed (different
+// assets are different monies). Display goes through fmtDecimal with
+// the raw line as the tooltip (the audit's truncated-drawdown finding).
 function perAsset<T extends { asset: string }>(
   rows: T[],
   get: (row: T) => string | undefined,
-): string {
+): { text: string; raw: string } {
   const parts = rows
     .map((r) => ({ asset: r.asset, v: get(r) ?? "" }))
     .filter((r) => r.v !== "");
-  if (parts.length === 0) return "—";
-  return parts.map((p) => `${p.v} ${p.asset}`).join(" · ");
+  if (parts.length === 0) return { text: "—", raw: "no per-asset rows" };
+  return {
+    text: parts.map((p) => `${fmtDecimal(p.v)} ${p.asset}`).join(" · "),
+    raw: parts.map((p) => `${p.v} ${p.asset}`).join(" · "),
+  };
 }
 
 export default function OverviewPage() {
@@ -110,19 +181,104 @@ export default function OverviewPage() {
 
   const mode = status.kind === "ready" ? status.data.mode : undefined;
 
+  // ---- Attention: what needs the operator, computed from the same
+  // polls the strip uses. Loading/absent data never fabricates items.
+  const attention: AttentionItem[] = [];
+  if (risk.kind === "ready") {
+    const open = (risk.data.breakers ?? []).filter((b) => b.State === "OPEN");
+    if (open.length > 0) {
+      attention.push({
+        tone: "bad",
+        text: `${open.length} risk breaker${open.length > 1 ? "s" : ""} open — qualification is gated (${open
+          .map((b) => b.Name)
+          .join(", ")}).`,
+        href: "/risk",
+        link: "Risk Center",
+      });
+    }
+  }
+  if (activeAlerts.kind === "ready" && activeAlerts.data.active > 0) {
+    attention.push({
+      tone: "bad",
+      text: `${activeAlerts.data.active} unresolved alert${activeAlerts.data.active > 1 ? "s" : ""}.`,
+      href: "/alerts",
+      link: "Alerts",
+    });
+  }
+  if (health.kind === "ready" && health.data.clock && !health.data.clock.healthy) {
+    attention.push({
+      tone: "bad",
+      text: "Venue clock unsafe — qualification is gated.",
+      href: "/exchanges",
+      link: "Exchanges",
+    });
+  }
+  if (health.kind === "ready" && health.data.feed?.rate_limited) {
+    attention.push({
+      tone: "warn",
+      text: "Feed is rate-limited — books may go stale.",
+      href: "/exchanges",
+      link: "Exchanges",
+    });
+  }
+  if (scanner.kind === "ready" && scanner.data.paper && !scanner.data.paper.running) {
+    attention.push({
+      tone: "warn",
+      text: "Paper simulation is paused.",
+      href: "/paper",
+      link: "Paper Trading",
+    });
+  }
+  if (recordings.kind === "ready" && !recordings.data.persistence) {
+    attention.push({
+      tone: "warn",
+      text: "Persistence not configured — results live in memory only and are lost on restart.",
+      href: "/system",
+      link: "System Health",
+    });
+  }
+
   return (
-    <ConsoleShell active="Overview">
+    <ConsoleShell>
       <PageTitle>Overview</PageTitle>
       <FirstRunBanner />
 
-      <Section title="Status">
-        <div className="grid max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-          {statOrError(status, "Mode", (s) => ({ value: s.mode }))}
-          {statOrError(health, "Feed", (h) => {
+      {/* Attention first (audit §4B): what needs the operator, above the
+          fold, each line linking to where it is acted on. */}
+      <Section title="Needs attention">
+        {attention.length === 0 ? (
+          <p className="text-[13px] text-[var(--ok)]">
+            Nothing needs attention.{" "}
+            <Link href="/screener" className="text-[var(--accent)] underline">
+              Scan for candidates
+            </Link>{" "}
+            or{" "}
+            <Link href="/paper" className="text-[var(--accent)] underline">
+              open Paper Trading
+            </Link>
+            .
+          </p>
+        ) : (
+          <ul className="space-y-1.5 text-[13px]">
+            {attention.map((item, i) => (
+              <AttentionRow key={i} item={item} />
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      {/* The platform strip (audit §4B): connection, mode and engine
+          states as one readable row — the "is it connected and running"
+          answer — with the money and risk states promoted out of the old
+          12-card grid into the sections that own them. */}
+      <Section title="Platform">
+        <div className="grid max-w-5xl grid-cols-3 gap-x-4 gap-y-3 sm:grid-cols-4 md:grid-cols-7">
+          {statCell(status, "Mode", (s) => ({ value: s.mode }))}
+          {statCell(health, "Feed", (h) => {
             const f = feedState(h.books, h.feed?.rate_limited);
-            return { value: f.label, tone: f.tone, title: f.detail, href: "/exchanges" };
+            return { value: f.label, tone: f.tone, title: f.detail };
           })}
-          {statOrError(health, "Venue clock", (h) =>
+          {statCell(health, "Venue clock", (h) =>
             h.clock
               ? {
                   value: h.clock.healthy ? "OK" : "UNSAFE",
@@ -131,16 +287,15 @@ export default function OverviewPage() {
                 }
               : { value: "N/A", tone: "dim", title: "no clock monitor in this profile" },
           )}
-          {statOrError(scanner, "Scanner", (s) => ({
+          {statCell(scanner, "Scanner", (s) => ({
             value: s.ready ? "READY" : "NOT READY",
             tone: s.ready ? "ok" : "warn",
           }))}
-          {statOrError(scanner, "Paper engine", (s) =>
+          {statCell(scanner, "Paper engine", (s) =>
             s.paper
               ? {
                   value: s.paper.running ? "RUNNING" : "PAUSED",
                   tone: s.paper.running ? "ok" : "warn",
-                  href: "/paper",
                 }
               : {
                   value: "NOT RUNNING",
@@ -148,58 +303,120 @@ export default function OverviewPage() {
                   title: `not running — mode is ${mode ?? "unknown"}`,
                 },
           )}
-          {statOrError(recordings, "Recorder", (r) =>
+          {statCell(recordings, "Recorder", (r) =>
             r.recorder
               ? {
                   value: r.recorder.running ? "RECORDING" : "IDLE",
-                  tone: r.recorder.running ? "ok" : "warn",
+                  tone: r.recorder.running ? "ok" : "dim",
                 }
               : { value: "N/A", tone: "dim", title: "no recorder in this profile" },
           )}
-          {statOrError(pnl, "Realized PnL (session)", (p) => {
-            const rows = p.assets ?? [];
-            const first = rows[0];
-            return {
-              value: perAsset(rows, (r) => r.realized),
-              tone: first ? (first.realized.trim().startsWith("-") ? "bad" : "ok") : "dim",
-              title: "cash basis per start asset — marked exposure is separate (see PnL & Analytics)",
-              href: "/pnl",
-            };
-          })}
-          {statOrError(pnl, "Drawdown", (p) => ({
-            value: perAsset(p.assets ?? [], (r) => r.drawdown),
-            tone: "dim",
-            title: "peak-to-trough per start asset; compare against max_drawdown in the Risk Center",
-            href: "/portfolio",
-          }))}
-          {statOrError(pnl, "Fees paid (valued)", (p) => ({
-            value: perAsset(p.assets ?? [], (r) => r.fees_marked),
-            tone: "dim",
-            title: "every fee asset valued in the start asset — the honest bill (fees in the start asset alone: per-asset table on /pnl)",
-            href: "/pnl",
-          }))}
-          {statOrError(risk, "Breakers open", (r) => {
-            const open = (r.breakers ?? []).filter((b) => b.State === "OPEN");
-            return {
-              value: open.length,
-              tone: open.length > 0 ? "bad" : "ok",
-              title: open.length > 0 ? open.map((b) => `${b.Name} (${b.Scope || "global"}): ${b.Reason}`).join("; ") : "no breaker is open",
-              href: "/risk",
-            };
-          })}
-          {statOrError(activeAlerts, "Unresolved alerts", (a) => ({
-            value: a.active,
-            tone: a.active > 0 ? "bad" : "ok",
-            href: "/alerts",
-          }))}
-          {statOrError(recordings, "Database", (r) => ({
+          {statCell(recordings, "Database", (r) => ({
             value: r.persistence ? "CONNECTED" : "NOT CONFIGURED",
-            tone: r.persistence ? "ok" : "dim",
+            tone: r.persistence ? "ok" : "warn",
           }))}
         </div>
       </Section>
 
-      <Section title="Today (session counters)">
+      {/* The session's primary summaries (audit §4B): simulated net
+          results, drawdown, active work — fees explicit, per asset,
+          never summed across currencies. */}
+      <Section title="Results (session)">
+        <div className="grid max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+          {(() => {
+            const realized = perAsset(pnl.kind === "ready" ? (pnl.data.assets ?? []) : [], (r) => r.realized);
+            const first = pnl.kind === "ready" ? (pnl.data.assets ?? [])[0] : undefined;
+            return (
+              <Stat
+                label="Realized PnL"
+                value={realized.text}
+                exact={realized.raw}
+                tone={first ? (first.realized.trim().startsWith("-") ? "bad" : "ok") : "dim"}
+              />
+            );
+          })()}
+          {(() => {
+            const dd = perAsset(pnl.kind === "ready" ? (pnl.data.assets ?? []) : [], (r) => r.drawdown);
+            return (
+              <Stat
+                label="Drawdown"
+                value={dd.text}
+                exact={dd.raw}
+                tone="dim"
+              />
+            );
+          })()}
+          {(() => {
+            const fees = perAsset(pnl.kind === "ready" ? (pnl.data.assets ?? []) : [], (r) => r.fees_marked);
+            return (
+              <Stat
+                label="Fees paid (valued)"
+                value={fees.text}
+                exact={fees.raw}
+                tone="dim"
+              />
+            );
+          })()}
+          <Await state={scanner} what="active work">
+            {(s) => (
+              <Stat
+                label="Active work"
+                value={
+                  s.paper
+                    ? `${s.paper.active_simulations} simulation${s.paper.active_simulations === 1 ? "" : "s"} in flight`
+                    : "engine not running"
+                }
+                tone={s.paper?.running ? "ok" : "dim"}
+              />
+            )}
+          </Await>
+        </div>
+        {/* Zero qualified candidates is explained from the engine's own
+            rejection histogram — never inferred (audit §4B: detected −
+            rejected is not qualified; counters cover different stages). */}
+        <Await state={scanner} what="qualified count">
+          {(s) => {
+            if (s.qualified > 0) {
+              return (
+                <p className="mt-2 text-[12px] text-[var(--text-dim)]">
+                  {s.qualified} qualified of {s.evaluations} evaluated today.
+                </p>
+              );
+            }
+            if (s.evaluations === 0) {
+              return (
+                <p className="mt-2 text-[12px] text-[var(--text-dim)]">
+                  Nothing evaluated yet — the scanner needs healthy books.{" "}
+                  <Link href="/exchanges" className="text-[var(--accent)] underline">
+                    Exchange health
+                  </Link>
+                </p>
+              );
+            }
+            const counts =
+              risk.kind === "ready" ? risk.data.reject_reason_counts ?? {} : {};
+            const top = Object.entries(counts)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 3);
+            return (
+              <p className="mt-2 text-[12px] text-[var(--text-dim)]">
+                Nothing qualified today ({s.evaluations} evaluated
+                {top.length > 0
+                  ? `; the engine's top rejection reasons since start: ${top
+                      .map(([reason, n]) => `${reason} ×${n}`)
+                      .join(", ")}`
+                  : ""}
+                ).{" "}
+                <Link href="/scanner" className="text-[var(--accent)] underline">
+                  Scanner detail
+                </Link>
+              </p>
+            );
+          }}
+        </Await>
+      </Section>
+
+      <Section title="Session counters (diagnostics)">
         <Await state={scanner} what="today's counters">
           {(s) => (
             <div className="grid max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
@@ -239,7 +456,7 @@ export default function OverviewPage() {
         )}
       </Section>
 
-      <Section title="Current">
+      <Section title="Capital & balances">
         <Await state={scanner} what="active simulations">
           {(s) => (
             <div className="mb-3 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
@@ -289,8 +506,12 @@ export default function OverviewPage() {
                   empty="balances (see Portfolio & Balances for the full view)"
                   rows={shown.map(([asset, b]) => [
                     asset,
-                    b.available,
-                    b.reserved,
+                    <span key="a" title={b.available}>
+                      {fmtDecimal(b.available)}
+                    </span>,
+                    <span key="r" title={b.reserved}>
+                      {fmtDecimal(b.reserved)}
+                    </span>,
                   ])}
                 />
                 {entries.length > shown.length && (
@@ -309,7 +530,7 @@ export default function OverviewPage() {
         </Await>
       </Section>
 
-      <Section title="Exchange health">
+      <Section title="Feed diagnostics">
         <Await state={health} what="exchange health">
           {(h) =>
             h.feed ? (
@@ -404,6 +625,7 @@ export default function OverviewPage() {
 
       <Section title="Quick actions">
         <div className="flex flex-wrap gap-2 text-[13px]">
+          <QuickLink href="/screener" label="Screener" />
           <QuickLink href="/campaigns" label="Campaigns" />
           <QuickLink href="/paper" label="Paper Trading" />
           <QuickLink href="/alerts" label="Alerts" />

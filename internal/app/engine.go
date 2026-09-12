@@ -296,7 +296,10 @@ type EngineStatus struct {
 	Qualified   int64    `json:"qualified"`
 	Rejected    int64    `json:"rejected"`
 	Skipped     int64    `json:"skipped_unhealthy"`
-	Dropped     int64    `json:"dropped_events"`
+	// NoViableSize: triangles whose every candidate size fell below the
+	// dust/min-notional floor — rejected before any event (T-062).
+	NoViableSize int64 `json:"no_viable_size"`
+	Dropped      int64 `json:"dropped_events"`
 	// Revalidations counts pre-execution re-checks of qualified
 	// opportunities; RevalidationRejects those refused the second time.
 	Revalidations       int64 `json:"revalidations"`
@@ -343,6 +346,7 @@ func (e *Engine) Status() EngineStatus {
 		st.Qualified = e.scn.Stats.Qualified.Load()
 		st.Rejected = e.scn.Stats.Rejected.Load()
 		st.Skipped = e.scn.Stats.SkippedBooks.Load()
+		st.NoViableSize = e.scn.Stats.NoViableSize.Load()
 		st.Dropped = e.scn.Stats.DroppedEvts.Load()
 		st.Revalidations = e.scn.Stats.Revalidations.Load()
 		st.RevalidationRejects = e.scn.Stats.RevalidationRejects.Load()

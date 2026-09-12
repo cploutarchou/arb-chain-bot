@@ -52,6 +52,10 @@ type Stats struct {
 	Qualified    atomic.Int64
 	Rejected     atomic.Int64
 	SkippedBooks atomic.Int64 // triangles skipped for missing/unhealthy books
+	// NoViableSize counts triangles whose every candidate size fell
+	// below the dust/min-notional floor — the one pre-gate exit that
+	// emits no event, so without this counter it is invisible (T-062).
+	NoViableSize atomic.Int64
 	DroppedEvts  atomic.Int64 // consumer too slow (bounded fan-out)
 	// Revalidations counts pre-execution re-checks (Revalidate);
 	// RevalidationRejects those the gate refused the second time.
@@ -388,6 +392,7 @@ func (s *Scanner) EvaluateTriangle(tri graph.Triangle) {
 	// the real one.
 	res, ok := cfg.Search.FindCycleConstrained(tri, data, s.Fees, minIn, maxIn, gateFeasible(eff, cfg.Buffers))
 	if !ok {
+		s.Stats.NoViableSize.Add(1)
 		return // no viable size at all (dust/min-notional floor above depth ceiling)
 	}
 

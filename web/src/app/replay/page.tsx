@@ -174,7 +174,7 @@ export default function ReplayPage() {
   };
 
   return (
-    <ConsoleShell active="Replay & Backtesting">
+    <ConsoleShell>
       <PageTitle>Replay &amp; Backtesting</PageTitle>
       <p className="mb-4 max-w-2xl text-[13px] text-[var(--text-dim)]">
         A replay drives the exact same decode → validate → apply → evaluate path as live, over one

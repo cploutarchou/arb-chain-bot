@@ -73,7 +73,7 @@ export default function ScreenerReportsPage() {
   };
 
   return (
-    <ConsoleShell active="Screener Reports">
+    <ConsoleShell>
       <PageTitle>Screener Reports</PageTitle>
 
       <ScreenerAwait state={list} what="screener reports">

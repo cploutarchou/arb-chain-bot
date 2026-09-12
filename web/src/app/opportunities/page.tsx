@@ -74,7 +74,7 @@ function OpportunitiesPageInner() {
   }, [history, triangle]);
 
   return (
-    <ConsoleShell active="Opportunities">
+    <ConsoleShell>
       <PageTitle>Opportunities</PageTitle>
       <Section title="Persisted history">
         <div className="mb-3 flex flex-wrap items-center gap-2">

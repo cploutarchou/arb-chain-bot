@@ -17,6 +17,7 @@ import Script from "next/script";
 import {
   api,
   ApiError,
+  type AffiliatePayoutLine,
   type BillingPrice,
   type BillingSubscriptionResponse,
 } from "@/lib/api/client";
@@ -24,6 +25,7 @@ import { usePoll } from "@/lib/usePoll";
 import { useAuth } from "@/lib/auth";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import {
+  Await,
   Badge,
   Button,
   ConfirmDialog,
@@ -63,6 +65,185 @@ function statusTone(status: string): "ok" | "warn" | "bad" | "dim" {
   if (status === "past_due") return "warn";
   if (status === "canceled" || status === "paused") return "dim";
   return "dim";
+}
+
+// Affiliate payouts (T-084, packages.md §5): the operator's monthly
+// report — who is payable at what matured balance, the fraud-rule-3
+// refund rate over 90 days, and the clawback exposure — plus the
+// audited recording of a payout as a ledger row. Money moves outside
+// the platform (bank transfer / PayPal); this records what left.
+function AffiliatePayouts() {
+  const [refresh, setRefresh] = useState(0);
+  const report = usePoll(() => api.billing.affiliatePayouts(), 60000, [refresh]);
+  const [target, setTarget] = useState<AffiliatePayoutLine | null>(null);
+  const [amount, setAmount] = useState("");
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const openDialog = (line: AffiliatePayoutLine) => {
+    setTarget(line);
+    setAmount(line.payout.balance.matured);
+    setReference("");
+    setMsg(null);
+  };
+
+  const confirm = async () => {
+    if (!target) return;
+    setBusy(true);
+    try {
+      await api.billing.recordAffiliatePayout(target.id, amount, reference);
+      setMsg({ ok: true, text: `Payout of $${amount} recorded for ${target.code}.` });
+      setTarget(null);
+      setRefresh((n) => n + 1);
+    } catch (err: unknown) {
+      setMsg({
+        ok: false,
+        text: err instanceof ApiError ? err.message : "Recording the payout failed.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Affiliate payouts">
+      {msg && (
+        <p
+          className={`mb-3 text-[13px] ${msg.ok ? "text-[var(--ok)]" : "text-[var(--critical)]"}`}
+        >
+          {msg.text}
+        </p>
+      )}
+      <Await state={report} what="affiliate payouts">
+        {(data) =>
+          data.accounts.length === 0 ? (
+            <p className="text-[13px] text-[var(--text-dim)]">
+              No affiliate accounts exist yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full max-w-4xl border-collapse text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)] text-left text-[12px] uppercase tracking-wider text-[var(--text-dim)]">
+                    <th className="py-2 pr-3">Account</th>
+                    <th className="py-2 pr-3">Status</th>
+                    <th className="py-2 pr-3">Accrued</th>
+                    <th className="py-2 pr-3">Matured (unpaid)</th>
+                    <th className="py-2 pr-3">Paid</th>
+                    <th className="py-2 pr-3">Refunds 90d</th>
+                    <th className="py-2 pr-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.accounts.map((line) => (
+                    <tr key={line.id} className="border-b border-[var(--border)]">
+                      <td className="py-2 pr-3 font-medium text-[var(--text)]">
+                        {line.code}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Badge
+                          tone={
+                            line.status === "active"
+                              ? "ok"
+                              : line.status === "review"
+                                ? "warn"
+                                : "dim"
+                          }
+                        >
+                          {line.status}
+                        </Badge>
+                        {line.payout.manual_review && (
+                          <span className="ml-2 text-[12px] text-[var(--warn)]">
+                            manual review
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-[var(--text-dim)]">
+                        ${line.payout.balance.accrued}
+                      </td>
+                      <td className="py-2 pr-3 font-medium text-[var(--text)]">
+                        ${line.payout.balance.matured}
+                        {line.payout.balance.payable && (
+                          <span className="ml-2 text-[12px] text-[var(--ok)]">
+                            payable
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-[var(--text-dim)]">
+                        ${line.payout.balance.paid}
+                        {line.payout.paid_last_180d !== "0" && (
+                          <span className="ml-1 text-[12px] text-[var(--text-dim)]">
+                            (${line.payout.paid_last_180d} in clawback window)
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-[var(--text-dim)]">
+                        {line.payout.refund_rate_90d === undefined
+                          ? "—"
+                          : `${(Number(line.payout.refund_rate_90d) * 100).toFixed(1)}%`}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {line.status !== "closed" &&
+                          line.payout.balance.matured !== "0" && (
+                            <Button onClick={() => openDialog(line)}>
+                              Record payout
+                            </Button>
+                          )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-[12px] text-[var(--text-dim)]">
+                Paid monthly on the 15th for the previous calendar month at the
+                $100 matured threshold. Money moves via Paddle-supported
+                transfer; recording here writes the ledger row.
+              </p>
+            </div>
+          )
+        }
+      </Await>
+      {target && (
+        <ConfirmDialog
+          title={`Record payout for ${target.code}?`}
+          confirmLabel={busy ? "Recording…" : "Record payout"}
+          confirmDisabled={busy || !amount || !reference}
+          onConfirm={() => void confirm()}
+          onCancel={() => setTarget(null)}
+          body={
+            <div className="space-y-3">
+              <p>
+                Matured unpaid balance: ${target.payout.balance.matured}. The
+                amount must not exceed it; the ledger row cites the reference.
+              </p>
+              <label className="block text-[13px]">
+                <span className="mb-1 block text-[12px] text-[var(--text-dim)]">
+                  Amount (USD)
+                </span>
+                <input
+                  className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] text-[var(--text)]"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  inputMode="decimal"
+                />
+              </label>
+              <label className="block text-[13px]">
+                <span className="mb-1 block text-[12px] text-[var(--text-dim)]">
+                  Payout reference (e.g. 2026-09)
+                </span>
+                <input
+                  className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[13px] text-[var(--text)]"
+                  value={reference}
+                  onChange={(e) => setReference(e.target.value)}
+                />
+              </label>
+            </div>
+          }
+        />
+      )}
+    </Section>
+  );
 }
 
 function SubscriptionSummary({ data }: { data: BillingSubscriptionResponse }) {
@@ -231,7 +412,7 @@ export default function BillingPage() {
     sub.kind === "ready" && sub.data.status?.subscription === "active";
 
   return (
-    <ConsoleShell active="Billing">
+    <ConsoleShell>
       <PageTitle>Billing</PageTitle>
 
       {clientToken && (
@@ -356,6 +537,8 @@ export default function BillingPage() {
           </div>
         )}
       </Section>
+
+      {platformAdmin && <AffiliatePayouts />}
 
       {cancelDialog && (
         <ConfirmDialog

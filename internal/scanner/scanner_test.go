@@ -288,3 +288,25 @@ func TestSetStrategyHotSwap(t *testing.T) {
 		}
 	}
 }
+
+// T-062: a triangle whose depth cannot satisfy even MinInput rejects
+// before any event is emitted — the exit is counted under NoViableSize
+// instead of vanishing silently.
+func TestNoViableSizeCounted(t *testing.T) {
+	s, books := harness(t)
+	id := exchange.MarketID{Exchange: "binance", Symbol: exchange.Symbol("BTCUSDT")}
+	dust := orderbook.New(id, 0)
+	dust.ApplySnapshot(orderbook.DepthEvent{
+		Market: id, IsSnapshot: true, FinalUpdateID: 9,
+		Bids: []orderbook.Level{lv("99.9", "0.001")}, Asks: []orderbook.Level{lv("100", "0.001")},
+		ReceiveTime: t0,
+	})
+	books.Add(dust)
+	s.EvaluateMarket(id)
+	if got := s.Stats.NoViableSize.Load(); got == 0 {
+		t.Fatalf("no_viable_size = 0, want >0 (dust depth cannot reach MinInput)")
+	}
+	if evs := drain(s); len(evs) != 0 {
+		t.Fatalf("events = %d, want 0 (no event is emitted for this exit)", len(evs))
+	}
+}

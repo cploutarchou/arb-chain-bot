@@ -18,7 +18,7 @@ export default function SystemHealthPage() {
   const health = usePoll(() => api.system.healthFull(), 5000);
 
   return (
-    <ConsoleShell active="System Health">
+    <ConsoleShell>
       <PageTitle>System Health</PageTitle>
 
       <Section title="Process">
