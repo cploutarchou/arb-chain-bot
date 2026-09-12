@@ -1569,18 +1569,23 @@ test("overview answers PnL, breakers, feed state and clock in the status strip (
   await page.goto("/overview");
 
   // Realized PnL with the asset, toned by the backend's own sign.
-  const pnl = page.getByText("Realized PnL (session)").locator("..");
+  const pnl = page.getByText("Realized PnL", { exact: true }).locator("..");
   await expect(pnl.getByText("-12.5 USDT")).toBeVisible({ timeout: 10_000 });
-  // Breakers open, bad when > 0, with the reason one hover away.
-  const breakers = page.getByText("Breakers open").locator("..");
-  await expect(breakers.getByText("1")).toBeVisible();
+  // An open breaker is an attention item first (client-area audit §4B):
+  // the fact with the breaker named, one link from the Risk Center.
+  await expect(
+    page.getByText(/1 risk breaker open — qualification is gated \(daily_loss\)\./),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Risk Center →" }),
+  ).toBeVisible();
   // Feed cell: one STALE book of three → DEGRADED.
   const feed = page.getByText("Feed", { exact: true }).locator("..");
   await expect(feed.getByText("DEGRADED")).toBeVisible();
   // Venue clock cell.
   const clock = page.getByText("Venue clock").locator("..");
   await expect(clock.getByText("OK")).toBeVisible();
-  // Fees and drawdown cells render the backend's own strings.
+  // Fees and drawdown cells render the backend's own values.
   await expect(page.getByText("1.34 USDT").first()).toBeVisible();
   await expect(page.getByText("0.0012 USDT").first()).toBeVisible();
 });
