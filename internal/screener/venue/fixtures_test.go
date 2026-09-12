@@ -128,6 +128,20 @@ var fixtureRoutes = map[screener.Venue][][2]string{
 		// Served for any symbol (the collector round-robins mark price).
 		{"/contract/public/markprice-kline", "markprice_kline.json"},
 	},
+	screener.VenueBithumb: {
+		{"/public/ticker/ALL_KRW", "ticker_all_krw.json"},
+		{"/public/ticker/ALL_BTC", "ticker_all_btc.json"},
+		// ALL_BTC first: routes match by path prefix, so /public/orderbook/ALL
+		// would otherwise also swallow /public/orderbook/ALL_BTC.
+		{"/public/orderbook/ALL_BTC", "orderbook_all_btc.json"},
+		{"/public/orderbook/ALL", "orderbook_all.json"},
+		{"/public/assetsstatus/ALL", "assetsstatus.json"},
+	},
+	screener.VenuePhemex: {
+		{"/public/products", "products.json"},
+		{"/md/spot/ticker/24hr/all", "spot_tickers.json"},
+		{"/md/v3/ticker/24hr/all", "perp_tickers.json"},
+	},
 }
 
 // fixtureServer serves testdata/<venue>/ for one venue and counts

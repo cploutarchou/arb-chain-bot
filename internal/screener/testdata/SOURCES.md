@@ -87,3 +87,20 @@ edited; only array elements were dropped.
 | bitmart | contract_details.json | GET https://api-cloud-v2.bitmart.com/contract/public/details (incl. 2 Delisted + 1 USD-quoted row) |
 | bitmart | funding_rate_v2.json | GET https://api-cloud-v2.bitmart.com/contract/public/funding-rate-v2 |
 | bitmart | markprice_kline.json | GET https://api-cloud-v2.bitmart.com/contract/public/markprice-kline?symbol=BTCUSDT&step=1&start_time=…&end_time=… (served for any symbol) |
+
+| bithumb | ticker_all_krw.json | GET https://api.bithumb.com/public/ticker/ALL_KRW |
+| bithumb | ticker_all_btc.json | GET https://api.bithumb.com/public/ticker/ALL_BTC |
+| bithumb | orderbook_all.json | GET https://api.bithumb.com/public/orderbook/ALL |
+| bithumb | orderbook_all_btc.json | GET https://api.bithumb.com/public/orderbook/ALL_BTC |
+| bithumb | assetsstatus.json | GET https://api.bithumb.com/public/assetsstatus/ALL |
+| phemex | products.json | GET https://api.phemex.com/public/products |
+| phemex | spot_tickers.json | GET https://api.phemex.com/md/spot/ticker/24hr/all |
+| phemex | perp_tickers.json | GET https://api.phemex.com/md/v3/ticker/24hr/all |
+| phemex | funding_history.json | GET https://api.phemex.com/api-data/public/data/funding-rate-history?symbol=.BTCUSDTFR8H&limit=3 |
+
+Tier-4 (T-075 remainder) recorded 2026-09-13 with curl/urllib under the
+same rule: real responses, no field edited, only array elements or object
+keys dropped (deterministic subsets whose instruments survive in both the
+product list and the bulk tickers, plus the delisted sUSDTTRY spot row
+and the COIN-M BTCUSD product row so the filters are exercised; the
+perp set keeps both a 4 h and an 8 h fundingInterval contract).

@@ -263,6 +263,16 @@ var defaultVenueFees = map[Venue]defaultVenueFee{
 	VenueBingX:     {spotBps: "10", perpBps: "5"},
 	VenueWhiteBIT:  {spotBps: "10", perpBps: "5.5"},
 	VenueBitMart:   {spotBps: "25", perpBps: "6"},
+	// Tier-4 (T-075 remainder, docs/research/venues/<venue>.md §6):
+	// Bithumb's standard-tier taker is VERIFIED 0.25 % on the official
+	// fee page (the 0.04 % maker is an opt-in program, NOT applied);
+	// Phemex's spot 0.10 % is VERIFIED from the API itself
+	// (defaultTakerFee "0.001") and its USDT-perp taker 0.06 % from the
+	// official help centre — but the Registry entry stays Verified only
+	// when both numbers are venue-verified, and Bithumb's opt-in state
+	// keeps its flag false.
+	VenueBithumb: {spotBps: "25", perpBps: "25"},
+	VenuePhemex:  {spotBps: "10", perpBps: "6"},
 }
 
 // Tier-3 venues (T-078: Crypto.com Exchange, Bitfinex, BingX, WhiteBIT,
@@ -307,7 +317,15 @@ func Defaults() Settings {
 			// product, so it is the first venue to feel a shared IP. An
 			// operator can still enable it per deployment; re-enabling it
 			// by default needs a clean soak after the gate is retuned.
-			Enabled: id != VenueCoinbase, PerpsEnabled: id != VenueCoinbase,
+			//
+			// Tier-4 venues (Bithumb, Phemex — T-075 remainder, 2026-09-13)
+			// ship OFF for the same reason every tier did before its first
+			// soak: nothing is enabled by default until a live soak shows
+			// zero 429/418/403 and zero failed polls (SKILL.md step 5).
+			// Bithumb has no perps on api.bithumb.com, so PerpsEnabled
+			// stays false regardless of the soak.
+			Enabled:      id != VenueCoinbase && VenueTiers[id] != Tier4,
+			PerpsEnabled: id != VenueCoinbase && id != VenueBithumb && VenueTiers[id] != Tier4,
 			SpotTakerBps: decimal.RequireFromString(f.spotBps),
 			PerpTakerBps: decimal.RequireFromString(f.perpBps),
 		}

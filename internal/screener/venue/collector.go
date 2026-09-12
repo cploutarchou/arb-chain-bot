@@ -198,6 +198,10 @@ func New(id screener.Venue, opts Options) (Collector, error) {
 		return newWhiteBIT(opts), nil
 	case screener.VenueBitMart:
 		return newBitMart(opts), nil
+	case screener.VenueBithumb:
+		return newBithumb(opts), nil
+	case screener.VenuePhemex:
+		return newPhemex(opts), nil
 	}
 	return nil, fmt.Errorf("venue: unknown venue %q", id)
 }

@@ -11,6 +11,10 @@ const (
 	Tier1 = "tier1"
 	Tier2 = "tier2"
 	Tier3 = "tier3"
+	// Tier4 is the T-075 remainder wave (2026-09-13 research round,
+	// docs/research/venues/{bithumb,phemex,upbit,lbank}.md): Bithumb and
+	// Phemex collectors ship first; Upbit and LBank follow.
+	Tier4 = "tier4"
 	// TierDex is the on-chain tier. No venue belongs to it: DEX quote
 	// sources are designed (docs/design/dex-arbitrage.md) but not built
 	// (T-076 → T-110..T-116). The constant exists so the entitlement
@@ -40,6 +44,8 @@ var VenueTiers = map[Venue]string{
 	VenueBingX:     Tier3,
 	VenueWhiteBIT:  Tier3,
 	VenueBitMart:   Tier3,
+	VenueBithumb:   Tier4,
+	VenuePhemex:    Tier4,
 }
 
 // VenuesInTier returns the venues in tier, in OrderedVenues order. An
