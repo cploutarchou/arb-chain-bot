@@ -1,0 +1,26 @@
+{
+ "code": 0,
+ "msg": "OK",
+ "data": {
+  "rows": [
+   {
+    "symbol": ".BTCUSDTFR8H",
+    "fundingRate": "0.00005152",
+    "fundingTime": 1789171200000,
+    "intervalSeconds": 28800
+   },
+   {
+    "symbol": ".BTCUSDTFR8H",
+    "fundingRate": "0.00004903",
+    "fundingTime": 1789200000000,
+    "intervalSeconds": 28800
+   },
+   {
+    "symbol": ".BTCUSDTFR8H",
+    "fundingRate": "0.00008458",
+    "fundingTime": 1789228800000,
+    "intervalSeconds": 28800
+   }
+  ]
+ }
+}

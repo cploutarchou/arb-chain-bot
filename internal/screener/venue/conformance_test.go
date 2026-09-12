@@ -19,14 +19,14 @@ import (
 // cited in its collector header) — their quotes must carry
 // LiquidityUnknown; every other venue's must not.
 var (
-	verifiedFees   = map[screener.Venue]bool{screener.VenueBinance: true, screener.VenueKuCoin: true, screener.VenueKraken: true}
+	verifiedFees   = map[screener.Venue]bool{screener.VenueBinance: true, screener.VenueKuCoin: true, screener.VenueKraken: true, screener.VenuePhemex: true}
 	publicNetworks = map[screener.Venue]bool{
 		screener.VenueGate: true, screener.VenueKuCoin: true, screener.VenueHTX: true, screener.VenueCoinbase: true,
-		screener.VenueBitfinex: true, screener.VenueWhiteBIT: true, screener.VenueBitMart: true,
+		screener.VenueBitfinex: true, screener.VenueWhiteBIT: true, screener.VenueBitMart: true, screener.VenueBithumb: true,
 	}
-	noPerps    = map[screener.Venue]bool{screener.VenueCoinbase: true}
+	noPerps    = map[screener.Venue]bool{screener.VenueCoinbase: true, screener.VenueBithumb: true}
 	noBulkMark = map[screener.Venue]bool{screener.VenueHTX: true, screener.VenueWhiteBIT: true, screener.VenueBitMart: true}
-	noBookSize = map[screener.Venue]bool{screener.VenueGate: true, screener.VenueCryptoCom: true, screener.VenueWhiteBIT: true}
+	noBookSize = map[screener.Venue]bool{screener.VenueGate: true, screener.VenueCryptoCom: true, screener.VenueWhiteBIT: true, screener.VenuePhemex: true}
 )
 
 // TestConformance is the shared gate every collector must pass before a
@@ -144,8 +144,9 @@ func TestConformance(t *testing.T) {
 	}
 }
 
-// TestRegistry pins the registry to the fifteen venues (six Tier-1 +
-// four Tier-2, T-075; five Tier-3, T-078) and their verification flags.
+// TestRegistry pins the registry to the seventeen venues (six Tier-1 +
+// four Tier-2, T-075; five Tier-3, T-078; two Tier-4, T-075 remainder)
+// and their verification flags.
 func TestRegistry(t *testing.T) {
 	reg := Registry()
 	if len(reg) != len(screener.OrderedVenues) {

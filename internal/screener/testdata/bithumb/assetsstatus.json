@@ -1,0 +1,141 @@
+{
+ "status": "0000",
+ "data": {
+  "0G": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "1INCH": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "2Z": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "A": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "A8": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AAVE": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ACE": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ACH": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ACS": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ACX": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ADA": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ADP": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AEON": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AERO": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AGI": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AGLD": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AHT": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AI": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AIOZ": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AKT": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "AL": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ALGO": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ALICE": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ALLO": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "BNB": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "BTC": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "CSPR": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "DOGE": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ENS": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "ETH": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "KAIA": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "SOL": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "SUI": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  },
+  "TRX": {
+   "withdrawal_status": 1,
+   "deposit_status": 1
+  }
+ }
+}

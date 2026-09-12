@@ -49,6 +49,11 @@ const (
 	VenueBingX     Venue = "bingx"
 	VenueWhiteBIT  Venue = "whitebit"
 	VenueBitMart   Venue = "bitmart"
+
+	// Tier-4 (T-075 remainder, 2026-09-13): Bithumb and Phemex ship
+	// first (bulk-endpoint venues); Upbit and LBank follow.
+	VenueBithumb Venue = "bithumb"
+	VenuePhemex  Venue = "phemex"
 )
 
 // KnownVenues is the full target-venue set (docs/design/scanner-suite.md
@@ -74,6 +79,8 @@ var KnownVenues = map[Venue]bool{
 	VenueBingX:     true,
 	VenueWhiteBIT:  true,
 	VenueBitMart:   true,
+	VenueBithumb:   true,
+	VenuePhemex:    true,
 }
 
 // OrderedVenues is KnownVenues in a stable, deterministic order for
@@ -83,6 +90,7 @@ var OrderedVenues = []Venue{
 	VenueBinance, VenueOKX, VenueBybit, VenueBitget, VenueGate, VenueMEXC,
 	VenueKuCoin, VenueHTX, VenueKraken, VenueCoinbase,
 	VenueCryptoCom, VenueBitfinex, VenueBingX, VenueWhiteBIT, VenueBitMart,
+	VenueBithumb, VenuePhemex,
 }
 
 // Quote is one venue's top-of-book for one spot pair, normalised from

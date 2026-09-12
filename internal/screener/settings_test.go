@@ -17,13 +17,14 @@ func TestDefaultsValidates(t *testing.T) {
 	}
 	for id := range KnownVenues {
 		v, ok := def.Venues[id]
-		// Every known venue is on at first boot: Tier-2 since the
-		// 2026-08-27 soak (T-075), Tier-3 since the 2026-08-28 soak
-		// (T-078) — see TestDefaultsEnablesEveryVenue.
-		if !ok || v.Enabled == (id == VenueCoinbase) {
+		// Venues with a clean soak are on at first boot: Tier-2 since
+		// the 2026-08-27 soak (T-075), Tier-3 since the 2026-08-28 soak
+		// (T-078) — see TestDefaultsEnablesEveryVenue. Tier-4 (Bithumb,
+		// Phemex) is off until its first soak.
+		if !ok || v.Enabled != (id != VenueCoinbase && VenueTiers[id] != Tier4) {
 			t.Fatalf("Defaults() venue %s enabled=%v", id, v.Enabled)
 		}
-		if v.PerpsEnabled == (id == VenueCoinbase) { // Coinbase: no retail perps
+		if v.PerpsEnabled != (id != VenueCoinbase && id != VenueBithumb && VenueTiers[id] != Tier4) {
 			t.Fatalf("Defaults() venue %s perps_enabled=%v", id, v.PerpsEnabled)
 		}
 	}
@@ -33,9 +34,10 @@ func TestDefaultsValidates(t *testing.T) {
 }
 
 // TestDefaultsEnablesEveryVenue pins the post-soak invariant: every
-// known venue whose 30-min live soak was clean starts ENABLED, and the
-// one venue whose soak was NOT clean (Coinbase: 20 × HTTP 429 and 20
-// failed polls on 2026-08-28) starts DISABLED. A venue added without a
+// known venue whose 30-min live soak was clean starts ENABLED, and a
+// venue whose soak was NOT clean (Coinbase: 20 × HTTP 429 and 20 failed
+// polls on 2026-08-28) or that has not soaked yet (Tier-4: Bithumb and
+// Phemex, T-075 remainder) starts DISABLED. A venue added without a
 // soak, or one whose soak regresses, belongs on the disabled side here
 // rather than being silently enabled.
 func TestDefaultsEnablesEveryVenue(t *testing.T) {
@@ -44,7 +46,7 @@ func TestDefaultsEnablesEveryVenue(t *testing.T) {
 		t.Fatalf("OrderedVenues has %d entries, KnownVenues %d", len(OrderedVenues), len(KnownVenues))
 	}
 	for _, id := range OrderedVenues {
-		want := id != VenueCoinbase
+		want := id != VenueCoinbase && VenueTiers[id] != Tier4
 		if def.Venues[id].Enabled != want {
 			t.Fatalf("Defaults() venue %s enabled=%v, want %v", id, def.Venues[id].Enabled, want)
 		}
@@ -52,6 +54,11 @@ func TestDefaultsEnablesEveryVenue(t *testing.T) {
 	for _, id := range []Venue{VenueCryptoCom, VenueBitfinex, VenueBingX, VenueWhiteBIT, VenueBitMart} {
 		if !def.Venues[id].Enabled {
 			t.Fatalf("Tier-3 venue %s must be enabled after the 2026-08-28 soak", id)
+		}
+	}
+	for _, id := range []Venue{VenueBithumb, VenuePhemex} {
+		if def.Venues[id].Enabled {
+			t.Fatalf("Tier-4 venue %s must stay off until its first soak", id)
 		}
 	}
 }

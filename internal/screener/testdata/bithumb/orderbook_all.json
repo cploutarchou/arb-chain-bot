@@ -1,0 +1,1229 @@
+{
+ "status": "0000",
+ "data": {
+  "timestamp": "1789249326567",
+  "payment_currency": "KRW",
+  "0G": {
+   "order_currency": "0G",
+   "bids": [
+    {
+     "price": "263",
+     "quantity": "42745.1081"
+    },
+    {
+     "price": "262",
+     "quantity": "68969.5216"
+    },
+    {
+     "price": "261",
+     "quantity": "11396.1479"
+    },
+    {
+     "price": "260",
+     "quantity": "141.7302"
+    },
+    {
+     "price": "259",
+     "quantity": "822.9712"
+    }
+   ],
+   "asks": [
+    {
+     "price": "264",
+     "quantity": "42200.7701"
+    },
+    {
+     "price": "265",
+     "quantity": "76668.1847"
+    },
+    {
+     "price": "266",
+     "quantity": "42181.9731"
+    },
+    {
+     "price": "267",
+     "quantity": "80355.5622"
+    },
+    {
+     "price": "268",
+     "quantity": "113523.0100"
+    }
+   ]
+  },
+  "1INCH": {
+   "order_currency": "1INCH",
+   "bids": [
+    {
+     "price": "122",
+     "quantity": "78169.7113"
+    },
+    {
+     "price": "121",
+     "quantity": "13664.0000"
+    },
+    {
+     "price": "120",
+     "quantity": "8637.1737"
+    },
+    {
+     "price": "119",
+     "quantity": "13516.6956"
+    },
+    {
+     "price": "118",
+     "quantity": "1084.7457"
+    }
+   ],
+   "asks": [
+    {
+     "price": "123",
+     "quantity": "23997.3558"
+    },
+    {
+     "price": "124",
+     "quantity": "28249.5158"
+    },
+    {
+     "price": "125",
+     "quantity": "51218.3881"
+    },
+    {
+     "price": "126",
+     "quantity": "126074.4047"
+    },
+    {
+     "price": "127",
+     "quantity": "4657.0000"
+    }
+   ]
+  },
+  "2Z": {
+   "order_currency": "2Z",
+   "bids": [
+    {
+     "price": "63.29",
+     "quantity": "440.6221"
+    },
+    {
+     "price": "63.27",
+     "quantity": "800.0000"
+    },
+    {
+     "price": "63.26",
+     "quantity": "3153.6713"
+    },
+    {
+     "price": "63.23",
+     "quantity": "90.8950"
+    },
+    {
+     "price": "63.2",
+     "quantity": "79.1297"
+    }
+   ],
+   "asks": [
+    {
+     "price": "63.47",
+     "quantity": "43527.7973"
+    },
+    {
+     "price": "63.49",
+     "quantity": "787.5255"
+    },
+    {
+     "price": "63.6",
+     "quantity": "42560.9927"
+    },
+    {
+     "price": "63.7",
+     "quantity": "90.8950"
+    },
+    {
+     "price": "63.73",
+     "quantity": "41957.7973"
+    }
+   ]
+  },
+  "A": {
+   "order_currency": "A",
+   "bids": [
+    {
+     "price": "105",
+     "quantity": "195737.7228"
+    },
+    {
+     "price": "104",
+     "quantity": "67382.5240"
+    },
+    {
+     "price": "103",
+     "quantity": "59882.1662"
+    },
+    {
+     "price": "102",
+     "quantity": "13481.3176"
+    },
+    {
+     "price": "101",
+     "quantity": "28132.9188"
+    }
+   ],
+   "asks": [
+    {
+     "price": "106",
+     "quantity": "8673.1732"
+    },
+    {
+     "price": "107",
+     "quantity": "61736.2896"
+    },
+    {
+     "price": "108",
+     "quantity": "20645.9044"
+    },
+    {
+     "price": "109",
+     "quantity": "34701.6361"
+    },
+    {
+     "price": "110",
+     "quantity": "50357.6413"
+    }
+   ]
+  },
+  "A8": {
+   "order_currency": "A8",
+   "bids": [
+    {
+     "price": "6.867",
+     "quantity": "13106.1598"
+    },
+    {
+     "price": "6.866",
+     "quantity": "37870.8598"
+    },
+    {
+     "price": "6.865",
+     "quantity": "3640.6000"
+    },
+    {
+     "price": "6.861",
+     "quantity": "303273.5222"
+    },
+    {
+     "price": "6.859",
+     "quantity": "16037.3232"
+    }
+   ],
+   "asks": [
+    {
+     "price": "6.945",
+     "quantity": "1601.6307"
+    },
+    {
+     "price": "6.946",
+     "quantity": "21000.0000"
+    },
+    {
+     "price": "6.949",
+     "quantity": "30085.5134"
+    },
+    {
+     "price": "6.977",
+     "quantity": "1113.3921"
+    },
+    {
+     "price": "6.993",
+     "quantity": "27823.7021"
+    }
+   ]
+  },
+  "AAVE": {
+   "order_currency": "AAVE",
+   "bids": [
+    {
+     "price": "170200",
+     "quantity": "4.1231"
+    },
+    {
+     "price": "170100",
+     "quantity": "4.6300"
+    },
+    {
+     "price": "170000",
+     "quantity": "5.4612"
+    },
+    {
+     "price": "169900",
+     "quantity": "0.0784"
+    },
+    {
+     "price": "169700",
+     "quantity": "16.7972"
+    }
+   ],
+   "asks": [
+    {
+     "price": "170500",
+     "quantity": "2.8838"
+    },
+    {
+     "price": "170600",
+     "quantity": "16.7972"
+    },
+    {
+     "price": "170700",
+     "quantity": "42.9640"
+    },
+    {
+     "price": "170800",
+     "quantity": "0.0386"
+    },
+    {
+     "price": "171000",
+     "quantity": "16.7972"
+    }
+   ]
+  },
+  "ACE": {
+   "order_currency": "ACE",
+   "bids": [
+    {
+     "price": "213",
+     "quantity": "32368.7536"
+    },
+    {
+     "price": "212",
+     "quantity": "27028.6578"
+    },
+    {
+     "price": "211",
+     "quantity": "88292.1839"
+    },
+    {
+     "price": "210",
+     "quantity": "89743.8222"
+    },
+    {
+     "price": "209",
+     "quantity": "67151.8539"
+    }
+   ],
+   "asks": [
+    {
+     "price": "214",
+     "quantity": "13405.8222"
+    },
+    {
+     "price": "215",
+     "quantity": "25392.4220"
+    },
+    {
+     "price": "216",
+     "quantity": "61119.2007"
+    },
+    {
+     "price": "217",
+     "quantity": "51451.8849"
+    },
+    {
+     "price": "218",
+     "quantity": "44248.8150"
+    }
+   ]
+  },
+  "ACH": {
+   "order_currency": "ACH",
+   "bids": [
+    {
+     "price": "6.799",
+     "quantity": "11565.8185"
+    },
+    {
+     "price": "6.798",
+     "quantity": "1471.0208"
+    },
+    {
+     "price": "6.783",
+     "quantity": "1474.2739"
+    },
+    {
+     "price": "6.77",
+     "quantity": "19497.7843"
+    },
+    {
+     "price": "6.769",
+     "quantity": "79775.4468"
+    }
+   ],
+   "asks": [
+    {
+     "price": "6.875",
+     "quantity": "3236.4309"
+    },
+    {
+     "price": "6.876",
+     "quantity": "200000.0000"
+    },
+    {
+     "price": "6.891",
+     "quantity": "185062.1202"
+    },
+    {
+     "price": "6.918",
+     "quantity": "30532.1314"
+    },
+    {
+     "price": "6.919",
+     "quantity": "9244.6278"
+    }
+   ]
+  },
+  "ACS": {
+   "order_currency": "ACS",
+   "bids": [
+    {
+     "price": "0.1999",
+     "quantity": "450225.1125"
+    },
+    {
+     "price": "0.1998",
+     "quantity": "3080580.5811"
+    },
+    {
+     "price": "0.1997",
+     "quantity": "3084788.7566"
+    },
+    {
+     "price": "0.1996",
+     "quantity": "109484721.4134"
+    },
+    {
+     "price": "0.1995",
+     "quantity": "92109.9959"
+    }
+   ],
+   "asks": [
+    {
+     "price": "0.2025",
+     "quantity": "177677.6777"
+    },
+    {
+     "price": "0.2026",
+     "quantity": "530032.3147"
+    },
+    {
+     "price": "0.2027",
+     "quantity": "3724043.4721"
+    },
+    {
+     "price": "0.203",
+     "quantity": "50000.0000"
+    },
+    {
+     "price": "0.2033",
+     "quantity": "50000.0000"
+    }
+   ]
+  },
+  "ACX": {
+   "order_currency": "ACX",
+   "bids": [
+    {
+     "price": "56.76",
+     "quantity": "1691.9730"
+    },
+    {
+     "price": "56.75",
+     "quantity": "7612.3348"
+    },
+    {
+     "price": "56.74",
+     "quantity": "14511.4057"
+    },
+    {
+     "price": "56.73",
+     "quantity": "10223.8676"
+    },
+    {
+     "price": "56.72",
+     "quantity": "29733.2820"
+    }
+   ],
+   "asks": [
+    {
+     "price": "58.29",
+     "quantity": "1303.7996"
+    },
+    {
+     "price": "58.3",
+     "quantity": "1085.0709"
+    },
+    {
+     "price": "59",
+     "quantity": "114557.0514"
+    },
+    {
+     "price": "59.2",
+     "quantity": "123.4320"
+    },
+    {
+     "price": "60",
+     "quantity": "180831.8264"
+    }
+   ]
+  },
+  "ADA": {
+   "order_currency": "ADA",
+   "bids": [
+    {
+     "price": "281",
+     "quantity": "453027.3084"
+    },
+    {
+     "price": "280",
+     "quantity": "353459.4056"
+    },
+    {
+     "price": "279",
+     "quantity": "279799.6820"
+    },
+    {
+     "price": "278",
+     "quantity": "133750.8320"
+    },
+    {
+     "price": "277",
+     "quantity": "8575.9241"
+    }
+   ],
+   "asks": [
+    {
+     "price": "282",
+     "quantity": "269725.1166"
+    },
+    {
+     "price": "283",
+     "quantity": "246858.7357"
+    },
+    {
+     "price": "284",
+     "quantity": "237417.0793"
+    },
+    {
+     "price": "285",
+     "quantity": "221746.5986"
+    },
+    {
+     "price": "286",
+     "quantity": "110467.1115"
+    }
+   ]
+  },
+  "ADP": {
+   "order_currency": "ADP",
+   "bids": [
+    {
+     "price": "0.6757",
+     "quantity": "32111.8924"
+    },
+    {
+     "price": "0.6737",
+     "quantity": "12000.0000"
+    },
+    {
+     "price": "0.6724",
+     "quantity": "90719.8096"
+    },
+    {
+     "price": "0.6723",
+     "quantity": "942887.4221"
+    },
+    {
+     "price": "0.6718",
+     "quantity": "52843.1081"
+    }
+   ],
+   "asks": [
+    {
+     "price": "0.6798",
+     "quantity": "1604305.1993"
+    },
+    {
+     "price": "0.6799",
+     "quantity": "3152931.3290"
+    },
+    {
+     "price": "0.68",
+     "quantity": "810336.1618"
+    },
+    {
+     "price": "0.683",
+     "quantity": "99550.0619"
+    },
+    {
+     "price": "0.687",
+     "quantity": "145560.4075"
+    }
+   ]
+  },
+  "AEON": {
+   "order_currency": "AEON",
+   "bids": [
+    {
+     "price": "65.96",
+     "quantity": "20996.5817"
+    },
+    {
+     "price": "65.92",
+     "quantity": "20845.1354"
+    },
+    {
+     "price": "65.9",
+     "quantity": "1642.4139"
+    },
+    {
+     "price": "65.88",
+     "quantity": "20996.5817"
+    },
+    {
+     "price": "65.8",
+     "quantity": "565.3534"
+    }
+   ],
+   "asks": [
+    {
+     "price": "66.2",
+     "quantity": "75.8877"
+    },
+    {
+     "price": "66.3",
+     "quantity": "75.7727"
+    },
+    {
+     "price": "66.32",
+     "quantity": "1312.6420"
+    },
+    {
+     "price": "66.33",
+     "quantity": "67440.1390"
+    },
+    {
+     "price": "66.37",
+     "quantity": "20996.5817"
+    }
+   ]
+  },
+  "AERO": {
+   "order_currency": "AERO",
+   "bids": [
+    {
+     "price": "763",
+     "quantity": "3902.7457"
+    },
+    {
+     "price": "762",
+     "quantity": "3636.3305"
+    },
+    {
+     "price": "761",
+     "quantity": "3613.7285"
+    },
+    {
+     "price": "760",
+     "quantity": "3613.7285"
+    },
+    {
+     "price": "755",
+     "quantity": "529.0000"
+    }
+   ],
+   "asks": [
+    {
+     "price": "765",
+     "quantity": "3626.8004"
+    },
+    {
+     "price": "766",
+     "quantity": "3613.7285"
+    },
+    {
+     "price": "767",
+     "quantity": "3613.7285"
+    },
+    {
+     "price": "769",
+     "quantity": "2178.7737"
+    },
+    {
+     "price": "772",
+     "quantity": "7036.9087"
+    }
+   ]
+  },
+  "AGI": {
+   "order_currency": "AGI",
+   "bids": [
+    {
+     "price": "6.806",
+     "quantity": "10272.3210"
+    },
+    {
+     "price": "6.805",
+     "quantity": "20295.4020"
+    },
+    {
+     "price": "6.804",
+     "quantity": "7455.0000"
+    },
+    {
+     "price": "6.803",
+     "quantity": "203518.6336"
+    },
+    {
+     "price": "6.795",
+     "quantity": "7455.0000"
+    }
+   ],
+   "asks": [
+    {
+     "price": "6.839",
+     "quantity": "14988.7750"
+    },
+    {
+     "price": "6.84",
+     "quantity": "19474.2720"
+    },
+    {
+     "price": "6.849",
+     "quantity": "3804.4775"
+    },
+    {
+     "price": "6.85",
+     "quantity": "203518.6336"
+    },
+    {
+     "price": "6.871",
+     "quantity": "321174.0712"
+    }
+   ]
+  },
+  "AGLD": {
+   "order_currency": "AGLD",
+   "bids": [
+    {
+     "price": "230",
+     "quantity": "35480.2067"
+    },
+    {
+     "price": "229",
+     "quantity": "48110.0822"
+    },
+    {
+     "price": "228",
+     "quantity": "37475.4067"
+    },
+    {
+     "price": "227",
+     "quantity": "232.6870"
+    },
+    {
+     "price": "226",
+     "quantity": "4690.2654"
+    }
+   ],
+   "asks": [
+    {
+     "price": "231",
+     "quantity": "38227.0950"
+    },
+    {
+     "price": "232",
+     "quantity": "39165.4067"
+    },
+    {
+     "price": "233",
+     "quantity": "54834.0943"
+    },
+    {
+     "price": "234",
+     "quantity": "47019.3855"
+    },
+    {
+     "price": "235",
+     "quantity": "45230.4067"
+    }
+   ]
+  },
+  "AHT": {
+   "order_currency": "AHT",
+   "bids": [
+    {
+     "price": "1.438",
+     "quantity": "9000.0000"
+    },
+    {
+     "price": "1.435",
+     "quantity": "6900.0000"
+    },
+    {
+     "price": "1.434",
+     "quantity": "9100.0000"
+    },
+    {
+     "price": "1.432",
+     "quantity": "24790.5028"
+    },
+    {
+     "price": "1.431",
+     "quantity": "547758.9200"
+    }
+   ],
+   "asks": [
+    {
+     "price": "1.439",
+     "quantity": "242.8571"
+    },
+    {
+     "price": "1.452",
+     "quantity": "108104.8653"
+    },
+    {
+     "price": "1.453",
+     "quantity": "560000.0000"
+    },
+    {
+     "price": "1.454",
+     "quantity": "17700.0000"
+    },
+    {
+     "price": "1.456",
+     "quantity": "17100.0000"
+    }
+   ]
+  },
+  "AI": {
+   "order_currency": "AI",
+   "bids": [
+    {
+     "price": "26.3",
+     "quantity": "11488.8632"
+    },
+    {
+     "price": "26.24",
+     "quantity": "9020.1933"
+    },
+    {
+     "price": "26.23",
+     "quantity": "207122.0752"
+    },
+    {
+     "price": "26.12",
+     "quantity": "108092.9166"
+    },
+    {
+     "price": "26.02",
+     "quantity": "140862.9166"
+    }
+   ],
+   "asks": [
+    {
+     "price": "26.37",
+     "quantity": "22210.4512"
+    },
+    {
+     "price": "26.38",
+     "quantity": "108092.9166"
+    },
+    {
+     "price": "26.43",
+     "quantity": "108134.4110"
+    },
+    {
+     "price": "26.45",
+     "quantity": "108092.9166"
+    },
+    {
+     "price": "26.48",
+     "quantity": "108134.4110"
+    }
+   ]
+  },
+  "AIOZ": {
+   "order_currency": "AIOZ",
+   "bids": [
+    {
+     "price": "98.24",
+     "quantity": "167.0258"
+    },
+    {
+     "price": "98.23",
+     "quantity": "982.3882"
+    },
+    {
+     "price": "98.22",
+     "quantity": "10181.0000"
+    },
+    {
+     "price": "98.05",
+     "quantity": "111.0045"
+    },
+    {
+     "price": "98",
+     "quantity": "5716.6370"
+    }
+   ],
+   "asks": [
+    {
+     "price": "99.46",
+     "quantity": "4089.8849"
+    },
+    {
+     "price": "99.47",
+     "quantity": "1761.7439"
+    },
+    {
+     "price": "99.48",
+     "quantity": "721.2160"
+    },
+    {
+     "price": "99.86",
+     "quantity": "3249.1866"
+    },
+    {
+     "price": "99.87",
+     "quantity": "10013.0000"
+    }
+   ]
+  },
+  "AKT": {
+   "order_currency": "AKT",
+   "bids": [
+    {
+     "price": "711",
+     "quantity": "3936.4683"
+    },
+    {
+     "price": "710",
+     "quantity": "3460.5430"
+    },
+    {
+     "price": "709",
+     "quantity": "24.3120"
+    },
+    {
+     "price": "708",
+     "quantity": "4633.6220"
+    },
+    {
+     "price": "707",
+     "quantity": "2121.6407"
+    }
+   ],
+   "asks": [
+    {
+     "price": "715",
+     "quantity": "3928.7327"
+    },
+    {
+     "price": "717",
+     "quantity": "3928.7327"
+    },
+    {
+     "price": "719",
+     "quantity": "3928.7327"
+    },
+    {
+     "price": "721",
+     "quantity": "3928.7327"
+    },
+    {
+     "price": "723",
+     "quantity": "11046.5826"
+    }
+   ]
+  },
+  "AL": {
+   "order_currency": "AL",
+   "bids": [
+    {
+     "price": "2.388",
+     "quantity": "4187.6047"
+    },
+    {
+     "price": "2.387",
+     "quantity": "435499.0947"
+    },
+    {
+     "price": "2.386",
+     "quantity": "435681.3331"
+    },
+    {
+     "price": "2.385",
+     "quantity": "500000.0000"
+    },
+    {
+     "price": "2.384",
+     "quantity": "89087.9811"
+    }
+   ],
+   "asks": [
+    {
+     "price": "2.409",
+     "quantity": "31826.4602"
+    },
+    {
+     "price": "2.41",
+     "quantity": "571234.3744"
+    },
+    {
+     "price": "2.42",
+     "quantity": "500000.0000"
+    },
+    {
+     "price": "2.421",
+     "quantity": "130000.0000"
+    },
+    {
+     "price": "2.425",
+     "quantity": "700000.0000"
+    }
+   ]
+  },
+  "ALGO": {
+   "order_currency": "ALGO",
+   "bids": [
+    {
+     "price": "126",
+     "quantity": "316040.0059"
+    },
+    {
+     "price": "125",
+     "quantity": "101525.5988"
+    },
+    {
+     "price": "124",
+     "quantity": "18464.5112"
+    },
+    {
+     "price": "123",
+     "quantity": "55999.1247"
+    },
+    {
+     "price": "122",
+     "quantity": "87833.1290"
+    }
+   ],
+   "asks": [
+    {
+     "price": "127",
+     "quantity": "232470.0825"
+    },
+    {
+     "price": "128",
+     "quantity": "171238.6409"
+    },
+    {
+     "price": "129",
+     "quantity": "545498.7623"
+    },
+    {
+     "price": "130",
+     "quantity": "71784.8479"
+    },
+    {
+     "price": "131",
+     "quantity": "3506.9322"
+    }
+   ]
+  },
+  "ALICE": {
+   "order_currency": "ALICE",
+   "bids": [
+    {
+     "price": "182",
+     "quantity": "107.1428"
+    },
+    {
+     "price": "181",
+     "quantity": "56603.8620"
+    },
+    {
+     "price": "180",
+     "quantity": "138724.5841"
+    },
+    {
+     "price": "179",
+     "quantity": "17317.4804"
+    },
+    {
+     "price": "178",
+     "quantity": "26903.9231"
+    }
+   ],
+   "asks": [
+    {
+     "price": "183",
+     "quantity": "56692.5160"
+    },
+    {
+     "price": "184",
+     "quantity": "50990.3538"
+    },
+    {
+     "price": "185",
+     "quantity": "82810.9390"
+    },
+    {
+     "price": "186",
+     "quantity": "52749.0497"
+    },
+    {
+     "price": "187",
+     "quantity": "48319.0497"
+    }
+   ]
+  },
+  "ALLO": {
+   "order_currency": "ALLO",
+   "bids": [
+    {
+     "price": "301",
+     "quantity": "54620.7466"
+    },
+    {
+     "price": "300",
+     "quantity": "57968.3437"
+    },
+    {
+     "price": "299",
+     "quantity": "100.0000"
+    },
+    {
+     "price": "298",
+     "quantity": "3063.0000"
+    },
+    {
+     "price": "297",
+     "quantity": "100.0000"
+    }
+   ],
+   "asks": [
+    {
+     "price": "303",
+     "quantity": "65991.5507"
+    },
+    {
+     "price": "304",
+     "quantity": "63404.3904"
+    },
+    {
+     "price": "305",
+     "quantity": "52099.6604"
+    },
+    {
+     "price": "306",
+     "quantity": "57298.9553"
+    },
+    {
+     "price": "307",
+     "quantity": "41022.2984"
+    }
+   ]
+  },
+  "BTC": {
+   "order_currency": "BTC",
+   "bids": [
+    {
+     "price": "105034000",
+     "quantity": "0.0372"
+    },
+    {
+     "price": "105012000",
+     "quantity": "0.0026"
+    },
+    {
+     "price": "105006000",
+     "quantity": "0.0005"
+    },
+    {
+     "price": "105003000",
+     "quantity": "0.0057"
+    },
+    {
+     "price": "105001000",
+     "quantity": "0.0001"
+    }
+   ],
+   "asks": [
+    {
+     "price": "105057000",
+     "quantity": "0.0109"
+    },
+    {
+     "price": "105058000",
+     "quantity": "0.0004"
+    },
+    {
+     "price": "105060000",
+     "quantity": "0.0019"
+    },
+    {
+     "price": "105062000",
+     "quantity": "0.0000"
+    },
+    {
+     "price": "105063000",
+     "quantity": "0.0003"
+    }
+   ]
+  },
+  "ETH": {
+   "order_currency": "ETH",
+   "bids": [
+    {
+     "price": "3432000",
+     "quantity": "6.5043"
+    },
+    {
+     "price": "3431000",
+     "quantity": "15.7150"
+    },
+    {
+     "price": "3430000",
+     "quantity": "48.0294"
+    },
+    {
+     "price": "3429000",
+     "quantity": "16.3474"
+    },
+    {
+     "price": "3428000",
+     "quantity": "19.0342"
+    }
+   ],
+   "asks": [
+    {
+     "price": "3435000",
+     "quantity": "12.0575"
+    },
+    {
+     "price": "3436000",
+     "quantity": "8.9397"
+    },
+    {
+     "price": "3437000",
+     "quantity": "9.5030"
+    },
+    {
+     "price": "3438000",
+     "quantity": "7.2763"
+    },
+    {
+     "price": "3439000",
+     "quantity": "18.6661"
+    }
+   ]
+  }
+ }
+}

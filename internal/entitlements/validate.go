@@ -20,7 +20,7 @@ var ErrLiveExecution = fmt.Errorf("%w: execution.live must be false", ErrInvalid
 
 // Enumerations, verbatim from schema.v1.json (pinned by test).
 var (
-	enumTiers      = []string{"tier1", "tier2", "tier3", "dex"}
+	enumTiers      = []string{"tier1", "tier2", "tier3", "tier4", "dex"}
 	enumKinds      = []string{"spread", "carry", "basis", "funding", "triangular"}
 	enumChannels   = []string{"web", "telegram", "email", "webhook"}
 	enumStrategies = []string{"cross_venue_spot", "carry", "futures_futures", "funding_harvest", "triangular"}
