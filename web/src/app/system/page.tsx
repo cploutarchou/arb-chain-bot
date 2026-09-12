@@ -93,7 +93,9 @@ export default function SystemHealthPage() {
                 <Table
                   head={["Market", "State", "Age (ms)"]}
                   empty="order books"
-                  rows={h.books.map((b) => [
+                  label="Order book health"
+                rowKeys={h.books.map((b) => b.market)}
+                rows={h.books.map((b) => [
                     b.market,
                     <Badge
                       key="s"
@@ -126,6 +128,19 @@ export default function SystemHealthPage() {
                 <Table
                   head={["Queue", "Depth", "Capacity", "Dropped", "Written", "Write failures", "Unlinked cycles"]}
                   empty="queues"
+                  label="Write queues"
+                  // Keyed by queue name, not position. The list is
+                  // filtered on presence, so a queue the health payload
+                  // stops reporting shifts every row below it — and an
+                  // index key would then apply one queue's figures to
+                  // another queue's DOM row.
+                  rowKeys={[
+                    { name: "outbox", q: h.queues.outbox },
+                    { name: "paper", q: h.queues.paper },
+                    { name: "recorder", q: h.queues.recorder },
+                  ]
+                    .filter((row) => row.q !== undefined)
+                    .map(({ name }) => name)}
                   rows={[
                     { name: "outbox", q: h.queues.outbox },
                     { name: "paper", q: h.queues.paper },

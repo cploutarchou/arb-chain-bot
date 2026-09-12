@@ -76,7 +76,9 @@ export default function CycleDetailPage() {
                   <Table
                     head={["Asset", "Amount"]}
                     empty="fees"
-                    rows={Object.entries(c.fees).map(([asset, amount]) => [asset, amount])}
+                    label="Fees by asset"
+              rowKeys={Object.keys(c.fees)}
+              rows={Object.entries(c.fees).map(([asset, amount]) => [asset, amount])}
                   />
                 </div>
               )}
@@ -88,7 +90,11 @@ export default function CycleDetailPage() {
                   <Table
                     head={["Leg", "Market", "Side", "Status", "Qty", "Filled", "Avg price", "Fee"]}
                     empty="orders for this cycle"
-                    rows={(o.orders ?? []).map((ord) => [
+                    label="Orders"
+              rowKeys={(o.orders ?? []).map(
+                (ord) => `${ord.leg_no}:${ord.market_id}:${ord.side}`,
+              )}
+              rows={(o.orders ?? []).map((ord) => [
                       ord.leg_no,
                       ord.market_id,
                       ord.side,
@@ -111,7 +117,11 @@ export default function CycleDetailPage() {
                   <Table
                     head={["Leg", "Order", "Price", "Qty", "Fee", "Book v"]}
                     empty="fills for this cycle"
-                    rows={(f.fills ?? []).map((fill) => [
+                    label="Fills"
+              rowKeys={(f.fills ?? []).map(
+                (fill) => `${fill.order_id}:${fill.leg_no}:${fill.price}:${fill.qty}`,
+              )}
+              rows={(f.fills ?? []).map((fill) => [
                       fill.leg_no,
                       fill.order_id,
                       fill.price,

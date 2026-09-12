@@ -275,6 +275,8 @@ export default function ScannerPage() {
           <Table
             head={["", "Detected", "Triangle", "Net bps", "Net profit", "Input"]}
             empty="live events yet (stream fills as opportunities qualify)"
+            label="Live qualified events"
+            rowKeys={visibleLive.map((ev) => `${ev.triangle_id}:${ev.detected_at ?? ""}`)}
             rows={visibleLive.map((ev) => [
               <PinButton key="pin" id={ev.triangle_id} />,
               ev.detected_at ? fmtTime(ev.detected_at) : "—",
@@ -311,6 +313,8 @@ export default function ScannerPage() {
             <Table
               head={["", "Detected", "Triangle", "Net bps", "Net profit", "Input", "ID"]}
               empty="qualified opportunities in the recent window"
+              label="Recent qualified opportunities"
+              rowKeys={visibleRecent.map((o) => o.id)}
               rows={visibleRecent.map((o) => [
                 <PinButton key="pin" id={o.triangle_id} />,
                 fmtTime(o.at),

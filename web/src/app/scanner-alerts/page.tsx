@@ -575,6 +575,8 @@ export default function ScannerAlertsPage() {
                 "text",
               ]}
               empty="alert rules"
+              label="Alert rules"
+              rowKeys={list.map((r) => r.id)}
               rows={list.map((r) => [
                 r.name,
                 <Badge key="k" tone="dim">
@@ -657,6 +659,11 @@ export default function ScannerAlertsPage() {
               empty="alert events"
               sticky
               maxHeight={420}
+              label="Alert events"
+              rowKeys={(e.events ?? []).map(
+                (ev) =>
+                  `${ev.opened_at}:${ev.base}:${ev.quote}:${ev.buy_venue}:${ev.sell_venue}`,
+              )}
               rows={(e.events ?? []).map((ev) => [
                 fmtTime(ev.opened_at),
                 <Badge key="s" tone={eventTone(!ev.closed_at)}>

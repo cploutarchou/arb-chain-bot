@@ -73,6 +73,8 @@ export default function FundingPage() {
                 empty="bases"
                 sticky
                 maxHeight={480}
+                label="Funding rates by base and venue"
+                rowKeys={bases}
                 rows={bases.map((b) => [
                   b,
                   ...venues.map((v) => {

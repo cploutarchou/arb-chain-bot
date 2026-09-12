@@ -292,6 +292,8 @@ export default function CampaignsPage() {
             <Table
               head={["ID", "Started", "Ended", "Segments", "Exchange", ""]}
               empty="recordings (start recording above to capture market data)"
+              label="Recordings"
+              rowKeys={(r.recordings ?? []).map((rec) => rec.id)}
               rows={(r.recordings ?? []).map((rec) => [
                 <span key="id" className="text-[var(--text-dim)]">
                   {rec.id}
@@ -433,7 +435,9 @@ export default function CampaignsPage() {
           <Table
             head={["ID", "Recording", "Status", "Progress", "Verdict", "Started", "Finished", "Actor", ""]}
             empty="campaign runs (launch one above)"
-            rows={mergedRuns.map((run) => {
+            label="Campaign runs"
+              rowKeys={mergedRuns.map((run) => run.id)}
+              rows={mergedRuns.map((run) => {
               const v = worstVerdict(run);
               return [
                 <span key="id" className="text-[var(--text-dim)]">

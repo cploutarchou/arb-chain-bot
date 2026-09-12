@@ -31,15 +31,31 @@ Operations is itself one of the primary links — the earlier "6 primary
 highlighted no navigation entry fell from **3 to 0**; routes served
 stayed at **37**.
 
-On overflow: **75 of 75** capture stops show zero page-level horizontal
-overflow, re-measured against HEAD after every fix below. That is seven
-states × five viewports × two themes, **plus 200% zoom on five of the
-seven states** — the screener drawer and the Calculator are not covered
-at 200% zoom, because the zoom pass skips the states that need an
-interaction to reach. The Calculator is one of the surfaces the original
-audit flagged for clipped figures, so this gap is named rather than
-averaged into the total. At 200% the 1440-wide stop renders at 720 CSS
-px, which is the *mobile* layout, not a zoomed desktop one.
+On overflow: **77 stops measured, 0 with page-level horizontal overflow,
+0 unmeasured**, re-measured against HEAD after every fix below. That is
+seven states × five viewports × two themes, **plus 200% zoom on all
+seven states**. At 200% the 1440-wide stop renders at 720 CSS px, which
+is the *mobile* layout rather than a zoomed desktop one — worth knowing
+when reading those five images.
+
+The zoom pass used to skip the two states that need an interaction to
+reach, which meant it silently omitted the screener drawer and the
+Calculator — and the Calculator is one of the surfaces the original
+audit flagged for clipped figures, so it was precisely the one a reader
+would assume had been checked. It now runs their `prepare` steps too.
+
+Extending it immediately earned itself, and in a way worth recording:
+the drawer then **failed to open** at 200% zoom and at 390×844. The
+cause was this change's own doing — `RowDrawer` is deliberately
+`role="complementary"` at ≥md and `role="dialog"` below it, and the
+capture script was still waiting on the role rather than the drawer's
+accessible name. Two of those failures had been present in the previous
+run as well, and were reported here as "75 of 75 … zero overflow"
+because the reader (me) took the absence of an overflow line for a pass.
+**A state that could not be reached is unverified evidence, not clean
+evidence**, so `capture-after.mjs` now separates "measured" from
+"captured" in its summary and exits non-zero on a prepare failure, which
+removes the judgement call from whoever reads the log.
 
 The fifth viewport is **844×390** — a phone in landscape, which is above
 the md breakpoint and therefore renders the *desktop* sidebar into 390px
@@ -147,10 +163,11 @@ by its own verification:
    `SettingsCategories.tsx`, `a11y.ts`, the decimal work, the Settings,
    Screener, Calculator, Portfolio and Auto-Paper changes, the tests,
    the generator and these documents — does not exist on master.
-2. **The unit suites cover pure logic only.** 64 tests across the two
-   runners exercise `decimal.ts`, `nav.ts` and the Settings anchor
-   contract. **No component is rendered.** The navigation *data* is
-   proven; the navigation *component* is not. E2E is what covers that.
+2. **The unit suites cover pure logic only.** 92 tests across the two
+   runners exercise `decimal.ts`, `nav.ts`, the RBAC matrix against
+   `rbac.go`, and the Settings anchor contract. **No component is
+   rendered.** The navigation *data* is proven; the navigation
+   *component* is not. E2E is what covers that.
 3. **The "after" captures come from a disposable in-memory backend**, so
    several states are legitimately emptier than the "before" ones, which
    came from a populated research session. Sound for structure, density,
@@ -181,15 +198,28 @@ by its own verification:
    The mobile drawer and nav sheet modality gap recorded here earlier is
    **now fixed** (`lib/a11y.ts`). What remains open is listed below.
 
-   E2E: **66 of 67 pass.** The single failure
-   (`console.spec.ts:134`, a `/strategies` config apply) is pre-existing,
-   passes in isolation in 2.1s, and is on a page this branch does not
-   touch — a fixture-isolation problem in the suite, classified with its
-   evidence in verification.md §3a and deliberately not "fixed" by
-   relaxing its assertion.
-7. **Tables outside the audited flows are keyboard-reachable but
-   unnamed.** `Table`'s `label` is optional; the audited surfaces pass
-   it, the rest do not yet.
+   One deliberate rough edge in that fix: the explanation waits
+   `ANCHOR_DEADLINE_MS` (3s) before appearing, because the same constant
+   is what stops a *late-appearing* section from pulling focus out from
+   under a reader seconds after they followed a link. Three seconds of
+   apparent nothing for what is a deterministic permission answer is not
+   ideal, and shortening it would reintroduce the focus theft — so it is
+   left long on purpose. Anyone tempted to drop it to 300ms should read
+   the comment on the focus effect in `SettingsCategories.tsx` first.
+
+   E2E: **68 of 68 pass.** That includes the one long-standing failure
+   (`console.spec.ts:134`, a `/strategies` config apply), which is now
+   diagnosed and fixed. The first diagnosis — fixture isolation — was
+   wrong, and checking it disproved it: no test before that one applies a
+   config version. The cause was load; the test five places earlier
+   visits every page in the app, leaving `next dev` compiling. It now
+   waits on the apply response and asserts its status, which strengthens
+   the test rather than relaxing it. See verification.md §3a.
+7. **The row-identity and table-naming pass went repo-wide.** 33 tables
+   across 24 files now carry a stable `rowKeys` and an accessible
+   `label`. Three still key by index, correctly: two are fixed-order
+   literal arrays and one is an ordered leg list from a single payload,
+   where position *is* the identity. See D10.
 8. **Two open questions for the operator**, neither a security finding
    and neither reopening any existing audit conclusion:
    - `internal/storage/authstore.go` sets `platform_admin = (role ==

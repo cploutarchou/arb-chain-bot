@@ -146,6 +146,8 @@ export default function PerpetualsPage() {
                 "text",
               ]}
               empty={`perpetuals matching these filters — 0 of ${allRows.length} contracts qualify`}
+              label="Perpetual contracts"
+              rowKeys={rows.map((r) => `${r.venue}:${r.base}:${r.quote}`)}
               rows={rows.map((r) => {
                 const stale = isStaleAge(r.age_ms, pollIntervalS);
                 const dim = staleCellClass(stale);

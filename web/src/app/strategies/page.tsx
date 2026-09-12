@@ -497,7 +497,9 @@ export default function StrategiesPage() {
             <Table
               head={["Version", "Created", "By", "Parent", "Changed paths", ""]}
               empty="versions"
-              rows={(list ?? []).map((v) => [
+              label="Configuration versions"
+            rowKeys={(list ?? []).map((v) => String(v.version))}
+            rows={(list ?? []).map((v) => [
                 v.active ? <Badge key="a" tone="ok">v{v.version} active</Badge> : `v${v.version}`,
                 fmtTime(v.created_at),
                 v.created_by || "system",

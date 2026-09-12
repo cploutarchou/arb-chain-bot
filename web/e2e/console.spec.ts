@@ -149,9 +149,30 @@ test("structured config edit applies as a new version end to end", async ({
     .getByRole("dialog", { name: "Apply new strategy configuration?" })
     .waitFor();
   await expect(page.getByRole("dialog")).toContainText("scanner.depth");
+  // Wait on the apply response itself, not on a clock.
+  //
+  // This test used to fail inside the full suite and pass in isolation.
+  // The cause is not fixture state — no earlier test applies a config
+  // version — it is load: the test five places earlier visits every nav
+  // page in the app, which leaves `next dev` compiling routes on demand,
+  // so the round trip can exceed a fixed 10s wait. Asserting on the POST
+  // makes it deterministic and *strengthens* the test rather than
+  // relaxing it: the request must actually be made, and must actually
+  // succeed, before the confirmation is required to appear.
+  const applied = page.waitForResponse(
+    (res) =>
+      res.url().includes("/api/v1/config") &&
+      res.request().method() === "POST",
+    { timeout: 30_000 },
+  );
   await page.getByRole("button", { name: "Apply new version" }).click();
+  const res = await applied;
+  expect(
+    res.status(),
+    `apply returned ${res.status()}: ${(await res.text()).slice(0, 300)}`,
+  ).toBe(200);
   await expect(page.getByText(/Version \d+ active\./)).toBeVisible({
-    timeout: 10_000,
+    timeout: 15_000,
   });
 });
 
@@ -2080,6 +2101,103 @@ test("every pre-existing Settings anchor activates its category and moves focus 
       `#${anchor} must take focus, not just scroll`,
     ).toBeFocused({ timeout: 5_000 });
   }
+});
+
+test("screener filters round-trip through the URL, and an opt-in is never enabled by a malformed link", async ({
+  page,
+}) => {
+  // console-v2.md §6.1 asked for URL sync and it had never shipped: six
+  // of the ten filters travelled in neither direction, so a screener
+  // view could not be bookmarked, shared, or restored by Back, and the
+  // Calculator hand-off came back to a default table.
+  await login(page);
+  await page.goto("/screener");
+
+  // A common filter reaches the URL...
+  const spreadField = page.getByRole("textbox", { name: /Min net spread/ });
+  await spreadField.fill("42");
+  await expect(page).toHaveURL(/min_spread_bps=42/, { timeout: 10_000 });
+
+  // ...and an advanced one does too, as the string it was typed as. This
+  // matters: min_liquidity is money, and a round trip through a float
+  // would be the shortcut the rest of this change removes.
+  //
+  // The disclosure is opened by state, not by clicking blind: its label
+  // flips between "Show" and "Hide" AND its open state is persisted in
+  // localStorage, so a second unconditional click can just as easily
+  // close it as open it depending on hydration timing.
+  // Retried with toPass, because a visible button is not necessarily a
+  // hydrated one: before React attaches its handler the click is inert
+  // and aria-expanded never changes. Same race the capture harness hits
+  // on /login.
+  const ensureAdvancedOpen = async () => {
+    const toggle = page.getByRole("button", { name: /advanced filters/i });
+    await toggle.waitFor({ state: "visible", timeout: 10_000 });
+    await expect(async () => {
+      if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+        await toggle.click();
+      }
+      expect(await toggle.getAttribute("aria-expanded")).toBe("true");
+    }).toPass({ timeout: 15_000 });
+  };
+  await ensureAdvancedOpen();
+  await page.getByRole("textbox", { name: /Min liquidity/ }).fill("1234.56789");
+  await expect(page).toHaveURL(/min_liquidity=1234\.56789/, {
+    timeout: 10_000,
+  });
+
+  // Reload restores both, rather than resetting to defaults.
+  await page.reload();
+  // The applied-filter chip also carries this text ("Remove filter: Min
+  // net spread: 42 bps"), so the field is addressed by role rather than
+  // by label — the chip's presence is itself evidence the filter was
+  // restored, but it is not the input.
+  await expect(
+    page.getByRole("textbox", { name: /Min net spread/ }),
+  ).toHaveValue("42");
+  // The query string kept it across the reload, which is the claim.
+  await expect(page).toHaveURL(/min_liquidity=1234\.56789/);
+  await ensureAdvancedOpen();
+  await expect(
+    page.getByRole("textbox", { name: /Min liquidity/ }),
+  ).toHaveValue("1234.56789");
+
+  // An opt-in that is off is absent from the URL — a shared link never
+  // carries an opt-in the sender did not enable.
+  await expect(page).not.toHaveURL(/include_suspect/);
+
+  // And a malformed value must NOT enable it. These two opt-ins re-admit
+  // lanes the backend excludes by default, so anything other than an
+  // explicit affirmative has to fall back to the safe default.
+  await page.goto("/screener?include_suspect=yes-please");
+  const suspect = page.getByRole("checkbox", {
+    name: /Include suspect lanes/i,
+  });
+  await expect(suspect).not.toBeChecked();
+  await page.goto("/screener?include_suspect=1");
+  await expect(
+    page.getByRole("checkbox", { name: /Include suspect lanes/i }),
+  ).toBeChecked();
+
+  // An externally-changed URL wins over the component's own state. This
+  // is the case that makes Back work and keeps the Calculator hand-off
+  // intact: the filters are seeded at mount, so without adopting a later
+  // URL change the sync effect would rewrite the address bar from stale
+  // state and silently discard what the link asked for.
+  await page.goto("/screener?min_spread_bps=42");
+  await expect(
+    page.getByRole("textbox", { name: /Min net spread/ }),
+  ).toHaveValue("42");
+  await page.goto("/screener?min_spread_bps=7&quote=USDT");
+  await expect(
+    page.getByRole("textbox", { name: /Min net spread/ }),
+  ).toHaveValue("7");
+  await expect(page).toHaveURL(/min_spread_bps=7/);
+
+  // Clearing the filters clears the query string too.
+  await page.goto("/screener?min_spread_bps=42");
+  await page.getByRole("button", { name: /Clear filters/i }).click();
+  await expect(page).not.toHaveURL(/min_spread_bps/, { timeout: 10_000 });
 });
 
 test("secondary navigation stays reachable on a short landscape viewport above the md breakpoint", async ({

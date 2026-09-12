@@ -37,6 +37,8 @@ export default function AlertsPage() {
               <Table
                 head={["Last", "Severity", "State", "Title", "Detail", "Count", ""]}
                 empty="alerts for this filter"
+                label="Alerts"
+                rowKeys={(a.alerts ?? []).map((al) => al.id)}
                 rows={(a.alerts ?? []).map((al) => [
                   fmtTime(al.last_at),
                   <Badge key="sev" tone={severityTone(al.severity)}>{al.severity}</Badge>,

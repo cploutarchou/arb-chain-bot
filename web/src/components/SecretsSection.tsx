@@ -141,7 +141,9 @@ export function SecretsSection() {
           : ["Secret", "Status", "Source", "Updated", "Applies", ""]
       }
       empty="registered secrets"
-      rows={rows.map((s) => [
+      label="Credential vault status"
+        rowKeys={rows.map((s) => `${s.venue}:${s.label}`)}
+        rows={rows.map((s) => [
         ...(byVenue ? [VENUE_NAME[s.venue ?? ""] ?? s.venue ?? "—"] : []),
         s.label,
         s.present ? (

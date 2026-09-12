@@ -143,7 +143,9 @@ function ReportDetailView({ report }: { report: Report }) {
           <Table
             head={["Asset", "Realized", "Fees", "Drawdown"]}
             empty="pnl rows"
-            rows={report.pnl.map((p) => [p.asset, p.realized, p.fees, p.drawdown])}
+            label="Result by asset"
+              rowKeys={report.pnl.map((p) => p.asset)}
+              rows={report.pnl.map((p) => [p.asset, p.realized, p.fees, p.drawdown])}
           />
         </div>
       )}
@@ -169,7 +171,9 @@ function ReportDetailView({ report }: { report: Report }) {
           <Table
             head={["Asset", "Available", "Reserved", "Utilization"]}
             empty="capital rows"
-            rows={report.capital_utilization.map((c) => [c.asset, c.available, c.reserved, c.utilization])}
+            label="Capital utilisation"
+              rowKeys={report.capital_utilization.map((c) => c.asset)}
+              rows={report.capital_utilization.map((c) => [c.asset, c.available, c.reserved, c.utilization])}
           />
         </div>
       )}
@@ -182,7 +186,9 @@ function ReportDetailView({ report }: { report: Report }) {
           <Table
             head={["Triangle", "Cycles", "Net P&L"]}
             empty="top triangles"
-            rows={report.top_triangles.map((t) => [t.triangle_id, t.cycles, t.net_pnl])}
+            label="Best triangles"
+              rowKeys={report.top_triangles.map((t) => t.triangle_id)}
+              rows={report.top_triangles.map((t) => [t.triangle_id, t.cycles, t.net_pnl])}
           />
         </div>
       )}
@@ -195,7 +201,9 @@ function ReportDetailView({ report }: { report: Report }) {
           <Table
             head={["Triangle", "Cycles", "Net P&L"]}
             empty="worst triangles"
-            rows={report.worst_triangles.map((t) => [t.triangle_id, t.cycles, t.net_pnl])}
+            label="Worst triangles"
+              rowKeys={report.worst_triangles.map((t) => t.triangle_id)}
+              rows={report.worst_triangles.map((t) => [t.triangle_id, t.cycles, t.net_pnl])}
           />
         </div>
       )}
@@ -208,7 +216,9 @@ function ReportDetailView({ report }: { report: Report }) {
           <Table
             head={["Cycle", "Outcome"]}
             empty="failed cycles"
-            rows={report.failed_cycles.map((f) => [f.id, <OutcomeBadge key="o" code={f.outcome} />])}
+            label="Failed cycles"
+              rowKeys={report.failed_cycles.map((f) => f.id)}
+              rows={report.failed_cycles.map((f) => [f.id, <OutcomeBadge key="o" code={f.outcome} />])}
           />
         </div>
       )}
@@ -255,7 +265,11 @@ function ReportDetailView({ report }: { report: Report }) {
           <Table
             head={["Severity", "Title", "Count", "Last at"]}
             empty="incidents"
-            rows={report.incidents.map((i) => [
+            label="Incidents"
+              rowKeys={report.incidents.map(
+                (i) => `${i.severity}:${i.title}:${i.last_at}`,
+              )}
+              rows={report.incidents.map((i) => [
               <Badge key="s" tone={i.severity === "CRITICAL" ? "bad" : i.severity === "HIGH" ? "high" : i.severity === "WARNING" ? "warn" : "dim"}>
                 {i.severity}
               </Badge>,
@@ -346,6 +360,8 @@ export default function ReportsPage() {
                   ? "reports yet. Generate one above, or persistence isn't configured for this deployment — see docs/deployment.md"
                   : "reports yet. An OPERATOR or ADMIN can generate one, or persistence isn't configured for this deployment — see docs/deployment.md"
               }
+              label="Generated reports"
+              rowKeys={(r.reports ?? []).map((rep) => rep.id)}
               rows={(r.reports ?? []).map((rep) => [
                 fmtTime(rep.generated_at),
                 <Badge key="k" tone="dim">{rep.kind}</Badge>,

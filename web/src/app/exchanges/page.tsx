@@ -32,6 +32,8 @@ export default function ExchangesPage() {
               <Table
                 head={["Market", "State", "Age (ms)"]}
                 empty="books (engine still bootstrapping)"
+                label="Order book health"
+                rowKeys={(h.books ?? []).map((b) => b.market)}
                 rows={(h.books ?? []).map((b) => [
                   b.market,
                   <Badge

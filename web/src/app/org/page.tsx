@@ -203,6 +203,8 @@ function MembersManager({
             <Table
               head={["Email", "Role", "Status", "Joined", ""]}
               empty="members"
+              label="Organisation members"
+              rowKeys={(res.members ?? []).map((m) => m.user_id)}
               rows={(res.members ?? []).map((m) => [
                 m.email ?? m.user_id,
                 canManage ? (

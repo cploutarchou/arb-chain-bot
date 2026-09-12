@@ -139,7 +139,12 @@ export default function ScreenerReportsPage() {
                 empty="screener reports — none generated yet"
                 sticky
                 maxHeight={520}
-                rows={(data.reports ?? []).map((r: ScreenerReportSummary) => [
+                label="Screener evidence reports"
+              rowKeys={(data.reports ?? []).map(
+                (r: ScreenerReportSummary) =>
+                  `${r.strategy}:${r.rule_id ?? ""}:${r.period_start}:${r.period_end}`,
+              )}
+              rows={(data.reports ?? []).map((r: ScreenerReportSummary) => [
                   <Badge key="p" tone="dim">
                     {r.period_label}
                   </Badge>,

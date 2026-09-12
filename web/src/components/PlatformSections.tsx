@@ -1371,7 +1371,9 @@ export function VenuesSection() {
                           <Table
                             head={["Symbol", "Maker (bps)", "Taker (bps)", ""]}
                             empty="overrides"
-                            rows={Object.entries(v.fees.overrides ?? {}).map(
+                            label="Fee overrides"
+              rowKeys={Object.keys(v.fees.overrides ?? {})}
+              rows={Object.entries(v.fees.overrides ?? {}).map(
                               ([sym, o]) => [
                                 sym,
                                 o.maker_bps,
@@ -2235,7 +2237,9 @@ export function PlatformVersionHistorySection() {
             <Table
               head={["Version", "Created", "By", "Parent", "Changed paths", ""]}
               empty="versions"
-              rows={(list ?? []).map((v) => [
+              label="Platform settings versions"
+            rowKeys={(list ?? []).map((v) => String(v.version))}
+            rows={(list ?? []).map((v) => [
                 v.active ? (
                   <Badge key="a" tone="ok">
                     v{v.version} active

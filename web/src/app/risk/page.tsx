@@ -121,7 +121,9 @@ function BreakersTable({
       <Table
         head={["Name", "Scope", "State", "Reason", ""]}
         empty="registered breakers"
-        rows={breakers.map((b) => [
+        label="Circuit breakers"
+            rowKeys={breakers.map((b) => `${b.Name}:${b.Scope}`)}
+            rows={breakers.map((b) => [
           b.Name,
           b.Scope || "global",
           <Badge key="s" tone={b.State === "OPEN" ? "bad" : b.State === "HALF_OPEN" ? "warn" : "ok"}>
@@ -175,6 +177,8 @@ export default function RiskPage() {
               <Table
                 head={["Limit", "Value"]}
                 empty="limits"
+                label="Risk limits"
+                rowKeys={Object.keys(r.limits ?? {})}
                 rows={Object.entries(r.limits ?? {}).map(([k, v]) => [limitLabel(k), String(v)])}
               />
             </Section>
@@ -185,6 +189,10 @@ export default function RiskPage() {
               <Table
                 head={["Reason code", "Count"]}
                 empty="rejections recorded"
+                label="Rejection reasons"
+                rowKeys={Object.entries(r.reject_reason_counts ?? {})
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([code]) => code)}
                 rows={Object.entries(r.reject_reason_counts ?? {})
                   .sort((a, b) => b[1] - a[1])
                   .map(([code, n]) => [
@@ -209,7 +217,11 @@ export default function RiskPage() {
                 empty="risk events in this window"
                 sticky
                 maxHeight={480}
-                rows={(res.events ?? []).map((ev) => [
+                label="Risk events"
+              rowKeys={(res.events ?? []).map(
+                (ev) => `${ev.ts}:${ev.kind}:${ev.subject ?? ""}`,
+              )}
+              rows={(res.events ?? []).map((ev) => [
                   fmtTime(ev.ts),
                   <Badge key="k" tone={ev.kind === "breaker_transition" ? "warn" : "dim"}>
                     {ev.kind}

@@ -104,6 +104,8 @@ function OpportunitiesPageInner() {
             <Table
               head={["Detected", "Age", "Triangle", "Exchange", "Status", "Reason", "Input", "Net profit", "Net bps", ""]}
               empty="persisted opportunities for this filter"
+              label="Persisted opportunities"
+              rowKeys={rows.map((o) => o.id)}
               rows={rows.map((o) => [
                 fmtTime(o.detected_at),
                 fmtAge(o.detected_at, now),

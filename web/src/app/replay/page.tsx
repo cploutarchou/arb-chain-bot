@@ -295,7 +295,9 @@ export default function ReplayPage() {
           <Table
             head={["ID", "Recording", "Config", "Status", "Progress", "Started", "Finished", "Actor", ""]}
             empty="replay runs (run one above)"
-            rows={mergedRuns.map((run) => [
+            label="Replay runs"
+              rowKeys={mergedRuns.map((run) => run.id)}
+              rows={mergedRuns.map((run) => [
               <span key="id" className="text-[var(--text-dim)]">
                 {run.id}
               </span>,
@@ -346,7 +348,9 @@ export default function ReplayPage() {
                   <Table
                     head={["Opportunity", "Triangle", "Outcome", "Net bps", "At"]}
                     empty="executed cycles (top, ranked by net bps — not raw qualified opportunities)"
-                    rows={(detail.top ?? []).map((t) => [
+                    label="Top triangles in this run"
+                rowKeys={(detail.top ?? []).map((t) => t.triangle_id)}
+                rows={(detail.top ?? []).map((t) => [
                       <Link key="o" href={`/opportunities/${encodeURIComponent(t.opportunity_id)}`} className="text-[var(--accent)] underline">
                         {t.opportunity_id}
                       </Link>,
@@ -403,7 +407,9 @@ export default function ReplayPage() {
                   <Table
                     head={["Parameter", `v${a}`, `v${b}`]}
                     empty="differences"
-                    rows={diff.map((d) => [d.path, d.a, d.b])}
+                    label="Configuration differences"
+                rowKeys={diff.map((d) => d.path)}
+                rows={diff.map((d) => [d.path, d.a, d.b])}
                   />
                 ))}
             </>

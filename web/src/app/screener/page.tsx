@@ -37,7 +37,7 @@
 //     Calculator hand-off.
 
 import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   api,
   ApiError,
@@ -101,12 +101,49 @@ function toggleIn(list: string[], v: string): string[] {
   return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 }
 
+// parseVenueParam reads a venue filter from the URL. Comma-separated so a
+// multi-venue selection round-trips, while the single value the
+// Calculator hand-off writes keeps working unchanged.
+function parseVenueParam(raw: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter((v) => v !== "");
+}
+
+// isTruthyParam: only an explicit affirmative enables an opt-in. The two
+// opt-ins re-admit lanes the backend excludes by default (suspect
+// asset-identity and unknown liquidity), so a malformed or unexpected
+// value must fall back to the safe default rather than to "on".
+function isTruthyParam(raw: string | null): boolean {
+  return raw === "1" || raw === "true";
+}
+
+// FILTER_PARAMS is the single list of query keys this page owns. The sync
+// effect deletes exactly these before rewriting them, so any other
+// parameter on the URL — a hand-off marker, something a future feature
+// adds — is preserved rather than silently dropped.
+const FILTER_PARAMS = [
+  "base",
+  "quote",
+  "buy_venue",
+  "sell_venue",
+  "min_spread_bps",
+  "min_liquidity",
+  "min_lifetime_s",
+  "bases_deny",
+  "include_suspect",
+  "include_unknown_liquidity",
+] as const;
+
 function ScreenerPageInner() {
   const { state: auth } = useAuth();
   const role = auth.kind === "authenticated" ? auth.me.role : undefined;
   const mayConfig = can(role, "screener:config");
   const router = useRouter();
   const params = useSearchParams();
+  const pathname = usePathname();
 
   const status = useScreenerStatus();
   const pollMs = pollMsFromStatus(status);
@@ -115,29 +152,54 @@ function ScreenerPageInner() {
   // Seeded once from a Calculator "Back to Screener" hand-off (§C6) —
   // read at mount only; the operator's own edits afterwards are the
   // source of truth.
-  const [buyVenues, setBuyVenues] = useState<string[]>(() => {
-    const v = params.get("buy_venue")?.toLowerCase();
-    return v ? [v] : [];
-  });
-  const [sellVenues, setSellVenues] = useState<string[]>(() => {
-    const v = params.get("sell_venue")?.toLowerCase();
-    return v ? [v] : [];
-  });
+  // Every filter is seeded from the URL, not only the four the Calculator
+  // hand-off used to carry. Before this, six of the ten travelled in
+  // neither direction: a screener view could not be bookmarked, shared or
+  // restored by Back, which is what console-v2.md §6.1 asked for and
+  // never got.
+  //
+  // The text filters are seeded as the **strings** they were typed as and
+  // are written back verbatim. They are never parsed to a number on the
+  // way through the URL: `min_liquidity` is money, and a round trip
+  // through a float is exactly the shortcut decimal.ts exists to remove.
+  const [buyVenues, setBuyVenues] = useState<string[]>(() =>
+    parseVenueParam(params.get("buy_venue")),
+  );
+  const [sellVenues, setSellVenues] = useState<string[]>(() =>
+    parseVenueParam(params.get("sell_venue")),
+  );
   const [quote, setQuote] = useState(
     () => params.get("quote")?.toUpperCase() ?? "",
   );
-  const [minSpreadBps, setMinSpreadBps] = useState("");
-  const [minLiquidity, setMinLiquidity] = useState("");
-  const [minLifetimeS, setMinLifetimeS] = useState("");
+  const [minSpreadBps, setMinSpreadBps] = useState(
+    () => params.get("min_spread_bps") ?? "",
+  );
+  const [minLiquidity, setMinLiquidity] = useState(
+    () => params.get("min_liquidity") ?? "",
+  );
+  const [minLifetimeS, setMinLifetimeS] = useState(
+    () => params.get("min_lifetime_s") ?? "",
+  );
   const [basesAllowText, setBasesAllowText] = useState(
     () => params.get("base")?.toUpperCase() ?? "",
   );
-  const [basesDenyText, setBasesDenyText] = useState("");
+  const [basesDenyText, setBasesDenyText] = useState(
+    () => params.get("bases_deny")?.toUpperCase() ?? "",
+  );
   // Both OFF by default, matching the backend's own safe default
   // (handleScreenerSpreads excludes suspect/unknown-liquidity lanes
   // unless explicitly opted in) — never change this default.
-  const [includeSuspect, setIncludeSuspect] = useState(false);
-  const [includeUnknownLiquidity, setIncludeUnknownLiquidity] = useState(false);
+  //
+  // They are read from the URL, but only an explicit affirmative turns
+  // them on: anything else, including a malformed value, leaves the safe
+  // default in place. A link must not be able to quietly re-admit
+  // suspect lanes through a typo.
+  const [includeSuspect, setIncludeSuspect] = useState(() =>
+    isTruthyParam(params.get("include_suspect")),
+  );
+  const [includeUnknownLiquidity, setIncludeUnknownLiquidity] = useState(() =>
+    isTruthyParam(params.get("include_unknown_liquidity")),
+  );
   // Optional columns (§A4) — off by default, the table stays at the
   // seven decision-relevant columns until an operator asks for more.
   const [showGrossColumn, setShowGrossColumn] = useState(false);
@@ -163,6 +225,103 @@ function ScreenerPageInner() {
     includeSuspect,
     includeUnknownLiquidity,
   ].filter(Boolean).length;
+
+  // ---- URL sync (console-v2.md §6.1) -------------------------------------
+  // The filter state is written back to the query string, so a screener
+  // view can be bookmarked, shared, and restored by Back — and so the
+  // Calculator hand-off returns to the filters it left rather than to a
+  // default table.
+  //
+  // Three things this deliberately does:
+  //   * `replace`, never `push`: typing in a filter must not manufacture
+  //     a history entry per keystroke, or Back becomes unusable.
+  //   * unknown parameters are preserved. Only the keys this page owns
+  //     (FILTER_PARAMS) are cleared before rewriting.
+  //   * the values are the **strings as typed**. `min_liquidity` is
+  //     money; round-tripping it through a number here would reintroduce
+  //     the float shortcut the rest of this change removes.
+  const filterQuery = useMemo(() => {
+    const next = new URLSearchParams(params.toString());
+    for (const key of FILTER_PARAMS) next.delete(key);
+    if (basesAllowText.trim())
+      next.set("base", basesAllowText.trim().toUpperCase());
+    if (quote.trim()) next.set("quote", quote.trim().toUpperCase());
+    if (buyVenues.length > 0) next.set("buy_venue", buyVenues.join(","));
+    if (sellVenues.length > 0) next.set("sell_venue", sellVenues.join(","));
+    if (minSpreadBps.trim()) next.set("min_spread_bps", minSpreadBps.trim());
+    if (minLiquidity.trim()) next.set("min_liquidity", minLiquidity.trim());
+    if (minLifetimeS.trim()) next.set("min_lifetime_s", minLifetimeS.trim());
+    if (basesDenyText.trim())
+      next.set("bases_deny", basesDenyText.trim().toUpperCase());
+    // Written only when ON. An absent parameter therefore means the safe
+    // default, and a shared link never carries an opt-in the sender did
+    // not actually enable.
+    if (includeSuspect) next.set("include_suspect", "1");
+    if (includeUnknownLiquidity) next.set("include_unknown_liquidity", "1");
+    next.sort();
+    return next.toString();
+  }, [
+    params,
+    basesAllowText,
+    quote,
+    buyVenues,
+    sellVenues,
+    minSpreadBps,
+    minLiquidity,
+    minLifetimeS,
+    basesDenyText,
+    includeSuspect,
+    includeUnknownLiquidity,
+  ]);
+
+  // lastWritten records the query this component last put in the address
+  // bar, which is what lets it tell its own writes apart from someone
+  // else's.
+  const lastWritten = useRef<string | null>(null);
+
+  useEffect(() => {
+    const current = new URLSearchParams(params.toString());
+    current.sort();
+    const currentStr = current.toString();
+    if (currentStr === filterQuery) return;
+
+    // The URL changed from outside this component — Back or Forward, or a
+    // "Back to Screener" link arriving with filters on it. Adopt it.
+    //
+    // Without this the sync effect would treat the difference as "my
+    // state is newer" and rewrite the address bar from filters that were
+    // seeded at mount, which would make Back appear to do nothing and
+    // would silently discard the filters a hand-off link carried. Next
+    // may reuse this component across such a navigation rather than
+    // remounting it, so seeding at mount is not enough on its own.
+    if (lastWritten.current !== null && currentStr !== lastWritten.current) {
+      lastWritten.current = currentStr;
+      setBuyVenues(parseVenueParam(params.get("buy_venue")));
+      setSellVenues(parseVenueParam(params.get("sell_venue")));
+      setQuote(params.get("quote")?.toUpperCase() ?? "");
+      setMinSpreadBps(params.get("min_spread_bps") ?? "");
+      setMinLiquidity(params.get("min_liquidity") ?? "");
+      setMinLifetimeS(params.get("min_lifetime_s") ?? "");
+      setBasesAllowText(params.get("base")?.toUpperCase() ?? "");
+      setBasesDenyText(params.get("bases_deny")?.toUpperCase() ?? "");
+      setIncludeSuspect(isTruthyParam(params.get("include_suspect")));
+      setIncludeUnknownLiquidity(
+        isTruthyParam(params.get("include_unknown_liquidity")),
+      );
+      return;
+    }
+
+    // Debounced: a text filter would otherwise issue a soft navigation on
+    // every keystroke. The delay is short enough that Back and bookmark
+    // both see the settled state.
+    const t = setTimeout(() => {
+      lastWritten.current = filterQuery;
+      router.replace(filterQuery ? `${pathname}?${filterQuery}` : pathname, {
+        scroll: false,
+      });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [filterQuery, params, pathname, router]);
 
   const spreads = usePoll(
     () =>

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T16:33:22.130Z",
+  "generatedAt": "2026-09-12T18:19:44.705Z",
   "base": "http://127.0.0.1:3100",
   "results": [
     {
@@ -112,7 +112,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 154
+          "overflow": 181
         }
       ]
     },
@@ -130,7 +130,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 155
+          "overflow": 170
         }
       ]
     },
@@ -208,7 +208,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 413
+          "overflow": 414
         }
       ]
     },
@@ -226,7 +226,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 410
+          "overflow": 426
         }
       ]
     },
@@ -304,15 +304,9 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 534
+          "overflow": 555
         }
       ]
-    },
-    {
-      "state": "03-screener-detail",
-      "theme": "dark",
-      "viewport": "390x844",
-      "error": "prepare failed: TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('complementary').first() to be visible\n"
     },
     {
       "state": "03-screener-detail",
@@ -328,7 +322,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 534
+          "overflow": 555
         }
       ]
     },
@@ -406,7 +400,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 335
+          "overflow": 350
         }
       ]
     },
@@ -424,7 +418,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 334
+          "overflow": 350
         }
       ]
     },
@@ -586,7 +580,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 166
+          "overflow": 170
         }
       ]
     },
@@ -604,7 +598,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 179
+          "overflow": 175
         }
       ]
     },
@@ -682,7 +676,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 414
+          "overflow": 438
         }
       ]
     },
@@ -700,7 +694,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 414
+          "overflow": 437
         }
       ]
     },
@@ -778,15 +772,9 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 543
+          "overflow": 560
         }
       ]
-    },
-    {
-      "state": "03-screener-detail",
-      "theme": "light",
-      "viewport": "390x844",
-      "error": "prepare failed: TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('complementary').first() to be visible\n"
     },
     {
       "state": "03-screener-detail",
@@ -802,7 +790,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 537
+          "overflow": 560
         }
       ]
     },
@@ -880,7 +868,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 334
+          "overflow": 353
         }
       ]
     },
@@ -898,7 +886,7 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 334
+          "overflow": 350
         }
       ]
     },
@@ -976,9 +964,39 @@
         {
           "label": "Cross-exchange spreads",
           "focusable": true,
-          "overflow": 199
+          "overflow": 218
         }
       ]
+    },
+    {
+      "state": "03-screener-detail",
+      "label": "Discover — spread detail drawer",
+      "theme": "dark",
+      "viewport": "1440x900 @ 200% zoom",
+      "file": "03-screener-detail--dark--zoom200.png",
+      "scrollWidth": 720,
+      "clientWidth": 720,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": [
+        {
+          "label": "Cross-exchange spreads",
+          "focusable": true,
+          "overflow": 218
+        }
+      ]
+    },
+    {
+      "state": "04-calculator",
+      "label": "Calculator — prefilled hand-off, calculated",
+      "theme": "dark",
+      "viewport": "1440x900 @ 200% zoom",
+      "file": "04-calculator--dark--zoom200.png",
+      "scrollWidth": 720,
+      "clientWidth": 720,
+      "overflow": 0,
+      "widest": null,
+      "scrollers": []
     },
     {
       "state": "05-paper",

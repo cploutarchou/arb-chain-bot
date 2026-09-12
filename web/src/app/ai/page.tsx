@@ -46,7 +46,9 @@ export default function AIPage() {
             <Table
               head={["Created", "Parameter", "Current → Recommended", "Confidence", "Reason", "Status", ""]}
               empty="recommendations (the advisor proposes only when data supports it)"
-              rows={(list ?? []).map((r) => [
+              label="AI recommendations"
+            rowKeys={(list ?? []).map((r) => `${r.parameter}:${r.created_at}`)}
+            rows={(list ?? []).map((r) => [
                 fmtTime(r.created_at),
                 r.parameter,
                 `${r.current_value} → ${r.recommended_value}`,

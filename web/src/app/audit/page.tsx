@@ -27,6 +27,8 @@ export default function AuditPage() {
             <Table
               head={["Time", "Source", "Actor", "Action", "Entity", "Entity ID"]}
               empty="audit events recorded yet for this filter"
+              label="Audit events"
+              rowKeys={(a.events ?? []).map((e) => e.id)}
               rows={(a.events ?? []).map((e) => [
                 fmtTime(e.ts),
                 <Badge key="src" tone="dim">{e.source}</Badge>,

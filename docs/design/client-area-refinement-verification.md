@@ -25,7 +25,7 @@ produce a different "before", not a better one.
 | Console unit suite (this branch) | `cd web && npm run test:unit` | pass — 63 tests |
 | Console unit suite (master's, PR #30) | `cd web && npm test` | pass — 10 tests |
 | `golangci-lint run ./...` | `golangci-lint run ./...` | pass — **0 issues** (v2.13.1) on the merged tree |
-| Playwright e2e | `scripts/e2e.sh` | **66 of 67 pass.** The one failure is pre-existing and not caused by this change — see below |
+| Playwright e2e | `scripts/e2e.sh` | **68 of 68 pass** (`EXIT=0`). The one long-standing failure is diagnosed and fixed — see §3a |
 | GitHub Actions CI | — | **unverified, environment blocked.** `docs/PENDING.md` §0 records repo-wide Actions failure since 2026-08-31 with no runner assigned and no logs, on every branch including `master`. "CI-equivalent" here means the local suite above. |
 
 **On the Go row.** No `.go` file is modified by this branch's own
@@ -143,38 +143,70 @@ without it a deep link would scroll without moving focus.
 This closes a real gap: the earlier test proved only that the metadata
 table *claimed* nine anchors, which the page could have contradicted.
 
-## 3a. The one failing e2e test, classified rather than excused
+## 3c. Screener filter URL sync (D11)
+
+All ten filters round-trip. Verified in e2e
+(`screener filters round-trip through the URL, and an opt-in is never
+enabled by a malformed link`), which asserts four separate things rather
+than only that the feature exists:
+
+| Assertion | Why it is the one worth making |
+| --- | --- |
+| `min_spread_bps=42` appears in the URL after typing | the common-filter half of the sync |
+| `min_liquidity=1234.56789` appears **as that string** | money must not round-trip through a float; a numeric parse here would be invisible until it lost a digit |
+| reload restores both values into their fields | the point of the feature — bookmark, share, Back |
+| `?include_suspect=yes-please` leaves the box **unchecked**, `?include_suspect=1` checks it | the safety-relevant case: these opt-ins re-admit lanes the backend excludes by default, so a malformed link must fall back to the safe default rather than to "on" |
+| navigating to a different `?min_spread_bps=` adopts the new value | Back, Forward and the Calculator hand-off all depend on an external URL change beating the component's mount-time state |
+| "Clear filters" empties the query string | otherwise a reload silently restores what the operator just cleared |
+
+## 3d. Row identity across every table that can reorder (D10)
+
+33 tables in 24 files now pass `rowKeys` and `label`. The mechanical
+check that none was missed:
+
+```
+$ for f in $(grep -rl "<Table\b\|<VirtualTable\b" app components); do
+    tot=$(grep -c "<Table\b\|<VirtualTable\b" "$f"); keyed=$(grep -c "rowKeys=" "$f")
+    [ "$tot" -gt "$keyed" ] && printf "%s %s/%s\n" "$f" "$keyed" "$tot"
+  done
+app/screener-reports/[id]/page.tsx   0/1
+app/opportunities/[id]/page.tsx      0/1
+components/ui.tsx                    1/2
+```
+
+Those three are deliberate: two are fixed-order literal arrays and one is
+an ordered leg list from a single payload, where the array position *is*
+the row's identity; `ui.tsx` is the component's own internals. Keying
+them by a fabricated composite would be worse, not better.
+
+## 3a. The one failing e2e test — diagnosed, then fixed
 
 `console.spec.ts:134` — *structured config edit applies as a new version
-end to end* — fails inside the full suite and **passes in isolation in
-2.1s**:
+end to end* — failed inside the full suite while passing in isolation in
+2.1s. It was pre-existing: it failed once for the QA pass too, on a tree
+without this branch's fixes, and `/strategies` is not in this branch's
+diff.
 
-```
-$ bash scripts/e2e.sh -g "structured config edit applies as a new version end to end"
-  ✓  1 e2e/console.spec.ts:134:5 › structured config edit applies as a new version end to end (2.1s)
-  1 passed (5.3s)
-```
+The first diagnosis here was wrong in an instructive way. It said the
+cause was fixture isolation — several tests applying versions of one
+shared versioned document, leaving a stale `parent_version`. Checking
+that claim disproved it: **no test before this one applies a config
+version at all.** The real cause is load. The test five places earlier
+(`every nav page renders content or an honest state`) visits every page
+in the app, which leaves `next dev` compiling routes on demand, so the
+apply round trip can exceed a fixed 10 s wait.
 
-It is not a regression from this change, and the reasoning is checkable
-rather than asserted:
+Fixed by waiting on the POST to `/api/v1/config` and asserting its
+status before asserting the confirmation text. That **strengthens** the
+test rather than relaxing it — the request must now actually be made and
+actually succeed, where before only a rendered string was required. The
+`Version \d+ active.` assertion is untouched; it is the only coverage of
+the edit → preview diff → confirm → apply → feedback loop completing,
+and loosening it to get green would have deleted exactly that.
 
-* The test exercises `/strategies` only. That page is **not** in this
-  branch's diff (`git diff --name-only 15f82d2..HEAD -- web/src` does not
-  list it).
-* The one shared file it touches is `lib/api/client.ts`, where this
-  branch's edits are confined to `ScreenerAutoPaperPosition` and
-  `ScreenerCalculatorResult`. Neither is on the strategy-config path.
-* It failed for the QA pass too, once, on a tree that did not contain
-  today's fixes, and passed on every other run.
-
-The mechanism is test isolation, not product behaviour: several tests
-apply new versions of the same versioned configuration document against
-one shared disposable backend, and this one asserts a
-`Version N active.` confirmation that a `parent_version` it no longer
-holds will not produce. It is deliberately **not** "fixed" by relaxing
-the assertion — the assertion is the point of the test. It belongs to
-whoever owns the suite's fixture isolation, and is recorded here so the
-next person does not spend the afternoon on it believing it is theirs.
+Generalisable for this suite: "fails in the suite, passes alone" is more
+often `next dev` compile pressure than shared state. Wait on the network
+response, not on a clock.
 
 ## 3b. Float-shortcut audit across `web/src`
 
@@ -333,10 +365,12 @@ the matrix was re-measured:
 
 | | earlier run | current run |
 | --- | --- | --- |
-| Stops | 61 | **75** |
+| Stops measured | 61 | **77** |
+| Stops that failed to prepare, and so were never measured | 2, unnoticed | **0** |
 | Viewports | 1440×900, 1024×768, 768×1024, 390×844 | those four **plus 844×390** |
+| States covered at 200% zoom | 5 of 7 | **7 of 7** |
 | Stops with page-level horizontal overflow | 0 | **0** |
-| Scroll regions carrying an accessible name | 0 (all `null` — the artefact contradicted the claim) | **17** |
+| Scroll regions carrying an accessible name | 0 (all `null` — the artefact contradicted the claim) | **18** |
 
 The 844×390 stop is new and deliberate: a phone in landscape is *above*
 the md breakpoint, so the desktop sidebar renders into 390px of height,
@@ -347,9 +381,20 @@ asserted in e2e (`secondary navigation stays reachable on a short
 landscape viewport above the md breakpoint`), because that is a
 behavioural claim and a screenshot cannot carry it.
 
-The 200% zoom pass still covers 5 of the 7 states, for the reason stated
-in §6: it skips states that need an interaction to reach. That is a
-known gap, not a measured pass.
+The 200% zoom pass now covers all 7 states: it runs the `prepare` steps
+too, instead of skipping the two states that need an interaction.
+
+That change immediately found something. The drawer failed to open at
+200% zoom and at 390×844, because `RowDrawer` is deliberately
+`role="complementary"` at ≥md and `role="dialog"` below it, while the
+capture script still waited on the role. Two of those failures existed
+in the previous run and went unnoticed, so the matrix was reported as
+"75 of 75, zero overflow" when two stops had never been measured.
+
+`capture-after.mjs` now says `N stops MEASURED … M NOT MEASURED
+(prepare failed)` and **exits non-zero on a prepare failure**. An
+unreachable state is unverified evidence, and the exit code should carry
+that rather than the reader's attention.
 
 ### An honest limitation of the "after" captures
 
@@ -405,7 +450,7 @@ the same as nothing being wrong.
 | --- | --- |
 | Discovery/Calculator implementation | done |
 | e2e selector updates for the renamed pause control | assigned — updated to the new names, **not** relaxed |
-| Responsive/theme/zoom capture matrix | done — **75 stops** across five viewports and both themes, re-measured against HEAD, 0 with overflow; the 200% zoom scope is stated honestly in §6 |
+| Responsive/theme/zoom capture matrix | done — **77 stops measured**, 0 with overflow, **0 unmeasured**, re-measured against HEAD; five viewports, both themes, and 200% zoom on all seven states |
 | Keyboard, focus-return, contrast checks in a browser | done — contrast machine-checked (54 assertions); keyboard and focus-return checked by hand on the audited flows; no screen-reader pass |
 | Independent diff review | pending |
 | Mobile drawer / mobile nav sheet: scrim without `aria-modal` or focus containment | **fixed** — modality now follows the breakpoint (`lib/a11y.ts`): non-modal side panel at ≥md, `role="dialog"` + `aria-modal` + focus containment below it, with focus moved into the sheet on open. The focusable query excludes disabled and invisible controls, which is what a naive trap gets wrong around `PaperControl`'s disabled VIEWER button |

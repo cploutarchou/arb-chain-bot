@@ -45,7 +45,9 @@ export default function TriangleDetailPage() {
                     "VWAP (ref size)", "Price impact bps", "Levels", "Depth exhausted", "Fee rate", "Fee source",
                   ]}
                   empty="legs"
-                  rows={(d.triangle.legs ?? []).map((leg) => [
+                  label="Triangle legs"
+                rowKeys={(d.triangle.legs ?? []).map((leg) => String(leg.leg_no))}
+                rows={(d.triangle.legs ?? []).map((leg) => [
                     leg.leg_no,
                     leg.market,
                     leg.side,
@@ -106,6 +108,8 @@ export default function TriangleDetailPage() {
               <Table
                 head={["Cycle", "Session", "Opportunity", "Outcome", "P&L", "Slippage bps", "Started", "Settled"]}
                 empty="settled cycles recorded for this triangle"
+                label="Recent cycles"
+                rowKeys={(d.recent_cycles ?? []).map((c) => c.id)}
                 rows={(d.recent_cycles ?? []).map((c) => [
                   <Link key="c" href={`/cycles/${encodeURIComponent(c.id)}`} className="text-[var(--accent)] underline">
                     {c.id}
@@ -138,7 +142,9 @@ export default function TriangleDetailPage() {
                 <Table
                   head={["Component", "Weighted score"]}
                   empty="components"
-                  rows={Object.entries(d.quality.components).map(([k, v]) => [k, v])}
+                  label="Quality components"
+                rowKeys={Object.keys(d.quality.components)}
+                rows={Object.entries(d.quality.components).map(([k, v]) => [k, v])}
                 />
                 {d.quality.notes && d.quality.notes.length > 0 && (
                   <p className="mt-2 text-[11px] text-[var(--text-dim)]">{d.quality.notes.join(" · ")}</p>

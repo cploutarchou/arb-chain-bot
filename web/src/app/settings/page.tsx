@@ -387,6 +387,8 @@ function UsersManager({ selfId }: { selfId: string | undefined }) {
           <Table
             head={["Email", "Role", "Status", "Created", ""]}
             empty="users"
+            label="Platform users"
+            rowKeys={list.map((u) => u.id)}
             rows={list.map((u) => [
               u.email,
               <select

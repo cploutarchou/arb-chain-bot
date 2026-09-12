@@ -184,37 +184,91 @@ real defects in shared code, fixed here rather than filed:
 | Defect | Was | Now |
 | --- | --- | --- |
 | `signTone("0")` returned `"ok"`, so an exactly-zero result rendered in the positive colour and a flat session read as a winning one | `decimal.ts:98-101` | zero in any spelling returns `"dim"`; `isZeroDecimalStr` added; regression-tested including `-0`, `0e-9` and a tiny nonzero loss |
-| `Table`/`VirtualTable` keyed rows by array index, so a 5s poll or a re-sort reused a DOM row for a different record, moving focus and selection silently | `ui.tsx:323`, `ui.tsx:419` | the shared component now **supports** stable keys (`rowKeys`, both branches) and the tables on the surfaces this task touched pass them. **Roughly fifteen polled tables on untouched pages still key by index** — `/alerts`, `/audit`, `/opportunities`, `/triangles`, `/scanner`, `/exchanges`, `/funding`, `/strategies`, `/scanner-alerts`, `/replay`, `/reports`. Fixed where this task looked, not repo-wide. |
+| `Table`/`VirtualTable` keyed rows by array index, so a 5s poll or a re-sort reused a DOM row for a different record, moving focus and selection silently | `ui.tsx:323`, `ui.tsx:419` | the shared component supports stable keys (`rowKeys`, both branches) and **every table that can reorder now passes them** — the pass went repo-wide rather than stopping at the audited surfaces (see below) |
 | the `overflow-x-auto` wrapper had no `tabIndex`/`role`/`aria-label`, so Screener's off-screen freshness and action columns were unreachable by keyboard (WCAG 2.1.1) | `ui.tsx` | focusable scroll region with an optional accessible name |
+
+### The row-identity pass, finished
+
+An earlier version of this decision stopped at the surfaces this task
+looked at and recorded "roughly fifteen polled tables on untouched pages
+still key by index". They are done now: **33 tables across 24 files**
+carry a stable `rowKeys` and an accessible `label`, keyed on what
+actually identifies a row —
+
+| Kind of key | Examples |
+| --- | --- |
+| A real id from the wire | `/alerts` (`al.id`), `/audit` (`e.id`), `/opportunities` (`o.id`), `/campaigns`, `/org` (`m.user_id`), `/settings` platform users, `/reports` generated reports |
+| A natural unique field | `/exchanges` and `/system` (`b.market`), `/funding` (the base), `/triangles` (`triangle_id`), `/strategies` and platform settings (`version`), `/risk` limits and rejection reasons (the code) |
+| An explicit composite, where the wire carries no id | `/scanner` live events (`triangle_id` + `detected_at`, because one triangle can appear repeatedly), `/scanner-alerts` events (opened-at + pair + both venues), `/ai` (parameter + created-at), `/reports` incidents, `/cycles` fills |
+
+Three tables still key by index, and that is **correct** for them rather
+than unfinished: `screener-reports/[id]`'s statistics block and
+`system`'s literal queue rows are fixed-order literal arrays, and
+`opportunities/[id]`'s legs are a fixed ordered list from a single
+payload. Index is a stable key when position *is* the identity.
+
+The one that mattered most was not on the original list:
+`/system`'s queue table filters its rows on presence
+(`.filter((row) => row.q !== undefined)`), so a queue the health payload
+stops reporting shifts every row below it — an index key would then show
+one queue's depth and drop-count under another queue's name.
 
 Still open and assigned, not silently dropped: the mobile drawer and
 mobile nav sheet render a scrim without `aria-modal` or focus
 containment (they are correctly non-modal on desktop, but full-screen
 with a scrim on mobile, where modal semantics are right).
 
-## D11. Screener filters and the URL — partially done, and the gap is real
+## D11. Screener filters and the URL
 
 The UX spec found that `screener/page.tsx` holds its filters in component
 state, so the Calculator hand-off loses them on Back, and that
 `console-v2.md` §6.1 already required URL sync and never got it.
 
-**What shipped is narrower than an earlier draft of this section
-claimed.** `useSearchParams` is read at mount for `base`, `quote`,
-`buy_venue` and `sell_venue`, and the Calculator's `backToScreenerHref`
-carries the same four back — that hand-off works in both directions. But
-there is **no `router.replace`**: the screener never writes its own
-filter state to the URL, so six filters travel in neither direction —
+**Now done, after two rounds of this section over-claiming.** The first
+draft said URL sync shipped when only the four hand-off parameters were
+read; the correction said six filters travelled in neither direction and
+recorded it as remaining work. All ten now round-trip.
 
-`min_spread_bps`, `min_liquidity`, `min_lifetime_s`, `bases_deny`,
-`include_suspect`, `include_unknown_liquidity`.
+Reading: every filter is seeded from the query string, not just the four
+the Calculator hand-off carried. Writing: a `router.replace` — never
+`push`, so typing in a filter cannot manufacture a history entry per
+keystroke — debounced at 300 ms, and skipped entirely when the computed
+query already matches the current one, so there is no replace loop.
 
-Set a 25 bps threshold and a 5,000 liquidity floor, open a row in the
-Calculator, press Back: both thresholds are gone. That is the exact
-failure this section claimed to have fixed, and `console-v2.md` §6.1
-remains unmet. Recorded as remaining work rather than described as done.
+Three details that are decisions rather than mechanics:
 
-No safety regression: the two opt-ins resetting to OFF is the safe
-direction, and the page preserves that default.
+* **Values travel as the strings they were typed as.** `min_liquidity`
+  is money. Parsing it to a number to put it in a URL and back would
+  reintroduce exactly the float shortcut the decimal work removes, in the
+  one place nobody would look for it.
+* **Unknown query parameters are preserved.** Only the ten keys this page
+  owns (`FILTER_PARAMS`) are cleared before rewriting, so a hand-off
+  marker or anything a future feature adds survives a filter edit.
+* **An opt-in is written only when ON, and read only from an explicit
+  affirmative** (`1` or `true`). The two opt-ins re-admit lanes the
+  backend excludes by default, so a malformed value falls back to the
+  safe default — a shared link cannot quietly re-admit suspect lanes
+  through a typo, and a link never carries an opt-in the sender did not
+  enable. Asserted in e2e.
+
+* **An externally-changed URL wins over component state.** The filters
+  are seeded at mount, so a naive write-only sync would treat Back,
+  Forward, or an arriving "Back to Screener" link as "my state is newer"
+  and rewrite the address bar from stale filters — making Back appear to
+  do nothing and silently discarding what the hand-off link carried.
+  Next may reuse this component across such a navigation rather than
+  remounting it, so seeding at mount is not sufficient on its own. The
+  effect records the query it last wrote and, when the current one
+  differs from that, adopts the URL into state instead of overwriting it.
+  This was caught by writing the test for the feature, not by the
+  feature's own happy path.
+
+Clearing the filters clears the query string with them, so "Clear
+filters" leaves a clean URL rather than a stale one that a reload would
+restore.
+
+No safety regression: the opt-ins still default to OFF, and that default
+is now what an absent parameter means.
 
 ## D12. Out of scope, explicitly
 

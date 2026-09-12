@@ -52,7 +52,16 @@ const STATES = [
       const detail = page.getByRole("button", { name: "Detail" }).first();
       await detail.waitFor({ state: "visible", timeout: 20_000 });
       await detail.click();
-      await page.getByRole("complementary").first().waitFor({ timeout: 10_000 });
+      // Matched on the drawer's accessible NAME, not its role. RowDrawer
+      // is deliberately `role="complementary"` at >= md (a side panel
+      // beside a table that stays interactive) and `role="dialog"` below
+      // it (full-screen over a scrim, so modal semantics are correct).
+      // Waiting on the role therefore timed out at 390x844 and at 200%
+      // zoom — the drawer was open, the selector was just wrong.
+      await page
+        .locator('[aria-label^="Detail: "]')
+        .first()
+        .waitFor({ timeout: 10_000 });
     },
   },
   {
@@ -140,6 +149,36 @@ const MEASURE = () => {
 const results = [];
 const browser = await chromium.launch();
 
+// signIn logs a fresh context in, retrying.
+//
+// A fixed hydration wait is not a guarantee: before React attaches its
+// submit handler the button is inert, so a click silently does nothing
+// and the script then waits out the navigation timeout. `next dev`
+// compiles routes on demand, so how long hydration takes depends on what
+// the server happens to be busy with — one run died on the fourth
+// viewport for exactly this reason, after three had passed. Clicking
+// again is safe: if the first click did register, the URL has already
+// changed and the loop exits.
+async function signIn(page, where) {
+  for (let attempt = 1; ; attempt++) {
+    await page.goto(`${BASE}/login`, { waitUntil: "load" });
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.waitForTimeout(1500);
+    await page.locator('input[type="email"]').fill(EMAIL);
+    await page.locator('input[type="password"]').fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    try {
+      await page.waitForURL((u) => !u.pathname.endsWith("/login"), {
+        timeout: 20_000,
+      });
+      return;
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      console.warn(`login attempt ${attempt} did not navigate (${where}); retrying`);
+    }
+  }
+}
+
 for (const theme of THEMES) {
   for (const vp of VIEWPORTS) {
     const context = await browser.newContext({
@@ -152,34 +191,7 @@ for (const theme of THEMES) {
     const page = await context.newPage();
 
     // Log in once per context.
-    //
-    // Retried, because a fixed hydration wait is not a guarantee. Before
-    // React attaches its submit handler the button is inert, so a click
-    // silently does nothing and this script then sat on /login until the
-    // navigation timeout. `next dev` compiles routes on demand, so how
-    // long hydration takes depends on what the server is busy with — one
-    // capture run died on the fourth viewport for exactly this reason
-    // after three had passed. Clicking again is safe: if the first click
-    // did register, the URL has already changed and the loop exits.
-    for (let attempt = 1; ; attempt++) {
-      await page.goto(`${BASE}/login`, { waitUntil: "load" });
-      await page.waitForLoadState("networkidle").catch(() => {});
-      await page.waitForTimeout(1500);
-      await page.locator('input[type="email"]').fill(EMAIL);
-      await page.locator('input[type="password"]').fill(PASSWORD);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      try {
-        await page.waitForURL((u) => !u.pathname.endsWith("/login"), {
-          timeout: 20_000,
-        });
-        break;
-      } catch (err) {
-        if (attempt >= 3) throw err;
-        console.warn(
-          `login attempt ${attempt} did not navigate (${vp.id}/${theme}); retrying`,
-        );
-      }
-    }
+    await signIn(page, `${vp.id}/${theme}`);
     // The theme toggle persists a choice in localStorage that would
     // override the emulated colorScheme; clear it so the media query
     // stays authoritative and `colorScheme` above is what is captured.
@@ -237,19 +249,35 @@ for (const theme of THEMES) {
     deviceScaleFactor: 2,
   });
   const page = await context.newPage();
-  await page.goto(`${BASE}/login`, { waitUntil: "load" });
-  // Wait for hydration before touching the form. Before React
-  // attaches its submit handler the button is inert, so filling
-  // and clicking immediately silently does nothing — the first
-  // run of this script sat on /login for 30s for that reason.
-  await page.waitForTimeout(3000);
-  await page.locator('input[type="email"]').fill(EMAIL);
-  await page.locator('input[type="password"]').fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL((u) => !u.pathname.endsWith("/login"), { timeout: 30_000 });
-  for (const state of STATES.filter((s) => !s.prepare)) {
+  await signIn(page, "zoom200");
+  // Every state, including the two that need an interaction to reach.
+  // These used to be skipped (`STATES.filter((s) => !s.prepare)`), which
+  // meant the 200% pass silently omitted the screener drawer and the
+  // Calculator — and the Calculator is one of the two surfaces the
+  // original audit flagged for clipped figures, so it was exactly the
+  // one a reader would assume had been checked.
+  for (const state of STATES) {
     await page.goto(`${BASE}${state.path}`, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(3500);
+    if (state.prepare) {
+      try {
+        await state.prepare(page);
+        await page.waitForTimeout(1500);
+      } catch (err) {
+        // Recorded, not swallowed: a state that could not be reached at
+        // this zoom level is a finding, and must not be mistaken for a
+        // state that was measured and found clean.
+        results.push({
+          state: state.id,
+          label: state.label,
+          theme: "dark",
+          viewport: "1440x900 @ 200% zoom",
+          error: `prepare failed: ${String(err).slice(0, 200)}`,
+        });
+        console.log(`${state.id}--dark--zoom200  PREPARE FAILED`);
+        continue;
+      }
+    }
     const measured = await page.evaluate(MEASURE);
     const name = `${state.id}--dark--zoom200.png`;
     await page.screenshot({ path: join(OUT, name) });
@@ -275,10 +303,27 @@ writeFileSync(
   JSON.stringify({ generatedAt: new Date().toISOString(), base: BASE, results }, null, 2),
 );
 console.log(
-  `\n${results.length} stops captured, ${offenders.length} with page-level horizontal overflow, ${errors.length} prepare errors`,
+  `\n${results.length - errors.length} stops MEASURED, ${offenders.length} with page-level horizontal overflow, ` +
+    `${errors.length} NOT MEASURED (prepare failed)`,
 );
 for (const o of offenders) {
   console.log(`  OVERFLOW ${o.state} ${o.theme} ${o.viewport}: ${o.overflow}px — ${JSON.stringify(o.widest)}`);
 }
-for (const e of errors) console.log(`  ERROR ${e.state} ${e.theme} ${e.viewport}: ${e.error}`);
-process.exit(offenders.length > 0 ? 1 : 0);
+for (const e of errors) {
+  console.log(`  NOT MEASURED ${e.state} ${e.theme} ${e.viewport}: ${e.error}`);
+}
+// A prepare failure now fails the run, and the wording above separates
+// "measured" from "captured".
+//
+// This is not pedantry: a previous run of this script was reported as
+// "75 stops, 0 overflow" when two of them had never been measured at
+// all, because the summary said "0 with overflow" and the reader — me —
+// treated the absence of an overflow line as a pass. A state that could
+// not be reached is unverified evidence, and the exit code should say so
+// rather than leaving it to whoever reads the log.
+if (errors.length > 0) {
+  console.log(
+    "a state that could not be reached is UNVERIFIED, not clean — fix the prepare step or state the gap",
+  );
+}
+process.exit(offenders.length > 0 || errors.length > 0 ? 1 : 0);

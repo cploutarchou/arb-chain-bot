@@ -35,6 +35,8 @@ export default function TrianglesPage() {
               <Table
                 head={["Triangle", "Score", "Cycles", "Components", "Notes"]}
                 empty="scored triangles in this window (requires persisted history)"
+                label="Scored triangles"
+                rowKeys={(q.scores ?? []).map((s) => s.triangle_id)}
                 rows={(q.scores ?? []).map((s) => [
                   <Link key="id" href={`/triangles/${encodeURIComponent(s.triangle_id)}`} className="text-[var(--accent)] underline">
                     {s.triangle_id}
