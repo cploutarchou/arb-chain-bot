@@ -363,6 +363,9 @@ export interface ScannerStatus {
   qualified: number;
   rejected: number;
   skipped_unhealthy: number;
+  // Triangles whose every candidate size fell below the dust/min-notional
+  // floor — rejected before any event is emitted (T-062).
+  no_viable_size: number;
   dropped_events: number;
   paper?: PaperStatus;
 }

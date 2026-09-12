@@ -161,7 +161,8 @@ func (r readModel) Health() any {
 		"scanner": map[string]int64{
 			"evaluations": st.Evaluations, "qualified": st.Qualified,
 			"rejected": st.Rejected, "skipped": st.Skipped, "dropped": st.Dropped,
-			"revalidations": st.Revalidations, "revalidation_rejects": st.RevalidationRejects,
+			"no_viable_size": st.NoViableSize,
+			"revalidations":  st.Revalidations, "revalidation_rejects": st.RevalidationRejects,
 		},
 	}
 	r.e.mu.RLock()
