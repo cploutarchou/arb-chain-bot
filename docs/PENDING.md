@@ -12,7 +12,7 @@ OPEN (a decision is required).
 
 ## 0. Blocking everything else
 
-### CI is failing repo-wide (not a task — an account issue)
+### CI is failing repo-wide (not a task — an account issue) — RESOLVED 2026-09-12
 
 Since 2026-08-31 ~19:41 UTC every GitHub Actions run fails 2–6 seconds
 after being created, on **every** branch including `master`, with
@@ -22,6 +22,13 @@ week. This is almost certainly exhausted Actions minutes or a spending
 limit, and it needs fixing before any code change can be trusted to land
 green. Runs `33431928292` (branch, two attempts) and `33432830563`
 (master) are the evidence.
+
+**Resolved 2026-09-12** — runs execute and pass again with no workflow
+change on our side, consistent with a monthly minutes/spending reset:
+three consecutive green `master` runs, `34706643463` → `34708592768` →
+`34719294647` (pushed 2026-09-12 21:12 UTC, all five jobs green). This
+section stays as the record of the outage window (2026-08-31 →
+2026-09-12), not as a live blocker.
 
 ---
 
@@ -58,7 +65,6 @@ T-106 asks.
 | **T-083** | Paddle billing | Implemented; a sandbox run against the real Paddle account and catalogue is still owed. |
 | **T-084** | Affiliate programme | Accrual ledger, maturation job, payouts report and payout recording done (2026-09-12). Still owed with T-083: Paddle refund events don't reach the lifecycle, so reversals never fire from live data; the affiliate-facing dashboard (clicks/sign-ups) has no data source. |
 | **T-085** | Marketing site | Copy and legal drafts exist; site scaffold with copy lint being built. Compliance blocks open: legal-page drafts, sign-up risk acknowledgement, hypothetical-performance disclaimer on every paper surface. |
-| **T-057/059/060/061** | Platform settings, operating mode, secrets vault, venue capabilities | Backend implemented; console surfaces for these were not carried through with the same coverage. |
 
 ---
 
@@ -87,7 +93,7 @@ no mempool, no bridging.
 - **T-080** Evidence dashboard: per-strategy net PnL after fees, hit rate, drawdown, sample size against the production-gate thresholds.
 
 ### Phase 25 — SaaS
-- **T-087** Client console re-skin — **DONE** (2026-09-13), integrated into `master` by fast-forward and the branch deleted; not yet pushed to origin. Implemented as: navigation, decimal presentation, Overview, Paper/Auto-Paper, Settings categories, and the pause-scope correction, with local checks green and a measured responsive/theme/zoom matrix. The e2e suite and the independent review are done: a ten-lens adversarial audit confirmed 43 findings (27 refuted) and every confirmed functional one is fixed, six of them regressions this work introduced. **Reconciliation with master is done**: master squashed its client-area work into `a8657a7` (PRs #30/#31/#32 no longer exist separately; merge base moved to `b1faf6d`), and that master is merged in at `2f9edb9` — 14 conflicts resolved by checking master's side for anything this branch lacked, 27 files auto-merged, one deliberate drop (master's Overview `reject_reason_counts` histogram, unreconcilable in scope with the session count). Four merge-introduced defects were found and fixed, three of them duplicate renderings that auto-merged cleanly and so were flagged by nothing but the test suite. Everything was re-run on the merged tree: golangci-lint 0 issues, `go test -race` pass, lint/typecheck/build clean, `npm test` 10/10, `test:unit` 82/82, e2e 68/68, route map 37 routes / 0 orphans, captures 77 stops / 0 overflow / 0 unmeasured. Integrated into `master` on 2026-09-13 by fast-forward (no second merge commit) and the branch deleted. **Still unpushed**: `origin/master` remains at `a8657a7`, so publishing is a separate step. See `docs/design/client-area-refinement-handover.md` for the limits, including two open operator questions.
+- **T-087** Client console re-skin — **DONE** (2026-09-13), integrated into `master` by fast-forward and the branch deleted; not yet pushed to origin. Implemented as: navigation, decimal presentation, Overview, Paper/Auto-Paper, Settings categories, and the pause-scope correction, with local checks green and a measured responsive/theme/zoom matrix. The e2e suite and the independent review are done: a ten-lens adversarial audit confirmed 43 findings (27 refuted) and every confirmed functional one is fixed, six of them regressions this work introduced. **Reconciliation with master is done**: master squashed its client-area work into `a8657a7` (PRs #30/#31/#32 no longer exist separately; merge base moved to `b1faf6d`), and that master is merged in at `2f9edb9` — 14 conflicts resolved by checking master's side for anything this branch lacked, 27 files auto-merged, one deliberate drop (master's Overview `reject_reason_counts` histogram, unreconcilable in scope with the session count). Four merge-introduced defects were found and fixed, three of them duplicate renderings that auto-merged cleanly and so were flagged by nothing but the test suite. Everything was re-run on the merged tree: golangci-lint 0 issues, `go test -race` pass, lint/typecheck/build clean, `npm test` 10/10, `test:unit` 82/82, e2e 68/68, route map 37 routes / 0 orphans, captures 77 stops / 0 overflow / 0 unmeasured. Integrated into `master` on 2026-09-13 by fast-forward (no second merge commit) and the branch deleted. **Published**: `origin/master` is at `1caff32` and its CI run `34719294647` completed green across all five jobs. See `docs/design/client-area-refinement-handover.md` for the limits, including two open operator questions.
 - **T-088** White-label option (later phase).
 
 ### Phase 26 — production infrastructure

@@ -60,17 +60,24 @@ The programme-level backlog in `docs/PENDING.md` is the queue now.
 Closed from it: T-062 (PR #28, 2026-09-12 — `backtest.Result`
 rejection-reason histogram with the two pre-gate buckets, the §80
 Rejection-reasons table and a NO-CYCLES verdict that names its top
-reasons; the dust-floor exit is counted at last) and T-084's remainder
+reasons; the dust-floor exit is counted at last), T-084's remainder
 (PR #29, 2026-09-12 — hourly idempotent maturation job in cmd/worker,
 the operator's payouts report with the fraud-rule-3 refund rate and
 clawback exposure over the affiliate ledger, audited payout recording
 validated against the matured balance, platform-admin API + Billing
 page section; Paddle refund events still owed with T-083's sandbox
-run). Remaining candidates in a sensible order, none blocking another:
+run), and the T-057/059/060/061 console row (closed 2026-09-13 as
+stale, not as new work — the console surfaces landed on 2026-08-27 with
+`a7d2c29`, the platform-settings editors with preview/apply/rollback
+and the supervised restart flow, and `6741c44`, the operating-mode,
+AI, logging, security and venue-availability sections rendering
+availability and reasons from `GET /api/v1/platform/capabilities`
+rather than hardcoding them, plus the write-only vault UI; the T-087
+refinement pass then carried them into the Settings Administration
+category with deep links, and every CI run exercises them through the
+e2e suite). Remaining candidates in a sensible order, none blocking
+another:
 
-- **T-057/059/060/061 console surfaces** — platform settings, operating
-  mode, secrets vault, venue capabilities have backend depth the
-  console never matched.
 - **T-075 remainder** — Upbit, Bithumb, LBank, Phemex collectors, and
   the HTX request-limit answer the rate gate does not classify.
 - **T-079 remainder** — scheduled migrations and health-check alerting
@@ -78,8 +85,9 @@ run). Remaining candidates in a sensible order, none blocking another:
 - **Performance plan items 2–3** — the reservation mutex and AnyOpen's
   per-evaluation allocation on the evaluator path; and the ~7.7 min
   serial `internal/api` race suite.
-- **Testing gaps** the final review named: a frontend unit layer,
-  down-migration replay, fuzzing.
+- **Testing gaps** the final review named: a frontend unit layer
+  (landed with T-087 — `web/unit/`, 82 tests), down-migration replay,
+  fuzzing.
 
 ## How to resume
 
