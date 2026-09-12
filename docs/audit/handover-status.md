@@ -78,8 +78,11 @@ category with deep links, and every CI run exercises them through the
 e2e suite). Remaining candidates in a sensible order, none blocking
 another:
 
-- **T-075 remainder** — Upbit, Bithumb, LBank, Phemex collectors, and
-  the HTX request-limit answer the rate gate does not classify.
+- **T-075 remainder** — the four collectors. Endpoint research landed
+  2026-09-13 under `docs/research/venues/` (upbit, bithumb, lbank,
+  phemex — every fact live-verified or marked UNVERIFIED); the HTX
+  classification and Coinbase burst soak regressions were already
+  fixed (`768eda1`, `137698d`).
 - **T-079 remainder** — scheduled migrations and health-check alerting
   (backups landed with option B).
 - **Performance plan items 2–3** — the reservation mutex and AnyOpen's
